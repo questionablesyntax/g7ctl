@@ -49,8 +49,10 @@ or GUI; the protocol code is byte-for-byte identical to 0.1.0.
 
 ## [0.1.0] - 2026-07-31
 
-Initial public release. Feature-complete against the GameSir Nexus app for
-everything Nexus exposes, with no Windows involvement anywhere in the stack.
+Initial public release. Covers every settings category GameSir Nexus exposes
+as a page of its own, with no Windows involvement anywhere in the stack. Not
+parity with the whole app -- Nexus has scattered options not yet enumerated,
+and motion/gyro is unimplemented by choice.
 
 ### Added
 
@@ -76,7 +78,7 @@ everything Nexus exposes, with no Windows involvement anywhere in the stack.
   switch, so it never sits showing stale values after a change made
   elsewhere. "Sync Now" reads a fresh baseline first and writes only what
   actually differs. Export/Import save and load the full state as JSON.
-- **Full read and write coverage** of everything Nexus exposes: button
+- **Full read and write coverage** of every Nexus settings page: button
   remapping across 21 buttons and both the Default and Shift layers, stick
   settings, trigger settings, vibration, report rate, D-pad options
   (including "Swap Left Stick and D-pad"), and the dock's LED brightness and
