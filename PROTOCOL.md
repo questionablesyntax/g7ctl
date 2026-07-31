@@ -9,6 +9,17 @@ verified by a write/read-back round trip against real hardware; where it is
 predicted from a confirmed pattern, it says so explicitly. Nothing below is
 guesswork presented as fact.
 
+**Applicability.** Every value in this document was confirmed against a
+GameSir G7 Pro, the only hardware it has been exercised on. Two details
+suggest the protocol is not specific to that model: the vendor ID `0x3537`
+is GameSir's rather than the G7 Pro's, and the mode-switch handshake sends
+the ASCII string `"gamesirapp"`, which names the Nexus application rather
+than any device. It is therefore plausible that other Nexus-supported
+controllers speak the same framing, and possibly the same category prefixes.
+That is an inference from two data points, not a tested result -- treat the
+product IDs below as G7 Pro-specific, and everything else as confirmed for
+the G7 Pro and unverified anywhere else.
+
 ## Device identities
 
 | Identity | VID:PID | Role |

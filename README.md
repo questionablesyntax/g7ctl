@@ -19,6 +19,21 @@ category targets one of the controller's 4 onboard slots explicitly, so no
 on-device button combo is ever needed to pick which profile a change lands
 in.
 
+**Scope: the GameSir G7 Pro, because that's the controller on the desk.**
+This is what was reverse-engineered against and the only hardware any of it
+has ever run on. It may well work on other GameSir controllers that Nexus
+supports -- what's implemented here is Nexus's protocol, and the handshake it
+uses is the string `"gamesirapp"`, which names the app rather than any
+particular device -- but that is a plausible guess, not a tested claim.
+Nothing has ever been tried on another controller.
+
+Concretely, another model wouldn't even be detected: `pyg7/constants.py`
+hard-codes the G7 Pro's four USB product IDs and discovery matches on them.
+If you have other GameSir hardware and want to experiment, that's the file to
+start in, and a report either way would be genuinely useful. Support for
+other models isn't planned, for the same reason a `.deb` isn't: it can't be
+verified from here.
+
 See [PROTOCOL.md](PROTOCOL.md) for the wire-format reference. It's
 self-contained, organized for lookup rather than as a narrative, and marks
 throughout which values are hardware-confirmed versus predicted from a
