@@ -33,7 +33,7 @@ import logging
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Optional
 
 from . import buttons, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
 from .constants import DOCK_READ_CATEGORY, FULL_BLOB_LENGTH
@@ -403,7 +403,7 @@ ProgressCallback = Optional[Callable[[int, int, str], None]]
 # One entry in the list _build_steps()/the *_steps() helpers return: a
 # human-readable label paired with the write itself, deferred as a closure
 # so write_state() can pace it with heartbeats before actually calling it.
-Step = Tuple[str, Callable[[VendorSession], bytes]]
+Step = tuple[str, Callable[[VendorSession], bytes]]
 
 
 def write_state(
@@ -459,7 +459,7 @@ def write_state(
     return skipped
 
 
-def _build_steps(state: dict, baseline: Optional[dict] = None) -> Tuple[List[Step], int]:
+def _build_steps(state: dict, baseline: Optional[dict] = None) -> tuple[list[Step], int]:
     """Returns (steps, skipped): a list of (label, fn(session)) pairs in
     application order, and a count of Buttons writes skipped via baseline
     diffing (always 0 if `baseline` is None)."""
@@ -485,7 +485,7 @@ def _build_steps(state: dict, baseline: Optional[dict] = None) -> Tuple[List[Ste
                               lambda s, b=btn_id, k=kc, sh=shift: buttons.remap(s, b, k, profile=slot, shift=sh)))
 
     button_step_count = len(steps)
-    total_button_entries = sum(len(state["buttons"].get(l, {})) for l in ("default", "shift"))
+    total_button_entries = sum(len(state["buttons"].get(layer, {})) for layer in ("default", "shift"))
 
     rate = state.get("report_rate_hz")
     baseline_rate = (baseline or {}).get("report_rate_hz")
@@ -582,7 +582,7 @@ def _build_steps(state: dict, baseline: Optional[dict] = None) -> Tuple[List[Ste
 # originally went unnoticed).
 
 
-def _stick_steps(side: str, s: dict, baseline: Optional[dict] = None, profile: int = 1) -> Tuple[List[Step], int]:
+def _stick_steps(side: str, s: dict, baseline: Optional[dict] = None, profile: int = 1) -> tuple[list[Step], int]:
     """Returns (steps, skipped). `baseline`, if given, is this side's
     "sticks" sub-dict (e.g. baseline["sticks"]["left"]) from a fresh
     read_state() -- see write_state()'s docstring. A target value already
@@ -680,7 +680,7 @@ def _stick_steps(side: str, s: dict, baseline: Optional[dict] = None, profile: i
     return steps, skipped
 
 
-def _trigger_steps(side: str, t: dict, baseline: Optional[dict] = None, profile: int = 1) -> Tuple[List[Step], int]:
+def _trigger_steps(side: str, t: dict, baseline: Optional[dict] = None, profile: int = 1) -> tuple[list[Step], int]:
     """Returns (steps, skipped) -- see _stick_steps()'s docstring for the
     baseline-diffing approach; `profile` targets every write here too."""
     baseline = baseline or {}
@@ -734,7 +734,7 @@ def _trigger_steps(side: str, t: dict, baseline: Optional[dict] = None, profile:
     return steps, skipped
 
 
-def _vibration_steps(v: dict, baseline: Optional[dict] = None, profile: int = 1) -> Tuple[List[Step], int]:
+def _vibration_steps(v: dict, baseline: Optional[dict] = None, profile: int = 1) -> tuple[list[Step], int]:
     """Returns (steps, skipped) -- see _stick_steps()'s docstring for the
     baseline-diffing approach; `profile` targets every write here too."""
     baseline = baseline or {}

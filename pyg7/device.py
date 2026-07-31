@@ -9,13 +9,21 @@ command-line output is unchanged.
 """
 import logging
 import time
-from typing import List, Optional, Tuple
+from typing import Optional
 
 import usb.core
 import usb.util
 
 from .constants import (
-    EMPTY_FLUSH, EP_OUT, HANDSHAKE_CHUNKS, IFACE, PID_DONGLE, PID_NATIVE, PID_VENDOR, PID_XINPUT, VID,
+    EMPTY_FLUSH,
+    EP_OUT,
+    HANDSHAKE_CHUNKS,
+    IFACE,
+    PID_DONGLE,
+    PID_NATIVE,
+    PID_VENDOR,
+    PID_XINPUT,
+    VID,
 )
 
 log = logging.getLogger(__name__)
@@ -35,7 +43,7 @@ def find_native_identity() -> Optional[usb.core.Device]:
     return find_device(PID_NATIVE)
 
 
-def find_writable_device() -> Tuple[Optional[usb.core.Device], bool]:
+def find_writable_device() -> tuple[Optional[usb.core.Device], bool]:
     """Find a device already ready to accept 0x0f vendor writes -- either the
     wired controller in vendor mode (PID_VENDOR, requires enter_vendor_mode()
     first) or the wireless dongle (PID_DONGLE, needs no mode switch at all).
@@ -49,7 +57,7 @@ def find_writable_device() -> Tuple[Optional[usb.core.Device], bool]:
     return None, False
 
 
-def make_handshake_packets() -> List[bytes]:
+def make_handshake_packets() -> list[bytes]:
     packets = []
     for i, pair in enumerate(HANDSHAKE_CHUNKS):
         b = bytearray(8)

@@ -7,8 +7,15 @@ import usb.core
 import usb.util
 
 from .constants import (
-    CMD_HEARTBEAT, CMD_READ, EP_IN, EP_OUT, IFACE,
-    READ_CHUNK_LENGTH, READ_RESPONSE_MARKER, READ_SUBCOMMAND, REPORT_ID_READ_RESPONSE,
+    CMD_HEARTBEAT,
+    CMD_READ,
+    EP_IN,
+    EP_OUT,
+    IFACE,
+    READ_CHUNK_LENGTH,
+    READ_RESPONSE_MARKER,
+    READ_SUBCOMMAND,
+    REPORT_ID_READ_RESPONSE,
 )
 
 log = logging.getLogger(__name__)

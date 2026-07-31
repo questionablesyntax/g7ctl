@@ -31,7 +31,7 @@ class KeycodeCoverageTest(unittest.TestCase):
         device using it renders as "(Unbound)" and is then dropped from the
         state dict by the next unrelated edit.
         """
-        from g7ctlc.widgets import KEYCODE_GROUPS, _NOT_SELECTABLE
+        from g7ctlc.widgets import _NOT_SELECTABLE, KEYCODE_GROUPS
         listed = {name for _label, entries in KEYCODE_GROUPS for name, _short in entries}
         unreachable = sorted(set(KNOWN_KEYCODES) - listed - set(_NOT_SELECTABLE))
         self.assertEqual(unreachable, [], "keycodes unreachable from the GUI picker")
@@ -51,8 +51,8 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def _view_with(self, bindings):
-        from pyg7 import state as state_mod
         from g7ctlc.views.buttons_view import ButtonsView
+        from pyg7 import state as state_mod
         state = state_mod.default_state_dict("test")
         state["buttons"]["default"].update(bindings)
         view = ButtonsView()
@@ -118,8 +118,8 @@ class SticksDirectionBindingsTest(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def _view_with(self, direction_bindings):
-        from pyg7 import state as state_mod
         from g7ctlc.views.sticks_view import SticksView
+        from pyg7 import state as state_mod
         state = state_mod.default_state_dict("test")
         am = state["sticks"]["left"]["advanced_mapping"]
         am["output_mode"] = "directional"

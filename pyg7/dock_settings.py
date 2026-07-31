@@ -24,7 +24,9 @@ from typing import Union
 
 from .constants import CMD_WRITE, DOCK_READ_CATEGORY, DOCK_STORAGE_BASE, PREFIX_DOCK
 from .session import VendorSession
-from .values import SettingValue, boolean as _bool, percent as _percent
+from .values import SettingValue
+from .values import boolean as _bool
+from .values import percent as _percent
 
 BRIGHTNESS_SETTING_ID = 0xF9
 AUTO_ON_OFF_SETTING_ID = 0xF6

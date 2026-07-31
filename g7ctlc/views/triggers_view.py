@@ -7,10 +7,15 @@ from typing import Optional
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
-    QComboBox, QFormLayout, QGroupBox, QTabWidget, QVBoxLayout, QWidget,
+    QComboBox,
+    QFormLayout,
+    QGroupBox,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
-from ..widgets import CategorySideWidget, CURVE_OPTIONS, percent_spin
+from ..widgets import CURVE_OPTIONS, CategorySideWidget, percent_spin
 
 HAIR_TRIGGER_OPTIONS = [("off", "Off"), ("adaptive", "Adaptive"), ("fixed", "Fixed")]
 

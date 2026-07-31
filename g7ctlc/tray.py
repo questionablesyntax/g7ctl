@@ -12,7 +12,7 @@ be independently copyrightable" question, which is still open for this art.
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from PyQt6.QtCore import QObject, Qt, QSize, pyqtSignal
+from PyQt6.QtCore import QObject, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QIcon, QPixmap
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 

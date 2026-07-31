@@ -6,13 +6,29 @@ from typing import Optional
 from PyQt6.QtCore import QByteArray, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QCloseEvent, QDesktopServices
 from PyQt6.QtWidgets import (
-    QComboBox, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMenu,
-    QMessageBox, QPushButton, QTabWidget, QToolButton, QVBoxLayout, QWidget,
+    QComboBox,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QTabWidget,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
 )
 
 from pyg7 import state as state_mod
+
 from . import help_content
 from .tray import _state_icon
+from .views.buttons_view import ButtonsView
+from .views.settings_view import SettingsView
+from .views.sticks_view import SticksView
+from .views.triggers_view import TriggersView
+from .views.vibration_view import VibrationView
 
 # The window/taskbar icon is static regardless of connection state -- only
 # the tray icon (see tray.py's TrayIcon) reflects state with color. A
@@ -23,11 +39,6 @@ from .tray import _state_icon
 # small button holes aliased into a busy speckle at the ~16px size KWin
 # renders the title-bar icon at; the open-outline glyph survives that fine.
 _APP_ICON_FILE = "icon_gray.png"
-from .views.buttons_view import ButtonsView
-from .views.settings_view import SettingsView
-from .views.sticks_view import SticksView
-from .views.triggers_view import TriggersView
-from .views.vibration_view import VibrationView
 
 _GEOMETRY_PATH = (
     Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))

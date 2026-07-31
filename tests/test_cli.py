@@ -483,7 +483,7 @@ class BatchReplTest(unittest.TestCase):
             try:
                 return next(inputs)
             except StopIteration:
-                raise EOFError()
+                raise EOFError() from None
 
         with mock.patch("builtins.input", side_effect=fake_input), \
              mock.patch("sys.stdin.isatty", return_value=True), \
@@ -500,7 +500,7 @@ class BatchReplTest(unittest.TestCase):
             try:
                 return next(inputs)
             except StopIteration:
-                raise EOFError()
+                raise EOFError() from None
 
         with mock.patch("builtins.input", side_effect=fake_input), \
              mock.patch("sys.stdin.isatty", return_value=True), \

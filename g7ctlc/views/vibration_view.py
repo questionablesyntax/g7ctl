@@ -1,10 +1,16 @@
 """Vibrations tab: grip/trigger levels and per-side trigger force/sync flags."""
-from typing import Optional, Tuple
+from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QSlider,
-    QVBoxLayout, QWidget,
+    QCheckBox,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QSlider,
+    QVBoxLayout,
+    QWidget,
 )
 
 LEVEL_SETTINGS = [
@@ -13,7 +19,7 @@ LEVEL_SETTINGS = [
 ]
 
 
-def _level_row() -> Tuple[QSlider, QWidget]:
+def _level_row() -> tuple[QSlider, QWidget]:
     slider = QSlider(Qt.Orientation.Horizontal)
     slider.setRange(0, 100)
     value_label = QLabel("50")
