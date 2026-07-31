@@ -61,6 +61,20 @@ application launcher.
 
 Not on the AUR yet; build it from a checkout as above.
 
+**Arch is the only packaging this project maintains**, because it's the only
+distro the author runs and can actually test on. That's a deliberate limit,
+not an oversight -- shipping a `.deb` or an RPM nobody has verified on the
+target system is worse than shipping none.
+
+Nothing here is Arch-specific, though, and the layout is deliberately
+packaging-friendly: a standard PEP 517 build, three importable packages with
+the dependency arrow pointing one way (both apps depend on the library, never
+the reverse), PyQt6 isolated behind an optional extra so the library installs
+headless, the udev rule and desktop entry as plain standalone files, no
+vendored dependencies, and 202 tests that run without any hardware attached
+so a packager can execute them during a build. Packaging for other distros
+should be straightforward, and contributions doing so are welcome.
+
 ### Anything else
 
 The protocol library needs only [PyUSB](https://github.com/pyusb/pyusb); the
