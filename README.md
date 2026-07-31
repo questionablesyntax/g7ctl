@@ -1,23 +1,31 @@
 # g7ctl
 
-Reverse engineering GameSir Nexus's protocol for the GameSir G7 Pro
-controller, to bring its customization features (button remapping first,
-eventually stick/trigger/vibration/motion/polling-rate settings) to Linux
-without needing Windows or the Nexus app.
+A reverse-engineered implementation of GameSir Nexus's USB protocol, bringing
+the GameSir G7 Pro's customization — button remapping, stick and trigger
+settings, vibration, polling rate, dock options — to Linux without Windows or
+the Nexus app.
 
 Two components, one repo: `g7ctl`, a scriptable CLI, and `g7ctlc`
 ("G7 Control Center"), a PyQt6 GUI + tray app. Both sit on top of `pyg7`,
 a standalone protocol library usable on its own from a script or a service.
 
-Status: feature-complete against the GameSir Nexus app for everything it
-exposes, with zero Windows involvement. Full read *and* write coverage for
-button remapping (21 buttons, Default and Shift layers, every keycode
-including all native gamepad/paddle functions), stick settings, trigger
-settings, vibration, report rate, D-pad options (including "Swap Left Stick
-and D-pad"), and the dock's LED brightness / auto on-off. Every per-profile
+Status: every settings category GameSir Nexus exposes as a page of its own is
+mapped, with full read *and* write and zero Windows involvement — button
+remapping (21 buttons, Default and Shift layers, the whole keycode picker
+including native gamepad/paddle functions), stick settings, trigger settings,
+vibration, report rate, D-pad options (including "Swap Left Stick and
+D-pad"), and the dock's LED brightness / auto on-off. Every per-profile
 category targets one of the controller's 4 onboard slots explicitly, so no
 on-device button combo is ever needed to pick which profile a change lands
 in.
+
+That is not the same as *everything Nexus can do*. Nexus has miscellaneous
+options tucked into corners of its UI that haven't been enumerated, and the
+motion/gyro tab is unimplemented by choice. Realistically this covers the
+large majority of the app with a long tail still unmapped — enough to replace
+it for day-to-day use, not a claim of parity. If you find something Nexus
+does that this can't, that's a gap worth reporting rather than a
+misunderstanding on your part.
 
 **Scope: the GameSir G7 Pro, because that's the controller on the desk.**
 That's what this was reverse-engineered against and the only hardware any of
@@ -150,8 +158,11 @@ g7ctl batch myscript.txt --dry-run             # validate syntax only, no device
 g7ctl batch myscript.txt --continue-on-error    # skip a bad line instead of stopping
 ```
 
-The keycode table is complete -- Keyboard, Numpad, Mouse, and every native
-gamepad/paddle function.
+The keycode table covers every entry in Nexus's own picker -- Keyboard,
+Numpad, Mouse, and all native gamepad/paddle functions. The byte space itself
+isn't exhaustively enumerated, though: at least one region outside those
+blocks exists (`0xE6`/`0xE7`, see PROTOCOL.md), so an unrecognised value is
+surfaced as raw hex rather than dropped.
 
 ## Development
 
