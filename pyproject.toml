@@ -1,5 +1,6 @@
 [build-system]
-requires = ["setuptools>=61"]
+# >=77 for PEP 639 (SPDX `license` string + `license-files`).
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,7 +13,10 @@ requires-python = ">=3.9"
 # GPL-licensed GUI. The pyg7/ package alone is separately available
 # under Apache-2.0 (see pyg7/LICENSE) -- README.md "License" explains
 # why the split runs that way round.
-license = { text = "GPL-3.0-or-later" }
+license = "GPL-3.0-or-later"
+# Both texts ship in the wheel metadata: the project is GPL-3.0-or-later as a
+# whole, while pyg7/ is separately available under Apache-2.0.
+license-files = ["LICENSE", "pyg7/LICENSE"]
 authors = [{ name = "J Whittington (onemyndseye, questionablesyntax)" }]
 keywords = ["gamesir", "g7-pro", "controller", "gamepad", "usb", "linux"]
 classifiers = [
@@ -22,7 +26,6 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Topic :: System :: Hardware :: Hardware Drivers",
-    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
 ]
 
 # The protocol library needs pyusb and nothing else. Keeping PyQt6 out of the
@@ -47,10 +50,10 @@ g7ctlc = "g7ctlc.app:main"
 Homepage = "https://github.com/questionablesyntax/g7ctl"
 
 [tool.setuptools]
-packages = ["pyg7", "g7ctl", "g7ctlc", "g7ctlc.views"]
+packages = ["pyg7", "g7ctl", "g7ctlc", "g7ctlc.views", "g7ctlc.assets"]
 
 [tool.setuptools.package-data]
-g7ctlc = ["assets/*.png"]
+"g7ctlc.assets" = ["*.png"]
 
 [tool.ruff]
 line-length = 110  # the protocol tables and their citations run wide on purpose
