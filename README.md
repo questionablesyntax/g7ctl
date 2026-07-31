@@ -121,6 +121,8 @@ whoever's logged in at the physical seat. After that, both
 
 ## GUI
 
+<img src="docs/screenshot.png" alt="G7 Control Center showing the Buttons tab: each of the 21 buttons listed with its Default Layer and Shift Layer binding, a profile selector and report rate in the top bar, and Read from Device / Sync Now actions along the bottom." width="480">
+
 `g7ctlc/` is a PyQt6 app + system tray icon covering Buttons/Sticks/
 Triggers/Vibration/Report Rate, plus a "Settings" tab for the two
 genuinely global, non-profile-scoped Dock settings (LED Brightness, Auto
