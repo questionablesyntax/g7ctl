@@ -15,11 +15,21 @@
 # package's Python dist-info metadata still lists the files that got
 # pruned. Harmless for pacman's purposes, but technically inaccurate.
 #
-# NOT YET BUILD-TESTED against a real tarball -- makepkg/python-build/
-# python-installer weren't all available on the machine this was scaffolded
-# on, and no tagged release exists yet for source= to fetch. Structurally
-# validated with `makepkg --printsrcinfo` only. Run `makepkg -si` for real
-# against the first tagged release before trusting this further.
+# Validation status, 2026-07-31, against the real v0.1.0 release tarball:
+#   done  - `makepkg --printsrcinfo` parses, and `makepkg --verifysource`
+#           passes against the sha256sum below.
+#   done  - the wheel builds from that tarball, and the install-then-prune
+#           dance in each package_*() below was replayed against it: each
+#           pkgdir ends up with exactly its own package (pyg7 / g7ctl /
+#           g7ctlc) and exactly its own /usr/bin entry, nothing leaked.
+#   TODO  - a real end-to-end `makepkg -si`. python-build and
+#           python-installer were not installed on the machine this was
+#           validated on, so the steps above were replayed by hand rather
+#           than driven by makepkg itself. The udev/LICENSE/icon/.desktop
+#           `install` lines are consequently unexercised -- their sources
+#           are confirmed present in the tarball, but nothing has verified
+#           they land correctly. Run `makepkg -si` before publishing to the
+#           AUR.
 
 pkgbase=g7ctl
 pkgname=('python-pyg7' 'g7ctl' 'g7ctlc')
@@ -35,7 +45,7 @@ makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools
 # tag actually exists -- replace it with the real checksum (`updpkgsums`)
 # once there's a tarball to hash.
 source=("$pkgbase-$pkgver.tar.gz::https://github.com/questionablesyntax/g7ctl/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('6a16b013257ee32c965d921d2c92de87cb5de2f2380c6c81fb0f0f79633777c9')
 
 build() {
   cd "$pkgbase-$pkgver"
