@@ -24,6 +24,21 @@ self-contained, organized for lookup rather than as a narrative, and marks
 throughout which values are hardware-confirmed versus predicted from a
 confirmed pattern.
 
+## Repository layout
+
+| Path | What it is |
+|---|---|
+| `pyg7/` | Protocol library (Apache-2.0). PyUSB only, no Qt — usable on its own. |
+| `g7ctl/` | The CLI. |
+| `g7ctlc/` | The GUI + tray app. |
+| `g7ctl_tool.py` | Convenience shim: runs the CLI straight from a checkout, no install. Equivalent to the `g7ctl` command. |
+| `g7ctlc_launcher.py` | Same idea for the GUI. Named this rather than `g7ctlc` because a file can't share a name with the `g7ctlc/` package directory beside it. |
+| `packaging/`, `udev/` | Arch PKGBUILD and desktop entry; the udev rule for non-root USB access. |
+
+The two root-level scripts exist purely so a fresh `git clone` is runnable
+with nothing installed. If you install the package, use the `g7ctl` and
+`g7ctlc` commands instead — they do the same thing.
+
 ## Install
 
 The protocol library needs only [PyUSB](https://github.com/pyusb/pyusb); the
@@ -152,23 +167,23 @@ snapshot file at a path you choose -- the only form of on-disk persistence
 now; nothing auto-saves. A "Help" menu, top bar right, has About (version and
 license summary), an On-Device Features reference (the button-combo cheat
 sheet below, without leaving the app), and a link to report an issue.
-Left-clicking the tray icon shows/hides the
-window. Launch it via the `g7ctlc_launcher.py` script in the repo root, not
-`python3 -m g7ctlc` directly:
+Left-clicking the tray icon shows/hides the window. From a checkout:
 
 ```bash
 ./g7ctlc_launcher.py
 ```
 
-That script is a normal Python launcher (`#!/usr/bin/env python3`) that
-renames its own process via `prctl(PR_SET_NAME, ...)` (stdlib `ctypes`,
-Linux-only, best-effort) before starting the GUI, so the process is
-identified as "g7ctlc" rather than "python3.14". Window
-managers (KWin included) derive a window's class from the process's
-kernel `comm` name, which `QApplication.setDesktopFileName()` alone
-doesn't control from inside the app. Without this, KDE's taskbar/alt-tab/
-Window Rules would identify every window as generic "python3", making
-window rules match any Python script on your system, not just this app.
+`python3 -m g7ctlc` and the installed `g7ctlc` command work identically --
+all three go through `g7ctlc.app:main()`, so pick whichever suits you.
+
+On startup the app renames its own process to "g7ctlc" via
+`prctl(PR_SET_NAME, ...)` (stdlib `ctypes`, Linux-only, best-effort), rather
+than showing up as "python3". Window managers (KWin included) derive a
+window's class from the process's kernel `comm` name, which
+`QApplication.setDesktopFileName()` alone doesn't control from inside the
+app. Without it, KDE's taskbar/alt-tab/Window Rules would identify every
+window as generic "python3", so a window rule meant for this app would match
+any Python script on your system.
 
 To have it show up properly in KDE's application launcher too, install
 the desktop entry:
