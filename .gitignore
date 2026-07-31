@@ -16,3 +16,9 @@ venv/
 # config ever belongs in here, negate the specific file (e.g.
 # `!.claude/settings.json`) rather than dropping this rule.
 .claude/
+
+# makepkg build artifacts (packaging/)
+src/
+pkg/
+*.pkg.tar.zst
+*.tar.gz

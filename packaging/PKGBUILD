@@ -15,21 +15,18 @@
 # package's Python dist-info metadata still lists the files that got
 # pruned. Harmless for pacman's purposes, but technically inaccurate.
 #
-# Validation status, 2026-07-31, against the real v0.1.0 release tarball:
-#   done  - `makepkg --printsrcinfo` parses, and `makepkg --verifysource`
-#           passes against the sha256sum below.
-#   done  - the wheel builds from that tarball, and the install-then-prune
-#           dance in each package_*() below was replayed against it: each
-#           pkgdir ends up with exactly its own package (pyg7 / g7ctl /
-#           g7ctlc) and exactly its own /usr/bin entry, nothing leaked.
-#   TODO  - a real end-to-end `makepkg -si`. python-build and
-#           python-installer were not installed on the machine this was
-#           validated on, so the steps above were replayed by hand rather
-#           than driven by makepkg itself. The udev/LICENSE/icon/.desktop
-#           `install` lines are consequently unexercised -- their sources
-#           are confirmed present in the tarball, but nothing has verified
-#           they land correctly. Run `makepkg -si` before publishing to the
-#           AUR.
+# Build-tested 2026-07-31: a real `makepkg` run against the v0.1.0 release
+# tarball produced all three packages cleanly. Verified in the resulting
+# .pkg.tar.zst files: each package contains only its own Python package and
+# only its own /usr/bin entry (nothing leaks across the prune), python-pyg7
+# ships the udev rule to /usr/lib/udev/rules.d/, g7ctlc ships the generated
+# .desktop plus the hicolor icon, all three carry the right LICENSE, and the
+# inter-package depends are correct. `makepkg --verifysource` passes against
+# the sha256sum below.
+#
+# Not yet done: installing the built packages with pacman and running them
+# from /usr/bin. The packaging is verified; the installed-runtime path is
+# not.
 
 pkgbase=g7ctl
 pkgname=('python-pyg7' 'g7ctl' 'g7ctlc')
