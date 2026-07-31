@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=G7 Control Center
+Comment=Configure a GameSir G7 Pro controller (buttons, sticks, triggers, vibration) without Windows
+Exec=/path/to/g7ctl/g7ctlc_launcher.py
+Path=/path/to/g7ctl
+Icon=/path/to/g7ctl/g7ctlc/assets/icon_gray.png
+Categories=Utility;
+Terminal=false
+StartupWMClass=g7ctlc

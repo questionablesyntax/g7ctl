@@ -1,0 +1,320 @@
+{
+  "profile1_configured": {
+    "buttons": {
+      "default": {
+        "a": "native_a",
+        "b": "native_b",
+        "dpad_down": "native_dpad_down",
+        "dpad_left": "native_dpad_left",
+        "dpad_right": "native_dpad_right",
+        "dpad_up": "native_dpad_up",
+        "l3": "native_l3",
+        "l4": "numpad1",
+        "l5": "numpad7",
+        "lb": "native_lb",
+        "lt": "native_lt",
+        "menu": "native_menu",
+        "r3": "native_r3",
+        "r4": "numpad3",
+        "r5": "numpad9",
+        "rb": "native_rb",
+        "rt": "native_rt",
+        "share": "f11",
+        "view": "native_view",
+        "x": "native_x",
+        "y": "native_y"
+      },
+      "shift": {
+        "a": "native_a",
+        "b": "native_b",
+        "dpad_down": "native_dpad_down",
+        "dpad_left": "native_dpad_left",
+        "dpad_right": "native_dpad_right",
+        "dpad_up": "native_dpad_up",
+        "l3": "native_l3",
+        "l4": "numpad1",
+        "l5": "numpad7",
+        "lb": "native_lb",
+        "lt": "native_lt",
+        "menu": "native_menu",
+        "r3": "native_r3",
+        "r4": "numpad3",
+        "r5": "numpad9",
+        "rb": "native_r3",
+        "rt": "native_rt",
+        "share": "f11",
+        "view": "native_view",
+        "x": "native_x",
+        "y": "native_y"
+      }
+    },
+    "controller_slot": 1,
+    "dock_auto_on_off": true,
+    "dock_led_brightness": 100,
+    "dpad_diagonal_lock": false,
+    "report_rate_hz": 1000,
+    "schema_version": 1,
+    "sticks": {
+      "left": {
+        "advanced_mapping": {
+          "direction_bindings": {
+            "down": "s",
+            "left": "a",
+            "right": "d",
+            "ring": "shift",
+            "up": "w"
+          },
+          "dpi": 50,
+          "invert_x": false,
+          "invert_y": false,
+          "output_mode": "left_stick",
+          "overlap_area": 50,
+          "sensitivity": 50
+        },
+        "anti_deadzone": {
+          "initial": 0,
+          "max": 100
+        },
+        "curve": {
+          "preset": "standard"
+        },
+        "deadzone": {
+          "initial": 5,
+          "max": 100
+        },
+        "resolution_bits": 12,
+        "trajectory": "circle"
+      },
+      "right": {
+        "advanced_mapping": {
+          "direction_bindings": {
+            "down": null,
+            "left": null,
+            "right": null,
+            "ring": null,
+            "up": null
+          },
+          "dpi": 50,
+          "invert_x": false,
+          "invert_y": false,
+          "output_mode": "right_stick",
+          "overlap_area": 50,
+          "sensitivity": 50
+        },
+        "anti_deadzone": {
+          "initial": 0,
+          "max": 100
+        },
+        "curve": {
+          "preset": "standard"
+        },
+        "deadzone": {
+          "initial": 5,
+          "max": 100
+        },
+        "resolution_bits": 12,
+        "trajectory": "circle"
+      }
+    },
+    "swap_stick_dpad": false,
+    "triggers": {
+      "left": {
+        "anti_deadzone": {
+          "initial": 0,
+          "max": 100
+        },
+        "curve": {
+          "preset": "standard"
+        },
+        "deadzone": {
+          "initial": 5,
+          "max": 100
+        },
+        "hair_trigger_mode": "off"
+      },
+      "right": {
+        "anti_deadzone": {
+          "initial": 0,
+          "max": 100
+        },
+        "curve": {
+          "preset": "standard"
+        },
+        "deadzone": {
+          "initial": 5,
+          "max": 100
+        },
+        "hair_trigger_mode": "off"
+      }
+    },
+    "vibration": {
+      "left_grip": 50,
+      "left_trigger": 50,
+      "left_trigger_force": false,
+      "left_trigger_sync": false,
+      "right_grip": 50,
+      "right_trigger": 50,
+      "right_trigger_force": false,
+      "right_trigger_sync": false
+    }
+  },
+  "profile3_factory": {
+    "buttons": {
+      "default": {
+        "a": null,
+        "b": null,
+        "dpad_down": null,
+        "dpad_left": null,
+        "dpad_right": null,
+        "dpad_up": null,
+        "l3": null,
+        "l4": "native_l4",
+        "l5": "native_l5",
+        "lb": null,
+        "lt": "0x00",
+        "menu": null,
+        "r3": null,
+        "r4": "native_r4",
+        "r5": "native_r5",
+        "rb": null,
+        "rt": "0x00",
+        "share": null,
+        "view": null,
+        "x": null,
+        "y": null
+      },
+      "shift": {
+        "a": "native_a",
+        "b": "native_b",
+        "dpad_down": "native_dpad_down",
+        "dpad_left": "native_dpad_left",
+        "dpad_right": "native_dpad_right",
+        "dpad_up": "native_dpad_up",
+        "l3": "native_l3",
+        "l4": "numpad1",
+        "l5": "numpad9",
+        "lb": "native_lb",
+        "lt": "native_lt",
+        "menu": "native_menu",
+        "r3": "native_r3",
+        "r4": "numpad3",
+        "r5": "numpad7",
+        "rb": "native_rb",
+        "rt": "native_rt",
+        "share": "f11",
+        "view": "native_view",
+        "x": "native_x",
+        "y": "native_y"
+      }
+    },
+    "controller_slot": 3,
+    "dock_auto_on_off": true,
+    "dock_led_brightness": 100,
+    "dpad_diagonal_lock": false,
+    "report_rate_hz": 500,
+    "schema_version": 1,
+    "sticks": {
+      "left": {
+        "advanced_mapping": {
+          "direction_bindings": {
+            "down": "0x00",
+            "left": "0x00",
+            "right": "0x00",
+            "ring": "0x00",
+            "up": "0x00"
+          },
+          "dpi": 0,
+          "invert_x": false,
+          "invert_y": false,
+          "output_mode": null,
+          "overlap_area": 0,
+          "sensitivity": 0
+        },
+        "anti_deadzone": {
+          "initial": 0,
+          "max": 100
+        },
+        "curve": {
+          "preset": "standard"
+        },
+        "deadzone": {
+          "initial": 10,
+          "max": 100
+        },
+        "resolution_bits": 12,
+        "trajectory": "circle"
+      },
+      "right": {
+        "advanced_mapping": {
+          "direction_bindings": {
+            "down": "0x00",
+            "left": "0x00",
+            "right": "0x00",
+            "ring": "0x00",
+            "up": "0x00"
+          },
+          "dpi": 0,
+          "invert_x": false,
+          "invert_y": false,
+          "output_mode": null,
+          "overlap_area": 0,
+          "sensitivity": 0
+        },
+        "anti_deadzone": {
+          "initial": 0,
+          "max": 100
+        },
+        "curve": {
+          "preset": "standard"
+        },
+        "deadzone": {
+          "initial": 10,
+          "max": 100
+        },
+        "resolution_bits": 12,
+        "trajectory": "circle"
+      }
+    },
+    "swap_stick_dpad": false,
+    "triggers": {
+      "left": {
+        "anti_deadzone": {
+          "initial": 0,
+          "max": 100
+        },
+        "curve": {
+          "preset": "standard"
+        },
+        "deadzone": {
+          "initial": 5,
+          "max": 95
+        },
+        "hair_trigger_mode": null
+      },
+      "right": {
+        "anti_deadzone": {
+          "initial": 0,
+          "max": 100
+        },
+        "curve": {
+          "preset": "standard"
+        },
+        "deadzone": {
+          "initial": 5,
+          "max": 95
+        },
+        "hair_trigger_mode": null
+      }
+    },
+    "vibration": {
+      "left_grip": 75,
+      "left_trigger": 75,
+      "left_trigger_force": false,
+      "left_trigger_sync": false,
+      "right_grip": 75,
+      "right_trigger": 75,
+      "right_trigger_force": false,
+      "right_trigger_sync": false
+    }
+  }
+}

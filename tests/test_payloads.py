@@ -1,0 +1,408 @@
+"""Wire-format tests: every payload builder, byte for byte.
+
+These are the highest-value tests in the project. The byte layouts here were
+each established by USB capture and confirmed against real hardware, often
+over multiple sessions -- but nothing except a person's memory was stopping a
+refactor from quietly changing one. A wrong byte doesn't raise; it writes
+something unintended to a device's persistent config.
+
+Golden vectors are taken from the payloads recorded in PROTOCOL.md and the
+original live USB captures, rather than from what the code currently
+produces, so these tests can actually disagree with the implementation.
+"""
+import unittest
+
+from pyg7 import buttons, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
+from pyg7.constants import CMD_WRITE, prefix_sticks, prefix_triggers_vibration
+from pyg7.curves import curve_preset_payload
+from pyg7.session import profile_layer_byte
+
+from .fakes import FakeSession
+
+
+class ProfileLayerByteTest(unittest.TestCase):
+    """The Buttons category packs profile AND layer into one byte."""
+
+    def test_confirmed_values(self):
+        # The three combinations directly confirmed by capture.
+        self.assertEqual(profile_layer_byte(1, shift=False), 0x01)
+        self.assertEqual(profile_layer_byte(2, shift=False), 0x02)
+        self.assertEqual(profile_layer_byte(1, shift=True), 0x05)
+
+    def test_formula_extends_to_all_slots(self):
+        self.assertEqual(profile_layer_byte(4, shift=False), 0x04)
+        self.assertEqual(profile_layer_byte(4, shift=True), 0x08)
+
+    def test_rejects_out_of_range(self):
+        for bad in (0, 5, -1):
+            with self.assertRaises(ValueError):
+                profile_layer_byte(bad)
+
+
+class CategoryPrefixTest(unittest.TestCase):
+    """Non-Buttons categories carry a plain profile number in byte 1.
+
+    This is the distinction that went wrong for three days: the middle byte
+    is the profile, and hardcoding it to 1 makes every write land in Profile 1
+    no matter what the caller asked for.
+    """
+
+    def test_sticks_prefix_varies_with_profile(self):
+        self.assertEqual(prefix_sticks(1), bytes([0x03, 0x01, 0x01]))
+        self.assertEqual(prefix_sticks(2), bytes([0x03, 0x02, 0x01]))
+        self.assertEqual(prefix_sticks(4), bytes([0x03, 0x04, 0x01]))
+
+    def test_triggers_prefix_varies_with_profile(self):
+        self.assertEqual(prefix_triggers_vibration(1), bytes([0x03, 0x01, 0x00]))
+        self.assertEqual(prefix_triggers_vibration(3), bytes([0x03, 0x03, 0x00]))
+
+    def test_prefixes_reject_out_of_range_profiles(self):
+        for fn in (prefix_sticks, prefix_triggers_vibration):
+            for bad in (0, 5):
+                with self.assertRaises(ValueError):
+                    fn(bad)
+
+    def test_dock_prefix_is_fixed_not_profile_scoped(self):
+        # Dock settings are device-wide; the middle byte is a constant 0x20,
+        # NOT a profile. If this ever starts varying, the "global" claim in
+        # dock_settings.py is wrong.
+        from pyg7.constants import PREFIX_DOCK
+        self.assertEqual(PREFIX_DOCK, bytes([0x03, 0x20, 0x01]))
+
+
+class ButtonWriteTest(unittest.TestCase):
+    def test_remap_payload_shape(self):
+        sess = FakeSession()
+        buttons.remap(sess, buttons.KNOWN_BUTTON_IDS["a"], 0x3E, profile=1, shift=False)
+        # 03 [PROFILE+LAYER] 00 [BUTTON_ID...] 01 [KEYCODE], with the button
+        # ID in its 2-byte allocate form (compact 0x7B -> 0x7A 0x02).
+        self.assertEqual(sess.only_payload(), bytes([0x03, 0x01, 0x00, 0x7A, 0x02, 0x01, 0x3E]))
+
+    def test_remap_uses_write_command(self):
+        sess = FakeSession()
+        buttons.remap(sess, buttons.KNOWN_BUTTON_IDS["a"], 0x3E)
+        self.assertEqual(sess.sent[0][0], CMD_WRITE)
+
+    def test_remap_targets_shift_layer_and_profile(self):
+        sess = FakeSession()
+        buttons.remap(sess, buttons.KNOWN_BUTTON_IDS["a"], 0x3E, profile=2, shift=True)
+        self.assertEqual(sess.only_payload()[1], 0x06)  # profile 2 + shift
+
+    def test_unbind_payload_differs_from_remap(self):
+        sess = FakeSession()
+        buttons.unbind(sess, buttons.KNOWN_BUTTON_IDS["l5"], profile=1)
+        # A single trailing 0x00 instead of [0x01, keycode] -- confirmed on L5/R5.
+        self.assertEqual(sess.only_payload(), bytes([0x03, 0x01, 0x00, 0xB9, 0x02, 0x00]))
+
+    def test_allocate_form_is_always_used(self):
+        # Hardware-confirmed: a compact-form write to a button not allocated
+        # this session is silently ignored, so every write uses allocate form.
+        self.assertEqual(buttons._to_allocate_form(bytes([0x7B])), bytes([0x7A, 0x02]))
+        # Already-2-byte IDs pass through untouched.
+        self.assertEqual(buttons._to_allocate_form(bytes([0xB9, 0x02])), bytes([0xB9, 0x02]))
+
+    def test_allocate_form_rejects_bad_width(self):
+        with self.assertRaises(ValueError):
+            buttons._to_allocate_form(bytes([1, 2, 3]))
+
+    def test_allocate_form_rejects_compact_id_zero_with_a_clear_message(self):
+        # button_id[0] - 1 would be -1; bytes([-1, 0x02]) fails with an
+        # opaque "bytes must be in range(0, 256)" -- this needs its own
+        # explicit check for a message that says what's actually wrong.
+        with self.assertRaisesRegex(ValueError, "0x00"):
+            buttons._to_allocate_form(bytes([0x00]))
+
+    def test_resolve_button_id_accepts_name_or_hex(self):
+        self.assertEqual(buttons.resolve_button_id("A"), bytes([0x7B]))
+        self.assertEqual(buttons.resolve_button_id("b902"), bytes([0xB9, 0x02]))
+
+    def test_resolve_keycode_accepts_name_or_hex(self):
+        self.assertEqual(buttons.resolve_keycode("f12"), 0x3E)
+        self.assertEqual(buttons.resolve_keycode("3e"), 0x3E)
+
+    def test_resolve_keycode_rejects_out_of_range_hex(self):
+        # A keycode is one wire byte; "1ff" (511) used to sail through here
+        # and only fail deep inside remap()'s bytes([0x01, keycode]) with a
+        # generic, hard-to-place error.
+        with self.assertRaises(ValueError):
+            buttons.resolve_keycode("1ff")
+
+
+class CurvePayloadTest(unittest.TestCase):
+    def test_standard_preset_matches_captured_bytes(self):
+        # Captured: 03 01 01 44 0A 00 64 00 00 28 29 80 80 D7 D6
+        self.assertEqual(
+            curve_preset_payload(0x44, "standard"),
+            bytes.fromhex("440a00640000282980 80d7d6".replace(" ", "")),
+        )
+
+    def test_concave_and_s_curve_match_captured_bytes(self):
+        # Captured: ... 44 0A 01 64 00 00 5E 17 B0 4F E8 A1
+        self.assertEqual(curve_preset_payload(0x44, "concave"),
+                         bytes.fromhex("440a016400005e17b04fe8a1"))
+        # Captured: ... 44 0A 02 64 00 00 28 4C 80 80 D7 B2
+        self.assertEqual(curve_preset_payload(0x44, "s_curve"),
+                         bytes.fromhex("440a02640000284c8080d7b2"))
+
+    def test_custom_uses_the_short_form(self):
+        # Custom carries no curve data -- it's only a mode-select flag.
+        self.assertEqual(curve_preset_payload(0x44, "custom"), bytes([0x44, 0x01, 0x03, 0x00]))
+
+    def test_unknown_preset_rejected(self):
+        with self.assertRaises(ValueError):
+            curve_preset_payload(0x44, "logarithmic")
+
+
+class ReportRateTest(unittest.TestCase):
+    def test_each_rate_encodes_to_its_confirmed_value(self):
+        # 03 [profile] 00 30 01 [VALUE]; VALUE 0/1/2 for 250/500/1000 Hz.
+        for hz, expected in ((250, 0x00), (500, 0x01), (1000, 0x02)):
+            sess = FakeSession()
+            report_rate.set_value(sess, hz, profile=1)
+            self.assertEqual(sess.only_payload(), bytes([0x03, 0x01, 0x00, 0x30, 0x01, expected]),
+                             f"wrong payload for {hz}Hz")
+
+    def test_rate_is_profile_scoped(self):
+        sess = FakeSession()
+        report_rate.set_value(sess, 500, profile=3)
+        self.assertEqual(sess.only_payload()[1], 0x03)
+
+    def test_unsupported_rate_rejected(self):
+        with self.assertRaises(ValueError):
+            report_rate.set_value(FakeSession(), 2000)
+
+
+class VibrationTest(unittest.TestCase):
+    def test_level_payload(self):
+        sess = FakeSession()
+        vibration.set_value(sess, "left_grip", 75, profile=1)
+        self.assertEqual(sess.only_payload(), bytes([0x03, 0x01, 0x00, 0x20, 0x01, 75]))
+
+    def test_flags_are_bits_on_one_byte(self):
+        # bit0 = Force, bit1 = Sync -- confirmed via the 01/00/02/00 toggle run.
+        self.assertEqual(vibration.flags_byte(force=False, sync=False), 0x00)
+        self.assertEqual(vibration.flags_byte(force=True, sync=False), 0x01)
+        self.assertEqual(vibration.flags_byte(force=False, sync=True), 0x02)
+        self.assertEqual(vibration.flags_byte(force=True, sync=True), 0x03)
+
+    def test_flags_accept_the_cli_string_form(self):
+        sess = FakeSession()
+        vibration.set_value(sess, "left_trigger_flags", "on,off", profile=1)
+        self.assertEqual(sess.only_payload(), bytes([0x03, 0x01, 0x00, 0x24, 0x01, 0x01]))
+
+    def test_out_of_range_level_rejected(self):
+        with self.assertRaises(ValueError):
+            vibration.set_value(FakeSession(), "left_grip", 101)
+
+    def test_unknown_setting_rejected(self):
+        with self.assertRaises(ValueError):
+            vibration.set_value(FakeSession(), "middle_grip", 50)
+
+
+class StickWriteTest(unittest.TestCase):
+    def test_right_side_shifts_setting_id_by_0x20(self):
+        left, right = FakeSession(), FakeSession()
+        sticks.set_value(left, "left", "invert_x", True, profile=1)
+        sticks.set_value(right, "right", "invert_x", True, profile=1)
+        self.assertEqual(left.only_payload()[3], 0x51)
+        self.assertEqual(right.only_payload()[3], 0x51 + 0x20)
+
+    def test_resolution_bits_uses_the_other_prefix(self):
+        # The documented exception: resolution_bits rides the `03 [p] 00`
+        # prefix, not Sticks' usual `03 [p] 01`, and stores 12 - bits.
+        sess = FakeSession()
+        sticks.set_value(sess, "left", "resolution_bits", 10, profile=1)
+        self.assertEqual(sess.only_payload(), bytes([0x03, 0x01, 0x00, 0x32, 0x01, 2]))
+
+    def test_trajectory_encoding(self):
+        for value, expected in (("raw", 0x01), ("circle", 0x00)):
+            sess = FakeSession()
+            sticks.set_value(sess, "left", "trajectory", value, profile=1)
+            self.assertEqual(sess.only_payload()[-1], expected)
+
+    def test_output_mode_encoding(self):
+        sess = FakeSession()
+        sticks.set_value(sess, "left", "output_mode", "mouse", profile=1)
+        self.assertEqual(sess.only_payload(), bytes([0x03, 0x01, 0x01, 0x55, 0x01, 0x04]))
+
+    def test_direction_bindings_bulk_write(self):
+        sess = FakeSession()
+        sticks.set_value(sess, "left", "direction_bindings", "w,s,a,d,shift", profile=1)
+        self.assertEqual(
+            sess.only_payload(),
+            bytes([0x03, 0x01, 0x01, 0x57, 0x05, 0x4F, 0x5D, 0x5C, 0x5E, 0x68]),
+        )
+
+    def test_direction_bindings_requires_five_zones(self):
+        with self.assertRaises(ValueError):
+            sticks.set_value(FakeSession(), "left", "direction_bindings", "w,s,a")
+
+    def test_bad_side_rejected(self):
+        with self.assertRaises(ValueError):
+            sticks.set_value(FakeSession(), "middle", "invert_x", True)
+
+    def test_unknown_setting_rejected(self):
+        with self.assertRaises(ValueError):
+            sticks.set_value(FakeSession(), "left", "invert_z", True)
+
+
+class DeadzoneLiveSuffixTest(unittest.TestCase):
+    """Deadzone writes must carry the device's CURRENT overlapping bytes.
+
+    This is the regression that corrupted the Curve preset (Sticks) and the
+    opposite side's trigger keycode (Triggers) when the suffix was a stale
+    captured constant. The test pins the behaviour: whatever the device
+    currently has in that span is what gets sent back.
+    """
+
+    def test_stick_deadzone_suffix_comes_from_the_live_read(self):
+        # Distinctive live bytes so a hardcoded suffix would be obvious.
+        blob = bytes(range(256)) * 4
+        sess = FakeSession(blob)
+        sticks.set_value(sess, "left", "deadzone_initial", 5, profile=1)
+        payload = sess.only_payload()
+        storage_offset = 0x3F + sticks.STORAGE_BASE
+        suffix = payload[6:]
+        self.assertEqual(suffix, blob[storage_offset + 1:storage_offset + 1 + len(suffix)])
+        self.assertEqual(payload[5], 5)  # the value byte itself
+
+    def test_trigger_deadzone_reads_its_own_side(self):
+        blob = bytes(range(256)) * 4
+        left, right = FakeSession(blob), FakeSession(blob)
+        triggers.set_value(left, "left", "deadzone_initial", 5, profile=1)
+        triggers.set_value(right, "right", "deadzone_initial", 5, profile=1)
+        # Right must read from its own +0x1C-shifted address, not Left's.
+        self.assertNotEqual(left.only_payload()[6:], right.only_payload()[6:])
+        self.assertEqual(right.reads[0][1], 0xCF + 0x1C + triggers.STORAGE_BASE + 1)
+
+
+class TriggerWriteTest(unittest.TestCase):
+    def test_right_side_shifts_setting_id_by_0x1c(self):
+        # Deliberately different from Sticks' +0x20 -- confirmed per-category.
+        left, right = FakeSession(), FakeSession()
+        triggers.set_value(left, "left", "hair_trigger_mode", "off", profile=1)
+        triggers.set_value(right, "right", "hair_trigger_mode", "off", profile=1)
+        self.assertEqual(right.only_payload()[3] - left.only_payload()[3], 0x1C)
+
+    def test_hair_trigger_modes(self):
+        for mode, expected in (("off", 0x00), ("adaptive", 0x81), ("fixed", 0x82)):
+            sess = FakeSession()
+            triggers.set_value(sess, "left", "hair_trigger_mode", mode, profile=1)
+            self.assertEqual(sess.only_payload()[-1], expected)
+
+    def test_unknown_hair_trigger_mode_rejected(self):
+        with self.assertRaises(ValueError):
+            triggers.set_value(FakeSession(), "left", "hair_trigger_mode", "hairy")
+
+
+class DpadOptionsTest(unittest.TestCase):
+    def test_diagonal_lock_payload(self):
+        sess = FakeSession()
+        dpad_options.set_diagonal_lock(sess, True, profile=2)
+        self.assertEqual(sess.only_payload(), bytes([0x03, 0x02, 0x00, 0x2D, 0x01, 0x01]))
+
+    def test_diagonal_lock_accepts_the_cli_off_string(self):
+        # Regression: 0x01 if enabled else 0x00 on a raw (non-bool) `enabled`
+        # treats the non-empty string "off" as truthy and silently writes ON.
+        # Must route through values.boolean() like every other flag setting.
+        sess = FakeSession()
+        dpad_options.set_diagonal_lock(sess, "off", profile=1)
+        self.assertEqual(sess.only_payload()[-1], 0x00)
+
+    def test_swap_stick_dpad_accepts_the_cli_off_string(self):
+        sess = FakeSession()
+        dpad_options.set_swap_stick_dpad(sess, "off", profile=1)
+        payload = sess.only_payload()
+        self.assertEqual(payload[5], 0x00)   # val_2B
+        self.assertEqual(payload[6], 0x00)   # val_2C
+
+    def test_swap_stick_dpad_matches_the_captured_write(self):
+        # Golden vector: decoded from the live USB capture of a real
+        # "Swap Left Stick and D-pad" toggle, 2026-07-28.
+        # When the live suffix span (offset 0x2D, 53 bytes) matches what was
+        # actually on the device during that capture, the payload this
+        # produces must match the captured packet byte for byte.
+        suffix = bytes.fromhex(
+            "0000000200000000000000000000000000000000000101000000000001020000000000010300000000000104000000000001050000")
+        self.assertEqual(len(suffix), 53)
+        blob = bytearray(512)
+        blob[0x2D:0x2D + len(suffix)] = suffix
+        sess = FakeSession(bytes(blob))
+        dpad_options.set_swap_stick_dpad(sess, True, profile=1)
+        expected = bytes.fromhex(
+            "0301002b3701010000000200000000000000000000000000000000000101000000000001020000000000010300000000000104000000000001050000")
+        self.assertEqual(sess.only_payload(), expected)
+
+    def test_swap_stick_dpad_off_writes_zero(self):
+        sess = FakeSession()
+        dpad_options.set_swap_stick_dpad(sess, False, profile=1)
+        payload = sess.only_payload()
+        self.assertEqual(payload[3], 0x2B)   # SETTING_ID
+        self.assertEqual(payload[4], 0x37)   # length byte, not a marker -- see module docstring
+        self.assertEqual(payload[5], 0x00)   # val_2B
+        self.assertEqual(payload[6], 0x00)   # val_2C
+
+    def test_swap_stick_dpad_suffix_comes_from_the_live_read(self):
+        # Same regression class DeadzoneLiveSuffixTest pins for Sticks/
+        # Triggers: a hardcoded suffix would silently stomp whatever else
+        # lives in this span (D-Pad Diagonal Lock's own byte at 0x2D sits
+        # right inside it).
+        blob = bytes(range(256)) * 4
+        sess = FakeSession(blob)
+        dpad_options.set_swap_stick_dpad(sess, True, profile=1)
+        payload = sess.only_payload()
+        suffix = payload[7:]
+        self.assertEqual(len(suffix), 53)
+        self.assertEqual(suffix, blob[0x2D:0x2D + 53])
+
+    def test_set_value_dispatches_to_the_same_payloads(self):
+        # Roadmap item 19: set_value() is a name-based front door onto the
+        # same two functions above, matching sticks.py/triggers.py/
+        # vibration.py/report_rate.py's shape -- not a separate code path.
+        direct = FakeSession()
+        dpad_options.set_diagonal_lock(direct, True, profile=2)
+        via_dispatch = FakeSession()
+        dpad_options.set_value(via_dispatch, "diagonal_lock", True, profile=2)
+        self.assertEqual(direct.only_payload(), via_dispatch.only_payload())
+
+    def test_set_value_rejects_unknown_setting(self):
+        with self.assertRaises(ValueError):
+            dpad_options.set_value(FakeSession(), "not_a_real_setting", True)
+
+
+class DockSettingsTest(unittest.TestCase):
+    def test_brightness_payload_is_a_literal_percent(self):
+        sess = FakeSession()
+        dock_settings.set_brightness(sess, 75)
+        self.assertEqual(sess.only_payload(), bytes([0x03, 0x20, 0x01, 0xF9, 0x01, 75]))
+
+    def test_auto_on_off_payload(self):
+        sess = FakeSession()
+        dock_settings.set_auto_on_off(sess, False)
+        self.assertEqual(sess.only_payload(), bytes([0x03, 0x20, 0x01, 0xF6, 0x01, 0x00]))
+
+    def test_auto_on_off_accepts_the_cli_off_string(self):
+        # Same regression class as DpadOptionsTest's -- see that test's comment.
+        sess = FakeSession()
+        dock_settings.set_auto_on_off(sess, "off")
+        self.assertEqual(sess.only_payload()[-1], 0x00)
+
+    def test_brightness_range_enforced(self):
+        with self.assertRaises(ValueError):
+            dock_settings.set_brightness(FakeSession(), 150)
+
+    def test_set_value_dispatches_to_the_same_payloads(self):
+        # Roadmap item 19: same reasoning as DpadOptionsTest's version.
+        direct = FakeSession()
+        dock_settings.set_brightness(direct, 75)
+        via_dispatch = FakeSession()
+        dock_settings.set_value(via_dispatch, "brightness", 75)
+        self.assertEqual(direct.only_payload(), via_dispatch.only_payload())
+
+    def test_set_value_rejects_unknown_setting(self):
+        with self.assertRaises(ValueError):
+            dock_settings.set_value(FakeSession(), "not_a_real_setting", True)
+
+
+if __name__ == "__main__":
+    unittest.main()
