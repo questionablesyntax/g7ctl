@@ -40,11 +40,13 @@ import logging
 import shlex
 import sys
 import time
-from typing import Callable, Iterable, List, Optional
+from collections.abc import Iterable
+from typing import Callable, Optional
 
 import usb.core
 
-from pyg7 import buttons, dock_settings, dpad_options, report_rate, sticks, state as state_mod, triggers, vibration
+from pyg7 import buttons, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
+from pyg7 import state as state_mod
 from pyg7.device import enter_vendor_mode, find_writable_device
 from pyg7.session import VendorSession
 
@@ -438,7 +440,7 @@ def _run_batch_line(sess: VendorSession, args: argparse.Namespace) -> None:
     _dispatch_batch_args(sess, args)
 
 
-def _read_lines(path: Optional[str]) -> List[str]:
+def _read_lines(path: Optional[str]) -> list[str]:
     if path in (None, "-"):
         return sys.stdin.readlines()
     with open(path) as fh:

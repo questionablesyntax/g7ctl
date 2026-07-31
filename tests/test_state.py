@@ -372,7 +372,7 @@ class SparseSubsectionTest(unittest.TestCase):
         steps, _skipped = state_mod._build_steps(state, baseline=None)
         labels = [label for label, _fn in steps]
         self.assertIn("Left Stick: resolution_bits=10", labels)
-        for label, write_fn in steps:
+        for _label, write_fn in steps:
             write_fn(FakeSession(bytes(512)))  # must not raise end to end
 
 

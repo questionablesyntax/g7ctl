@@ -34,7 +34,8 @@ read-diff (toggle one setting, diff the full 480-byte blob):
 
 from .constants import CMD_WRITE, prefix_triggers_vibration
 from .session import VendorSession
-from .values import SettingValue, boolean as _bool
+from .values import SettingValue
+from .values import boolean as _bool
 
 DIAGONAL_LOCK_SETTING_ID = 0x2D
 SWAP_STICK_DPAD_SETTING_ID = 0x2B

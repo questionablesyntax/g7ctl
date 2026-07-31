@@ -8,7 +8,8 @@ module docstring.
 """
 from .constants import CMD_WRITE, prefix_triggers_vibration
 from .session import VendorSession
-from .values import SettingValue, percent as _percent
+from .values import SettingValue
+from .values import percent as _percent
 
 LEVEL_SETTING_IDS = {
     "left_grip": 0x20,

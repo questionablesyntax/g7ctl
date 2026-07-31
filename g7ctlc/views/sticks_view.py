@@ -7,12 +7,23 @@ from typing import Optional
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QFormLayout, QGroupBox, QScrollArea, QSpinBox,
-    QTabWidget, QVBoxLayout, QWidget,
+    QCheckBox,
+    QComboBox,
+    QFormLayout,
+    QGroupBox,
+    QScrollArea,
+    QSpinBox,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ..widgets import (
-    CategorySideWidget, CURVE_OPTIONS, make_keycode_combo, percent_spin, select_by_data,
+    CURVE_OPTIONS,
+    CategorySideWidget,
+    make_keycode_combo,
+    percent_spin,
+    select_by_data,
 )
 
 TRAJECTORY_OPTIONS = ["circle", "raw"]

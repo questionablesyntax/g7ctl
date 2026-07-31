@@ -11,11 +11,13 @@ live GameSir Nexus capture and a direct hardware test (see PROTOCOL.md
 writes carry no profile targeting at all, which stayed unverified for a
 while, but that read of the evidence didn't hold up.
 """
-from .constants import CMD_WRITE, RIGHT_STICK_OFFSET, prefix_sticks, prefix_triggers_vibration
 from .buttons import decode_keycode, resolve_keycode
+from .constants import CMD_WRITE, RIGHT_STICK_OFFSET, prefix_sticks, prefix_triggers_vibration
 from .curves import CURVE_PRESET_NAMES, curve_preset_payload
 from .session import VendorSession
-from .values import SettingValue, boolean as _bool, percent as _percent, side_offset
+from .values import SettingValue, side_offset
+from .values import boolean as _bool
+from .values import percent as _percent
 
 SETTING_IDS = {
     "trajectory": 0x3D,

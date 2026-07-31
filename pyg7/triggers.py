@@ -15,7 +15,8 @@ here).
 from .constants import CMD_WRITE, RIGHT_TRIGGER_OFFSET, prefix_triggers_vibration
 from .curves import CURVE_PRESET_NAMES, curve_preset_payload
 from .session import VendorSession
-from .values import SettingValue, percent as _percent, side_offset
+from .values import SettingValue, side_offset
+from .values import percent as _percent
 
 SETTING_IDS = {
     "hair_trigger_mode": 0xD8,

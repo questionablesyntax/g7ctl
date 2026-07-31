@@ -8,8 +8,11 @@ most directly.
 import unittest
 
 from pyg7.session import (
-    READ_CHUNK_TIMEOUT, READ_CHUNK_TIMEOUT_DONGLE,
-    SETTLE_HEARTBEATS, SETTLE_HEARTBEATS_DONGLE, VendorSession,
+    READ_CHUNK_TIMEOUT,
+    READ_CHUNK_TIMEOUT_DONGLE,
+    SETTLE_HEARTBEATS,
+    SETTLE_HEARTBEATS_DONGLE,
+    VendorSession,
 )
 
 

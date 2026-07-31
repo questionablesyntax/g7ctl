@@ -11,10 +11,17 @@ from typing import Optional
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox, QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
+    QCheckBox,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
 )
 
 from pyg7.buttons import KNOWN_BUTTON_IDS
+
 from ..widgets import make_keycode_combo, select_by_data
 
 _BUTTON_LABELS = {
