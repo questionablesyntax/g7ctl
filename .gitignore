@@ -12,3 +12,8 @@ venv/
 .ruff_cache/
 .pytest_cache/
 
+# makepkg build artifacts (packaging/)
+src/
+pkg/
+*.pkg.tar.zst
+*.tar.gz

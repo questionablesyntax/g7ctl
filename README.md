@@ -167,6 +167,20 @@ snapshot file at a path you choose -- the only form of on-disk persistence
 now; nothing auto-saves. A "Help" menu, top bar right, has About (version and
 license summary), an On-Device Features reference (the button-combo cheat
 sheet below, without leaving the app), and a link to report an issue.
+**"Release Device" — read this if you're on a wired connection.** To read or
+write configuration, the controller has to be switched into its vendor/config
+identity, and in that identity it is not presenting as an Xbox pad: no XInput
+gamepad, and no HID keyboard/mouse to emit your remapped keys (see
+[PROTOCOL.md](PROTOCOL.md) "Device identities"). So while `g7ctlc` is
+connected over USB, the controller isn't usable for playing. "Release Device"
+lets it revert to its normal XInput identity without quitting the app; the
+button then becomes "Reconnect". The CLI has the same property — it holds the
+device only for the duration of a command.
+
+None of this applies over the **2.4GHz dongle**, which accepts configuration
+writes while simultaneously working as a plain gamepad. If you mostly play
+wireless, you can leave the app connected and never think about this.
+
 Left-clicking the tray icon shows/hides the window. From a checkout:
 
 ```bash
