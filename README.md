@@ -41,6 +41,28 @@ with nothing installed. If you install the package, use the `g7ctl` and
 
 ## Install
 
+### Arch Linux
+
+The easiest route, and the only one that sets up USB permissions for you:
+
+```bash
+git clone https://github.com/questionablesyntax/g7ctl
+cd g7ctl/packaging && makepkg -si
+```
+
+That builds three packages -- `python-pyg7` (the library), `g7ctl` (the CLI)
+and `g7ctlc` (the GUI) -- and you can install any subset; the two
+applications pull the library in as a dependency. `python-pyg7` ships the
+udev rule to `/usr/lib/udev/rules.d/`, so raw USB access works as your normal
+user with no further setup. Replug the controller once afterwards and you're
+done -- you can skip [Running without root](#running-without-root) entirely.
+`g7ctlc` also installs a desktop entry and icon, so the GUI shows up in your
+application launcher.
+
+Not on the AUR yet; build it from a checkout as above.
+
+### Anything else
+
 The protocol library needs only [PyUSB](https://github.com/pyusb/pyusb); the
 desktop app is an optional extra, so you can install the library on its own
 for scripting or a service.
@@ -50,13 +72,12 @@ pip install -e .          # protocol library + the `g7ctl` CLI
 pip install -e ".[gui]"   # also installs PyQt6 and `g7ctlc`
 ```
 
-On Arch the dependencies are also packaged: `sudo pacman -S python-pyusb
-python-pyqt6`. Running straight from a checkout works without installing
-anything -- use `python3 g7ctl_tool.py` and `./g7ctlc_launcher.py` in
-place of the two commands below.
+Running straight from a checkout works without installing anything -- use
+`python3 g7ctl_tool.py` and `./g7ctlc_launcher.py` in place of the two
+commands below.
 
-Raw USB access needs either root or a one-time udev rule -- see
-[Running without root](#running-without-root), which is the recommended
+Going this route, raw USB access needs either root or a one-time udev rule --
+see [Running without root](#running-without-root), which is the recommended
 setup and required for the GUI's tray icon to work.
 
 ## Usage
@@ -110,6 +131,10 @@ because a wrong byte here doesn't raise an error, it writes something
 unintended to a device's persistent config.
 
 ## Running without root
+
+**Installed the Arch packages? Skip this section** -- `python-pyg7` already
+shipped the rule to `/usr/lib/udev/rules.d/`. Just replug the controller
+once. This section is for pip installs and checkout runs.
 
 Raw USB access normally needs root, but a persistent GUI/tray app (see
 `g7ctlc/`) shouldn't run as one -- among other things, KDE's system
