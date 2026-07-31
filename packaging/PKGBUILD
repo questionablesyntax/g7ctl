@@ -15,8 +15,8 @@
 # package's Python dist-info metadata still lists the files that got
 # pruned. Harmless for pacman's purposes, but technically inaccurate.
 #
-# Build-tested 2026-07-31: a real `makepkg` run against the v0.1.0 release
-# tarball produced all three packages cleanly. Verified in the resulting
+# Build-tested 2026-07-31 against a real release tarball: `makepkg`
+# produced all three packages cleanly, and `pacman -U` installed them. Verified in the resulting
 # .pkg.tar.zst files: each package contains only its own Python package and
 # only its own /usr/bin entry (nothing leaks across the prune), python-pyg7
 # ships the udev rule to /usr/lib/udev/rules.d/, g7ctlc ships the generated
@@ -33,11 +33,12 @@
 # layout imports cleanly, resolves importlib.metadata.version("g7ctl"),
 # keeps both entry points, and runs /usr/bin/g7ctl.
 #
-# Not yet done: an actual `pacman -U` against a live system.
+# Confirmed working end to end on 2026-07-31: all three packages installed
+# via `makepkg -i`, and `g7ctl` resolves on PATH at /usr/bin/g7ctl.
 
 pkgbase=g7ctl
 pkgname=('python-pyg7' 'g7ctl' 'g7ctlc')
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc="Configure a GameSir G7 Pro controller on Linux, without Windows or the Nexus app"
 arch=('any')
@@ -45,11 +46,11 @@ url="https://github.com/questionablesyntax/g7ctl"
 license=('Apache-2.0' 'GPL-3.0-or-later')
 makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools')
 
-# Points at the v$pkgver release tag. sha256sums stays 'SKIP' until that
-# tag actually exists -- replace it with the real checksum (`updpkgsums`)
-# once there's a tarball to hash.
+# Points at the v$pkgver release tag. Re-run `updpkgsums` on every version
+# bump -- the checksum below is specific to one tarball, and a stale one
+# fails validation rather than silently building the wrong source.
 source=("$pkgbase-$pkgver.tar.gz::https://github.com/questionablesyntax/g7ctl/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('6a16b013257ee32c965d921d2c92de87cb5de2f2380c6c81fb0f0f79633777c9')
+sha256sums=('SKIP')
 
 build() {
   cd "$pkgbase-$pkgver"

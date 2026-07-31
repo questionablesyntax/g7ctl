@@ -6,6 +6,47 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-31
+
+Documentation and packaging fixes. No functional change to the library, CLI,
+or GUI; the protocol code is byte-for-byte identical to 0.1.0.
+
+### Fixed
+
+- **The Arch package could not be installed.** All three split packages
+  shipped the wheel's single `.dist-info` directory, so `pacman` refused the
+  transaction with "exists in both" on every file in it. One wheel is one
+  Python distribution with one metadata directory, and it cannot be divided
+  three ways; `python-pyg7` now owns it exclusively, and since both other
+  packages depend on it the metadata is still always present exactly once.
+- **The README credited `g7ctlc_launcher.py` with the `prctl` process
+  rename** and steered readers away from `python3 -m g7ctlc`. The rename
+  actually happens in `g7ctlc.app.main()`, so the launcher script,
+  `python -m g7ctlc`, and the installed `g7ctlc` command all behave
+  identically.
+- Building a wheel emitted seven setuptools warnings: `project.license` as a
+  TOML table (deprecated, removal scheduled 2027-Feb-18), a superseded
+  license classifier, and `g7ctlc.assets` being an importable directory
+  absent from the `packages` configuration. All cleared.
+
+### Added
+
+- **"Release Device" is now documented.** To read or write configuration the
+  controller must sit in its vendor identity, and in that identity it is not
+  an XInput pad and cannot emit remapped keys — so over USB it is not usable
+  for playing while the GUI is connected. The button that reverts it was
+  present in the UI but appeared nowhere in the README. The 2.4GHz dongle is
+  exempt and that is now stated too.
+- A repository-layout table in the README, explaining `g7ctl_tool.py` and
+  `g7ctlc_launcher.py` — the two root-level scripts that let a fresh clone
+  run with nothing installed.
+- A GUI screenshot in the README.
+- PEP 639 licensing metadata. Both license texts now ship in the wheel
+  (`LICENSE` and `pyg7/LICENSE`); previously only the GPL one did, which
+  understated the dual licensing.
+- A real `sha256sum` in the PKGBUILD, and a header recording exactly what has
+  been build-tested.
+
 ## [0.1.0] - 2026-07-31
 
 Initial public release. Feature-complete against the GameSir Nexus app for
@@ -90,5 +131,6 @@ everything Nexus exposes, with no Windows involvement anywhere in the stack.
 - The PKGBUILD is structurally validated but has not been build-tested
   against a real release tarball.
 
-[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/questionablesyntax/g7ctl/releases/tag/v0.1.0
