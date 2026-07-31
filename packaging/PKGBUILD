@@ -1,0 +1,112 @@
+# Maintainer: J Whittington (onemyndseye, questionablesyntax)
+#
+# Split package: one source tree, three installable packages, matching the
+# repo's own pyg7 (library, Apache-2.0) / g7ctl (CLI) / g7ctlc (GUI, "G7
+# Control Center") layout -- both apps GPL-3.0-or-later, depending on the
+# library rather than the other way round. See ../README.md "License".
+#
+# One caveat this whole PKGBUILD works around: pyproject.toml still builds
+# all three as ONE wheel -- the independently-versioned packages/ split
+# hasn't happened yet. Each package_*() below installs that one wheel into
+# its own pkgdir and prunes the two-thirds that don't belong there, rather
+# than pretending three separate wheels exist. Revisit this if that split
+# ever lands -- three real per-project builds would replace the
+# install+prune dance entirely. A known consequence in the meantime: each
+# package's Python dist-info metadata still lists the files that got
+# pruned. Harmless for pacman's purposes, but technically inaccurate.
+#
+# NOT YET BUILD-TESTED against a real tarball -- makepkg/python-build/
+# python-installer weren't all available on the machine this was scaffolded
+# on, and no tagged release exists yet for source= to fetch. Structurally
+# validated with `makepkg --printsrcinfo` only. Run `makepkg -si` for real
+# against the first tagged release before trusting this further.
+
+pkgbase=g7ctl
+pkgname=('python-pyg7' 'g7ctl' 'g7ctlc')
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Configure a GameSir G7 Pro controller on Linux, without Windows or the Nexus app"
+arch=('any')
+url="https://github.com/questionablesyntax/g7ctl"
+license=('Apache-2.0' 'GPL-3.0-or-later')
+makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools')
+
+# Points at the v$pkgver release tag. sha256sums stays 'SKIP' until that
+# tag actually exists -- replace it with the real checksum (`updpkgsums`)
+# once there's a tarball to hash.
+source=("$pkgbase-$pkgver.tar.gz::https://github.com/questionablesyntax/g7ctl/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$pkgbase-$pkgver"
+  python -m build --wheel --no-isolation
+}
+
+package_python-pyg7() {
+  pkgdesc="Reverse-engineered protocol library for the GameSir G7 Pro controller"
+  depends=('python' 'python-pyusb')
+  license=('Apache-2.0')
+
+  cd "$pkgbase-$pkgver"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+  # Keep only pyg7/ -- the wheel bundles g7ctl/g7ctlc too (see header note).
+  find "$pkgdir" -depth \( -name g7ctl -o -name g7ctlc \) -type d -exec rm -rf {} +
+  rm -f "$pkgdir/usr/bin/g7ctl" "$pkgdir/usr/bin/g7ctlc"
+
+  # Ships the udev rule so `pacman -S python-pyg7` alone is enough for raw
+  # USB access to work with no manual setup step -- uaccess (see the rule
+  # itself) grants it automatically to whoever's logged in at the seat, no
+  # group/usermod/re-login needed, unlike the group-based rule this
+  # replaced. Package-shipped rules belong in /usr/lib/udev/rules.d/, not
+  # /etc/udev/rules.d/ (that path is for local user overrides only).
+  install -Dm644 "$srcdir/$pkgbase-$pkgver/udev/61-g7ctl.rules" \
+    "$pkgdir/usr/lib/udev/rules.d/61-g7ctl.rules"
+
+  install -Dm644 pyg7/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+package_g7ctl() {
+  pkgdesc="CLI to configure a GameSir G7 Pro controller on Linux"
+  depends=("python-pyg7=$pkgver-$pkgrel")
+  license=('GPL-3.0-or-later')
+
+  cd "$pkgbase-$pkgver"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+  find "$pkgdir" -depth \( -name pyg7 -o -name g7ctlc \) -type d -exec rm -rf {} +
+  rm -f "$pkgdir/usr/bin/g7ctlc"
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+package_g7ctlc() {
+  pkgdesc="G7 Control Center -- PyQt6 GUI + tray app for the GameSir G7 Pro"
+  depends=("python-pyg7=$pkgver-$pkgrel" 'python-pyqt6')
+  optdepends=('libappindicator-gtk3: tray icon support in some DEs/WMs')
+  license=('GPL-3.0-or-later')
+
+  cd "$pkgbase-$pkgver"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+  find "$pkgdir" -depth \( -name pyg7 -o -name g7ctl \) -type d -exec rm -rf {} +
+  rm -f "$pkgdir/usr/bin/g7ctl"
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 g7ctlc/assets/icon_gray.png \
+    "$pkgdir/usr/share/icons/hicolor/512x512/apps/g7ctlc.png"
+
+  # Not packaging/g7ctlc.desktop as-is -- that one's Exec=/Path=/Icon=
+  # hardcode an absolute checkout path on purpose (see README.md "GUI"),
+  # which is exactly wrong for an installed package. This is the installed
+  # equivalent: Exec relies on the g7ctlc console entry point being on
+  # PATH, Icon relies on the hicolor install just above.
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/g7ctlc.desktop" <<-EOF
+	[Desktop Entry]
+	Type=Application
+	Name=G7 Control Center
+	Comment=Configure a GameSir G7 Pro controller (buttons, sticks, triggers, vibration) without Windows
+	Exec=g7ctlc
+	Icon=g7ctlc
+	Categories=Utility;
+	Terminal=false
+	StartupWMClass=g7ctlc
+	EOF
+}

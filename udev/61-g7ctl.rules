@@ -1,0 +1,24 @@
+# Grants rw access to the controller's runtime XInput identity, its
+# vendor/config identity, and the wireless dongle's identity, so the GUI/
+# tray app (and CLI) can run as a normal user instead of root.
+#
+# Uses systemd-logind's uaccess mechanism (TAG+="uaccess") rather than a
+# dedicated group -- access is granted automatically to whoever's logged in
+# at the physical seat, no group/usermod/re-login setup step needed. This
+# is the same mechanism stock rules already use for USB mice, cameras, and
+# scanners (see /usr/lib/udev/rules.d/70-uaccess.rules on most distros).
+#
+# Install: see README.md "Running without root" for setup steps.
+SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="100a", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="109b", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="109c", TAG+="uaccess"
+
+# The controller's on-device "default GameSir identity" -- reached via the
+# Menu+Share button combo (documented in GameSir's manual as an XInput/
+# native-identity toggle), distinct from both 100a and the 109b vendor/
+# config mode. Found 2026-07-30. It runs a different protocol that has not
+# been reverse-engineered (see PROTOCOL.md "Device identities"), so nothing
+# here talks to it -- access is granted only so the tool can detect this
+# identity and tell the user to switch back, instead of reporting a
+# generic "no device found".
+SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="1022", TAG+="uaccess"

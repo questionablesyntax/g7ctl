@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "g7ctl"
+version = "0.1.0"
+description = "Configure a GameSir G7 Pro controller on Linux, without Windows or the Nexus app"
+readme = "README.md"
+requires-python = ">=3.9"
+# The distribution as a whole is GPL-3.0-or-later, because it contains the
+# GPL-licensed GUI. The pyg7/ package alone is separately available
+# under Apache-2.0 (see pyg7/LICENSE) -- README.md "License" explains
+# why the split runs that way round.
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "J Whittington (onemyndseye, questionablesyntax)" }]
+keywords = ["gamesir", "g7-pro", "controller", "gamepad", "usb", "linux"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Hardware :: Hardware Drivers",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+]
+
+# The protocol library needs pyusb and nothing else. Keeping PyQt6 out of the
+# base dependencies is the point: `pip install g7ctl` gives a headless,
+# scriptable library suitable for a service or a udev hook, and the desktop
+# app is opt-in. This is the lightweight form of a library/GUI split --
+# the same dependency boundary, without splitting the source tree into
+# independently-versioned packages/ yet.
+dependencies = ["pyusb>=1.2"]
+
+[project.optional-dependencies]
+gui = ["PyQt6>=6.4"]
+dev = ["ruff>=0.4"]
+
+[project.scripts]
+g7ctl = "g7ctl.main:main"
+
+[project.gui-scripts]
+g7ctlc = "g7ctlc.app:main"
+
+[project.urls]
+Homepage = "https://github.com/questionablesyntax/g7ctl"
+
+[tool.setuptools]
+packages = ["pyg7", "g7ctl", "g7ctlc", "g7ctlc.views"]
+
+[tool.setuptools.package-data]
+g7ctlc = ["assets/*.png"]
+
+[tool.ruff]
+line-length = 110  # the protocol tables and their citations run wide on purpose
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",  # long lines are almost always a protocol comment carrying evidence
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The category modules deliberately re-export shared helpers under private
+# aliases (percent as _percent) to keep call sites unchanged.
+"pyg7/*.py" = ["F401"]

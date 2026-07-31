@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+
+# Packaging / build artifacts
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Tool caches
+.ruff_cache/
+.pytest_cache/
+
+# Local agent/editor state, not project configuration. If shared project
+# config ever belongs in here, negate the specific file (e.g.
+# `!.claude/settings.json`) rather than dropping this rule.
+.claude/
