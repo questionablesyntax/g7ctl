@@ -10,15 +10,22 @@ predicted from a confirmed pattern, it says so explicitly. Nothing below is
 guesswork presented as fact.
 
 **Applicability.** Every value in this document was confirmed against a
-GameSir G7 Pro, the only hardware it has been exercised on. Two details
-suggest the protocol is not specific to that model: the vendor ID `0x3537`
-is GameSir's rather than the G7 Pro's, and the mode-switch handshake sends
-the ASCII string `"gamesirapp"`, which names the Nexus application rather
-than any device. It is therefore plausible that other Nexus-supported
-controllers speak the same framing, and possibly the same category prefixes.
-That is an inference from two data points, not a tested result -- treat the
-product IDs below as G7 Pro-specific, and everything else as confirmed for
-the G7 Pro and unverified anywhere else.
+GameSir G7 Pro, the only hardware it has been exercised on.
+
+The protocol may not be specific to that model. Three things point that way:
+the vendor ID `0x3537` is GameSir's rather than the G7 Pro's; the
+mode-switch handshake sends the ASCII string `"gamesirapp"`, naming the
+Nexus application rather than a device; and GameSir's own listing for Nexus
+says the app covers the **G7, Kaleid, and T7 / Tarantula Pro Xbox** families.
+A single app driving several controller families over one vendor protocol is
+the straightforward reading of that.
+
+It remains an inference. Nothing here has been tried on any other device, and
+the layers are worth separating if someone does: the framing (§"Packet
+framing") and the handshake are the most likely to carry over, the category
+prefixes and `SETTING_ID` values less certainly, and the product IDs in
+"Device identities" below are G7 Pro-specific for sure. Treat everything else
+as confirmed for the G7 Pro and unverified anywhere else.
 
 ## Device identities
 
