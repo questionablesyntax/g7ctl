@@ -24,9 +24,16 @@
 # inter-package depends are correct. `makepkg --verifysource` passes against
 # the sha256sum below.
 #
-# Not yet done: installing the built packages with pacman and running them
-# from /usr/bin. The packaging is verified; the installed-runtime path is
-# not.
+# A first `makepkg -si` attempt failed: all three packages shipped the
+# wheel's single .dist-info directory, so pacman refused the transaction
+# with "exists in both" on every file in it. Fixed by giving python-pyg7
+# sole ownership of it (see that function). Re-verified by diffing the three
+# packages' file lists -- zero overlap, which is exactly what pacman checks
+# -- then extracting all three into one root and confirming the merged
+# layout imports cleanly, resolves importlib.metadata.version("g7ctl"),
+# keeps both entry points, and runs /usr/bin/g7ctl.
+#
+# Not yet done: an actual `pacman -U` against a live system.
 
 pkgbase=g7ctl
 pkgname=('python-pyg7' 'g7ctl' 'g7ctlc')
@@ -60,6 +67,14 @@ package_python-pyg7() {
   find "$pkgdir" -depth \( -name g7ctl -o -name g7ctlc \) -type d -exec rm -rf {} +
   rm -f "$pkgdir/usr/bin/g7ctl" "$pkgdir/usr/bin/g7ctlc"
 
+  # This package, and only this one, ships the wheel's .dist-info. One wheel
+  # is one Python *distribution*, so there is exactly one metadata directory
+  # and it cannot be split three ways -- if every package installed it,
+  # pacman would refuse the transaction with "exists in both" on every file
+  # inside it. python-pyg7 is the right owner because both other packages
+  # depend on it, so the metadata is always installed exactly once and is
+  # never missing. Its RECORD still lists the pruned files; see the header.
+
   # Ships the udev rule so `pacman -S python-pyg7` alone is enough for raw
   # USB access to work with no manual setup step -- uaccess (see the rule
   # itself) grants it automatically to whoever's logged in at the seat, no
@@ -81,6 +96,8 @@ package_g7ctl() {
   python -m installer --destdir="$pkgdir" dist/*.whl
   find "$pkgdir" -depth \( -name pyg7 -o -name g7ctlc \) -type d -exec rm -rf {} +
   rm -f "$pkgdir/usr/bin/g7ctlc"
+  # Owned by python-pyg7 (a dependency), which ships it once -- see there.
+  rm -rf "$pkgdir"/usr/lib/python*/site-packages/"$pkgbase"-"$pkgver".dist-info
 
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
@@ -95,6 +112,8 @@ package_g7ctlc() {
   python -m installer --destdir="$pkgdir" dist/*.whl
   find "$pkgdir" -depth \( -name pyg7 -o -name g7ctl \) -type d -exec rm -rf {} +
   rm -f "$pkgdir/usr/bin/g7ctl"
+  # Owned by python-pyg7 (a dependency), which ships it once -- see there.
+  rm -rf "$pkgdir"/usr/lib/python*/site-packages/"$pkgbase"-"$pkgver".dist-info
 
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 g7ctlc/assets/icon_gray.png \
