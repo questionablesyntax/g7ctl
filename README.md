@@ -20,19 +20,27 @@ on-device button combo is ever needed to pick which profile a change lands
 in.
 
 **Scope: the GameSir G7 Pro, because that's the controller on the desk.**
-This is what was reverse-engineered against and the only hardware any of it
-has ever run on. It may well work on other GameSir controllers that Nexus
-supports -- what's implemented here is Nexus's protocol, and the handshake it
-uses is the string `"gamesirapp"`, which names the app rather than any
-particular device -- but that is a plausible guess, not a tested claim.
-Nothing has ever been tried on another controller.
+That's what this was reverse-engineered against and the only hardware any of
+it has ever run on.
 
-Concretely, another model wouldn't even be detected: `pyg7/constants.py`
-hard-codes the G7 Pro's four USB product IDs and discovery matches on them.
-If you have other GameSir hardware and want to experiment, that's the file to
-start in, and a report either way would be genuinely useful. Support for
-other models isn't planned, for the same reason a `.deb` isn't: it can't be
-verified from here.
+It may work on more than that. What's implemented here is the GameSir Nexus
+app's protocol rather than anything G7 Pro-specific: the vendor ID is
+GameSir's, and the mode-switch handshake sends the string `"gamesirapp"`,
+naming the app rather than a device. GameSir's own listing for Nexus says it
+covers the **G7, Kaleid, and T7 / Tarantula Pro Xbox** families, so those are
+the plausible candidates — each with model variants of its own. **None of
+them has ever been tested here, and none is claimed to work.**
+
+If you have one and want to try, the place to start is
+`pyg7/constants.py`: it hard-codes the G7 Pro's four USB product IDs and
+device discovery matches on them, so another model isn't merely untested, it
+won't be detected at all. Add its product IDs there and see how far you get.
+A report either way — including "the handshake works but the setting IDs are
+different" — would be genuinely useful, and is the only way this question
+gets answered.
+
+Support for other models isn't planned, for the same reason untested distro
+packaging isn't: it can't be verified from here.
 
 See [PROTOCOL.md](PROTOCOL.md) for the wire-format reference. It's
 self-contained, organized for lookup rather than as a narrative, and marks
