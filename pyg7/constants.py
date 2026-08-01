@@ -6,10 +6,13 @@ PID_VENDOR = 0x109b   # vendor/config identity ("GameSir-G7 Pro")
 PID_DONGLE = 0x109c   # 2.4GHz wireless dongle -- same vendor-protocol endpoints as
                       # PID_VENDOR, but reachable directly with NO handshake: the
                       # dongle has no separate XInput identity to switch from in the
-                      # first place, and confirmed (2026-07-26) to accept 0x0f writes
-                      # while xpad is simultaneously bound and reading live gamepad
-                      # state on the same interface. See PROTOCOL.md
-                      # "Device identities".
+                      # first place, so 0x0f writes need no local re-enumeration.
+                      # That is a USB-side difference only: the dongle is a bridge,
+                      # and the controller behind it is captured and held in config
+                      # mode exactly as it is over the cable, so it is NOT usable as
+                      # a gamepad while a session is open (corrected 2026-07-31 --
+                      # the earlier note here claimed xpad stayed bound and the pad
+                      # kept working). See PROTOCOL.md "Device identities".
 PID_NATIVE = 0x1022   # the controller's own "default GameSir identity" -- reached by
                       # holding Menu+Share on the controller (documented in GameSir's
                       # manual as an XInput/native-identity toggle; also the same

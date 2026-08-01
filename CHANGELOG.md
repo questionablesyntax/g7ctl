@@ -6,6 +6,23 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Corrected a false claim: the 2.4GHz dongle is not exempt from "Release
+  Device".** The README, `PROTOCOL.md`, and the `PID_DONGLE` comment all said
+  the dongle accepted configuration writes while continuing to work as a
+  plain gamepad. It does not. The dongle is a USB bridge, not a second
+  personality: the controller behind it is captured the same way it is over
+  the cable -- same claimed interface, same heartbeat stream holding it in
+  config mode -- and is just as unplayable while the app is connected.
+  Verified 2026-07-31 from daily use, and with `g7ctlc` connected over the
+  dongle: interface 0 bound to `usbfs`, nothing bound to `xpad`, no
+  `/dev/input/js*`. What "no handshake needed" actually means is narrower
+  than it was written to mean: the dongle already exposes the vendor
+  interface, so there is no local re-enumeration to trigger, and no PID
+  change to watch for on the way back out. Documentation only; no code
+  behavior changed.
+
 ## [0.1.1] - 2026-07-31
 
 Documentation and packaging fixes. No functional change to the library, CLI,
@@ -35,8 +52,9 @@ or GUI; the protocol code is byte-for-byte identical to 0.1.0.
   controller must sit in its vendor identity, and in that identity it is not
   an XInput pad and cannot emit remapped keys — so over USB it is not usable
   for playing while the GUI is connected. The button that reverts it was
-  present in the UI but appeared nowhere in the README. The 2.4GHz dongle is
-  exempt and that is now stated too.
+  present in the UI but appeared nowhere in the README. (This entry
+  originally claimed the 2.4GHz dongle was exempt; it isn't — corrected
+  under Unreleased above.)
 - A repository-layout table in the README, explaining `g7ctl_tool.py` and
   `g7ctlc_launcher.py` — the two root-level scripts that let a fresh clone
   run with nothing installed.

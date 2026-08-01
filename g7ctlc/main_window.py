@@ -211,8 +211,8 @@ class MainWindow(QMainWindow):
         self.release_btn = QPushButton("Release Device")
         self.release_btn.setEnabled(False)
         self.release_btn.setToolTip(
-            "Let the controller revert to XInput mode (stops heartbeating) "
-            "without quitting the app"
+            "Hand the controller back so it works as a gamepad again "
+            "(stops heartbeating), without quitting the app"
         )
         self.release_btn.clicked.connect(self._on_release_clicked)
         button_bar.addWidget(self.release_btn)
