@@ -88,7 +88,7 @@ packaging-friendly: a standard PEP 517 build, three importable packages with
 the dependency arrow pointing one way (both apps depend on the library, never
 the reverse), PyQt6 isolated behind an optional extra so the library installs
 headless, the udev rule and desktop entry as plain standalone files, no
-vendored dependencies, and 206 tests that run without any hardware attached
+vendored dependencies, and 209 tests that run without any hardware attached
 so a packager can execute them during a build. Packaging for other distros
 should be straightforward, and contributions doing so are welcome.
 
@@ -115,7 +115,7 @@ setup and required for the GUI's tray icon to work.
 
 ```bash
 # Remap a button. The tool switches the controller into vendor/config mode
-# itself if it isn't already; with the wireless dongle no switch is needed.
+# itself if it isn't already -- wired or wireless, no separate step needed.
 g7ctl remap share f11
 g7ctl remap a f12 --shift          # target the Shift Layer instead
 g7ctl remap b native_b --profile 2 # target a specific onboard profile
@@ -156,7 +156,7 @@ surfaced as raw hex rather than dropped.
 python3 -m unittest discover -s tests -t .
 ```
 
-206 tests, no controller required -- payload builders and blob decoders run
+209 tests, no controller required -- payload builders and blob decoders run
 against a fake session (`tests/fakes.py`), and `tests/fixtures/live_read.json`
 holds real `read_state()` output captured from a physical controller. The
 GUI's view round-trip tests (headless, offscreen platform) are skipped
@@ -230,12 +230,10 @@ controller has to be in its vendor/config identity, and in that identity it
 is not presenting as an Xbox pad: no XInput gamepad, and no HID
 keyboard/mouse to emit your remapped keys (see
 [PROTOCOL.md](PROTOCOL.md) "Device identities"). That is a property of the
-controller, not of the cable. The dongle is a USB bridge: the app captures
-the controller through it the same way it does over USB, down to the same
-claimed interface and the same heartbeat stream that holds it in config
-mode. The one thing the dongle changes is that no `"gamesirapp"` handshake
-is needed to get there -- it already exposes the vendor interface, so there
-is nothing to re-enumerate. "Release Device" hands the controller back
+controller, not of the cable: wireless works the same way, one USB product
+ID apart. An idle dongle enumerates as an ordinary Xbox pad, takes the same
+mode-switch handshake, and drops back to being a pad once nothing is
+holding it. "Release Device" hands the controller back
 without quitting the app; the button then becomes "Reconnect". The CLI has
 the same property -- it holds the device only for the duration of a
 command. Expect the wireless controller to be generally a little slower to
