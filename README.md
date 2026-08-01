@@ -19,14 +19,6 @@ category targets one of the controller's 4 onboard slots explicitly, so no
 on-device button combo is ever needed to pick which profile a change lands
 in.
 
-That is not the same as *everything Nexus can do*. Nexus has miscellaneous
-options tucked into corners of its UI that haven't been enumerated, and the
-motion/gyro tab is unimplemented by choice. Realistically this covers the
-large majority of the app with a long tail still unmapped — enough to replace
-it for day-to-day use, not a claim of parity. If you find something Nexus
-does that this can't, that's a gap worth reporting rather than a
-misunderstanding on your part.
-
 **Scope: the GameSir G7 Pro, because that's the controller on the desk.**
 That's what this was reverse-engineered against and the only hardware any of
 it has ever run on.
@@ -47,8 +39,7 @@ A report either way — including "the handshake works but the setting IDs are
 different" — would be genuinely useful, and is the only way this question
 gets answered.
 
-Support for other models isn't planned, for the same reason untested distro
-packaging isn't: it can't be verified from here.
+Support for other models isn't planned at this time.
 
 See [PROTOCOL.md](PROTOCOL.md) for the wire-format reference. It's
 self-contained, organized for lookup rather than as a narrative, and marks
@@ -63,7 +54,7 @@ confirmed pattern.
 | `g7ctl/` | The CLI. |
 | `g7ctlc/` | The GUI + tray app. |
 | `g7ctl_tool.py` | Convenience shim: runs the CLI straight from a checkout, no install. Equivalent to the `g7ctl` command. |
-| `g7ctlc_launcher.py` | Same idea for the GUI. Named this rather than `g7ctlc` because a file can't share a name with the `g7ctlc/` package directory beside it. |
+| `g7ctlc_launcher.py` | Same idea for the GUI.  |
 | `packaging/`, `udev/` | Arch PKGBUILD and desktop entry; the udev rule for non-root USB access. |
 
 The two root-level scripts exist purely so a fresh `git clone` is runnable
@@ -91,11 +82,6 @@ done -- you can skip [Running without root](#running-without-root) entirely.
 application launcher.
 
 Not on the AUR yet; build it from a checkout as above.
-
-**Arch is the only packaging this project maintains**, because it's the only
-distro the author runs and can actually test on. That's a deliberate limit,
-not an oversight -- shipping a `.deb` or an RPM nobody has verified on the
-target system is worse than shipping none.
 
 Nothing here is Arch-specific, though, and the layout is deliberately
 packaging-friendly: a standard PEP 517 build, three importable packages with
@@ -236,23 +222,23 @@ Device" (when it would discard unsynced edits) ask for confirmation first --
 the former pushes to persistent device config, the latter overwrites every
 tab.
 "Export…"/"Import…" save or load the entire current state as a JSON
-snapshot file at a path you choose -- the only form of on-disk persistence
-now; nothing auto-saves. A "Help" menu, top bar right, has About (version and
-license summary), an On-Device Features reference (the button-combo cheat
-sheet below, without leaving the app), and a link to report an issue.
-**"Release Device" — read this if you're on a wired connection.** To read or
-write configuration, the controller has to be switched into its vendor/config
-identity, and in that identity it is not presenting as an Xbox pad: no XInput
-gamepad, and no HID keyboard/mouse to emit your remapped keys (see
-[PROTOCOL.md](PROTOCOL.md) "Device identities"). So while `g7ctlc` is
-connected over USB, the controller isn't usable for playing. "Release Device"
-lets it revert to its normal XInput identity without quitting the app; the
-button then becomes "Reconnect". The CLI has the same property — it holds the
-device only for the duration of a command.
+snapshot file at a path you choose.
 
-None of this applies over the **2.4GHz dongle**, which accepts configuration
-writes while simultaneously working as a plain gamepad. If you mostly play
-wireless, you can leave the app connected and never think about this.
+**While the app is connected, the controller is not usable for playing --
+wired and over the 2.4GHz dongle alike.** To read or write configuration the
+controller has to be in its vendor/config identity, and in that identity it
+is not presenting as an Xbox pad: no XInput gamepad, and no HID
+keyboard/mouse to emit your remapped keys (see
+[PROTOCOL.md](PROTOCOL.md) "Device identities"). That is a property of the
+controller, not of the cable. The dongle is a USB bridge: the app captures
+the controller through it the same way it does over USB, down to the same
+claimed interface and the same heartbeat stream that holds it in config
+mode. The one thing the dongle changes is that no `"gamesirapp"` handshake
+is needed to get there -- it already exposes the vendor interface, so there
+is nothing to re-enumerate. "Release Device" hands the controller back
+without quitting the app; the button then becomes "Reconnect". The CLI has
+the same property -- it holds the device only for the duration of a
+command.
 
 Left-clicking the tray icon shows/hides the window. From a checkout:
 
@@ -281,13 +267,6 @@ sed "s|/path/to/g7ctl|$PWD|g" packaging/g7ctlc.desktop \
   > ~/.local/share/applications/g7ctlc.desktop
 ```
 
-Run that from the root of your checkout. The shipped `.desktop` file uses a
-`/path/to/g7ctl` placeholder in its `Exec=`/`Path=`/`Icon=` lines, since a
-checkout-scoped launcher has no way to know where you cloned it; the `sed`
-above substitutes your actual path. (Installing from a package instead? The
-PKGBUILD generates its own `.desktop` pointing at the installed entry point,
-so none of this applies.)
-
 ## On-device features (no software needed)
 
 The controller does a lot on its own, via button combos. Worth knowing about
@@ -296,7 +275,6 @@ under** a configuration you synced, which is the main reason "Read from
 Device" exists.
 
 - **Switch profile:** `M`+`Y` = 1, `M`+`B` = 2, `M`+`A` = 3, `M`+`X` = 4.
-  Fixed across units.
 - **Remap a back paddle on the fly** (`L4`/`R4`/`L5`/`R5`): hold `M` + the
   paddle until the Xbox indicator flashes slowly, press the button you want
   mirrored onto it, indicator goes solid. Press the paddle again while still
@@ -318,24 +296,17 @@ Device" exists.
   switch. The nearby `R4/L4` latch is unrelated — a physical lock for the
   back paddles.
 
-The official PDF manual is not redistributed here (it's GameSir's
-copyright); the above is written from it in our own words.
-
 ## License
 
-Copyright 2026 J Whittington (onemyndseye, questionablesyntax).
+Copyright 2026 J Whittington (questionablesyntax).
 
 Two licenses, matching the package split:
 
 - **`pyg7/` (the protocol library) — Apache-2.0.** Permissive on
-  purpose. The protocol work is the valuable part, and anyone should be able
+  purpose. The protocol work is the useful part, and anyone should be able
   to build on it: a distro daemon, a Steam Input helper, another tool.
 - **`g7ctlc/`, `g7ctl/`, and the project as a whole —
-  GPL-3.0-or-later.** Improvements to the app come back.
-
-That direction works because Apache-2.0 code may be incorporated into a
-GPL-3.0 work; the reverse is not true, and the GUI depends on the library
-rather than the other way around.
+  GPL-3.0-or-later.**
 
 ### Not affiliated with GameSir
 

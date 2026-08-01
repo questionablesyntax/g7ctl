@@ -71,11 +71,12 @@ class DeviceWatcher(QObject):
 
     def pause(self) -> None:
         """Thread-safe: call from the GUI thread. Releases the session and
-        stops auto-reconnecting until resume() is called. For a wired
-        controller this lets it revert to XInput mode; for the wireless
-        dongle there's no such revert -- it just hands interface 0 back to
-        xpad, and the controller keeps working as a plain gamepad throughout
-        (it was never in a separate "vendor mode" to begin with)."""
+        stops auto-reconnecting until resume() is called. Dropping the
+        heartbeat is what lets the controller leave config mode and go back
+        to being a gamepad -- on the dongle as much as on the cable, since
+        the dongle only bridges the same session through. The visible
+        difference is USB-side: wired, the device re-enumerates from 109b
+        back to 100a; over the dongle the PID never changes."""
         self._paused = True
 
     def resume(self) -> None:
