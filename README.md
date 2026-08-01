@@ -238,7 +238,9 @@ is needed to get there -- it already exposes the vendor interface, so there
 is nothing to re-enumerate. "Release Device" hands the controller back
 without quitting the app; the button then becomes "Reconnect". The CLI has
 the same property -- it holds the device only for the duration of a
-command.
+command. Expect the wireless controller to be generally a little slower to
+respond than the wired one, handover included; the extra RF hop is why the
+session runs relaxed timeouts over the dongle.
 
 Left-clicking the tray icon shows/hides the window. From a checkout:
 
