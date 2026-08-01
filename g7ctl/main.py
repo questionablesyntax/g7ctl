@@ -375,13 +375,16 @@ def _connect_session():
         # claim it. The GUI's watcher has always auto-entered for exactly
         # this reason (watcher._connect); this brings the CLI in line.
         print("Device not in vendor mode -- entering it now...")
-        vdev = enter_vendor_mode()
+        # The handshake reports which identity it landed on: wired
+        # (PID_VENDOR) or dongle (PID_DONGLE). Both are reachable this way --
+        # an idle dongle sits in XInput mode like the wired controller does.
+        vdev, via_dongle = enter_vendor_mode()
         if vdev is None:
             print("Could not reach the controller. Plug it in (or connect the "
                   "wireless dongle) and try again.", file=sys.stderr)
             sys.exit(1)
     elif via_dongle:
-        print("Using wireless dongle -- no handshake needed.")
+        print("Using wireless dongle -- already in vendor mode, no handshake needed.")
 
     with VendorSession(vdev, via_dongle=via_dongle) as sess:
         # A just-claimed session accepts heartbeats but isn't ready to

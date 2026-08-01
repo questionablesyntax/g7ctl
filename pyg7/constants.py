@@ -1,18 +1,21 @@
 """USB identities and low-level protocol constants. See PROTOCOL.md."""
 
 VID = 0x3537
-PID_XINPUT = 0x100a   # default runtime identity ("Xbox 360 Controller for Windows")
+PID_XINPUT = 0x100a   # default runtime identity ("Xbox 360 Controller for Windows").
+                      # Where the hardware idles on BOTH transports -- the dongle
+                      # sits here too once nothing is heartbeating it.
 PID_VENDOR = 0x109b   # vendor/config identity ("GameSir-G7 Pro")
-PID_DONGLE = 0x109c   # 2.4GHz wireless dongle -- same vendor-protocol endpoints as
-                      # PID_VENDOR, but reachable directly with NO handshake: the
-                      # dongle has no separate XInput identity to switch from in the
-                      # first place, so 0x0f writes need no local re-enumeration.
-                      # That is a USB-side difference only: the dongle is a bridge,
-                      # and the controller behind it is captured and held in config
-                      # mode exactly as it is over the cable, so it is NOT usable as
-                      # a gamepad while a session is open (corrected 2026-07-31 --
-                      # the earlier note here claimed xpad stayed bound and the pad
-                      # kept working). See PROTOCOL.md "Device identities".
+PID_DONGLE = 0x109c   # 2.4GHz wireless dongle in vendor/config mode -- the dongle's
+                      # counterpart to PID_VENDOR, with the same endpoints. Reached
+                      # by the same "gamesirapp" handshake from PID_XINPUT, and
+                      # reverts there when heartbeats stop. Not usable as a gamepad
+                      # while a session is open, exactly like PID_VENDOR.
+                      # Twice-corrected, both times because this was only ever
+                      # observed mid-session: 2026-07-31, it does not keep working
+                      # as a pad (xpad is not bound); 2026-08-01, it is not a
+                      # handshake-free always-on identity either -- an idle dongle
+                      # enumerates as PID_XINPUT. See PROTOCOL.md "Device
+                      # identities".
 PID_NATIVE = 0x1022   # the controller's own "default GameSir identity" -- reached by
                       # holding Menu+Share on the controller (documented in GameSir's
                       # manual as an XInput/native-identity toggle; also the same

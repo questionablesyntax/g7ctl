@@ -265,11 +265,14 @@ class DeviceWatcher(QObject):
             return None
 
         self._set_state("connecting")
-        vdev = enter_vendor_mode()
+        vdev, via_dongle = enter_vendor_mode()
         if vdev is None:
             self._set_state("disconnected")
             return None
-        return self._open_session(vdev, via_dongle=False)
+        # via_dongle came from the handshake's landing PID, not hardcoded
+        # False as it was until 2026-08-01 -- a dongle reached this way got
+        # the tighter wired timeouts and skipped the liveness probe.
+        return self._open_session(vdev, via_dongle=via_dongle)
 
     @staticmethod
     def _open_session(vdev: usb.core.Device, via_dongle: bool) -> VendorSession:

@@ -31,12 +31,12 @@ as confirmed for the G7 Pro and unverified anywhere else.
 
 | Identity | VID:PID | Role |
 |---|---|---|
-| Default runtime | `3537:100a` | "Xbox 360 Controller for Windows" -- standard XInput pad. Interface 1 also exposes a genuine HID keyboard+mouse device (`xpad` + `usbhid`) -- this is what actually emits remapped key/mouse events. |
+| Default runtime | `3537:100a` | "Xbox 360 Controller for Windows" -- standard XInput pad. Interface 1 also exposes a genuine HID keyboard+mouse device (`xpad` + `usbhid`) -- this is what actually emits remapped key/mouse events. **This is where the hardware idles on either transport**: wired, and also the dongle once nothing is heartbeating it (corrected 2026-08-01 -- see the dongle row). |
 | Vendor/config | `3537:109b` | "GameSir-G7 Pro" -- config/telemetry protocol lives here. Interface 1 is isochronous audio in this mode, no HID keyboard/mouse. |
-| Wireless dongle | `3537:109c` | Same physical unit, same serial. Only one identity (no separate XInput PID -- can't re-enumerate over RF). Interface 0 accepts vendor writes directly, **no handshake needed** -- the dongle already exposes the vendor interface, so there is no local re-enumeration to trigger. The dongle is a bridge, not a second personality: the controller behind it is captured exactly as it is over the cable (same claimed interface 0, same heartbeat stream holding it in config mode), and **is no more playable during a session than the wired vendor identity is** (confirmed 2026-07-31 from daily use, and with `g7ctlc` connected over the dongle: interface 0 shows `driver -> usbfs` in sysfs, `xpad` has no devices bound, and no `/dev/input/js*` node exists). The controller leaves config mode when heartbeats stop, as it does wired -- there is just no PID change to observe on the USB side, and it is perceptibly (not measured) lazier about it over RF, consistent with the relaxed dongle timings in `pyg7/session.py`. See `pyg7/device.py:find_writable_device()` and `pyg7/session.py:VendorSession`. |
+| Wireless dongle, vendor/config | `3537:109c` | The dongle's counterpart to `109b`, same physical unit and serial. **It is a mode, not the dongle's only identity** -- an idle dongle enumerates as `100a` with `xpad` bound, takes the same `"gamesirapp"` handshake, and re-enumerates here; it falls back to `100a` once heartbeats stop. So the dongle behaves exactly as the cable does, one PID apart. While a session is held the controller is **not playable**, same as `109b`: interface 0 shows `driver -> usbfs` in sysfs, `xpad` has nothing bound, and no `/dev/input/js*` node exists. Recovery is perceptibly (not measured) lazier over RF, consistent with the relaxed dongle timings in `pyg7/session.py`. See `pyg7/device.py:enter_vendor_mode()` and `find_writable_device()`. |
 | Native GameSir identity | `3537:1022` | "GameSir-G7 Pro" (no manufacturer string, unlike `109b`). Reached by holding **Menu+Share** on the controller (documented in GameSir's manual as an XInput/native-identity toggle -- the same combo that clears a rare `CMD_READ` wedge). Two plain HID-class interfaces (`0x82`/`0x02` and `0x84`/`0x04`, no vendor-specific class-255 interface at all) -- **not the same protocol as `109b`/`109c`**: neither interface answers the standard `CMD_HEARTBEAT` payload or streams anything unprompted. Not reverse-engineered. `pyg7/device.py:find_native_identity()` recognizes this PID so a user stuck here gets a "hold Menu+Share" message instead of a generic "device not found." |
 
-## Switching `100a` -> `109b` (wired only)
+## Switching out of `100a`: `109b` wired, `109c` over the dongle
 
 Send ASCII `"gamesirapp"` as 5 chunks of 2 characters, each an 8-byte OUT
 report on endpoint `0x02`: `00 08 00 [c1] [c2] 00 00 00`, with an empty
@@ -45,10 +45,32 @@ silent ~1.3-1.5s after the last chunk, then re-enumerates as `109b`. No
 prior handshake/negotiation steps are required (confirmed: this step
 alone is sufficient). See `pyg7/device.py:enter_vendor_mode()`.
 
-The wireless dongle (`109c`) needs none of this -- it's already reachable
-for vendor writes as soon as it's plugged in and the controller is
-powered on/paired to it. `find_writable_device()` tries `109b` first, then
-falls back to `109c`.
+**The dongle takes the same handshake and re-enumerates the same way**, just
+landing on `109c` instead of `109b`. Corrected 2026-08-01; this section
+previously read "wired only" and claimed the dongle was already reachable
+for vendor writes as soon as it was plugged in, needing no switch at all.
+
+That claim came from only ever observing the dongle *after* a switch. It
+stays in `109c` as long as something heartbeats it, and a previous session
+usually left it there -- so `find_writable_device()` kept finding it ready
+and nothing contradicted the assumption. Restarting `g7ctlc` exposed the
+idle state, in one unambiguous sequence on a single USB port with no
+wired controller attached:
+
+```
+xpad 3-8:1.0: xpad_try_sending_next_out_packet ...   <- xpad was bound to it
+usb 3-8: USB disconnect, device number 21            <- at the handshake
+usb 3-8: new full-speed USB device number 22         <- ~2s later
+usb 3-8: New USB device found, idProduct=109c        <- same port, now vendor
+```
+
+The practical cost of the wrong assumption was in `enter_vendor_mode()`,
+which waited for `109b` alone: every dongle connect from idle burned the
+full timeout and logged a failure before the caller's next
+`find_writable_device()` poll quietly succeeded. It now accepts either
+landing PID and reports which one it got, since the caller needs that to
+pick the session's timeouts. `find_writable_device()` still tries `109b`
+first, then `109c`.
 
 ## Packet framing (once in `109b`)
 

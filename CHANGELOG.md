@@ -6,6 +6,41 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`pyg7.device.enter_vendor_mode()` now returns `(device, via_dongle)`**
+  instead of just `device`, matching `find_writable_device()`. Callers need
+  the flag to pick the session's timeouts and to decide whether the
+  controller-liveness probe applies; returning only the device is what let
+  both in-tree call sites hardcode `via_dongle=False`. Breaking for anyone
+  scripting against the library directly — unpack the tuple.
+
+### Fixed
+
+- **The wireless dongle does take the mode-switch handshake, and
+  `enter_vendor_mode()` never waited for its landing PID.** An idle dongle
+  enumerates as `100a` (an ordinary Xbox pad, `xpad` bound), takes the same
+  `"gamesirapp"` handshake as the wired controller, and re-enumerates as
+  `109c` about two seconds later on the same USB port. `enter_vendor_mode()`
+  polled for `109b` alone, so every dongle connect from idle burned its full
+  10-second timeout and logged `Timed out waiting for vendor-mode
+  re-enumeration` before the caller's next `find_writable_device()` poll
+  quietly succeeded. It now accepts either landing PID and reports which one
+  it got.
+- **A dongle reached via the handshake ran with wired timeouts.** Both call
+  sites passed `via_dongle=False` after `enter_vendor_mode()`, so a session
+  established that way used the tighter wired read timeout and settle count
+  over the extra RF hop, and skipped `probe_controller_live()` entirely.
+  Only sessions that found an already-switched dongle got the relaxed
+  handling.
+- The docs said the opposite of all of this: `PROTOCOL.md` had the dongle as
+  a single-identity device that "can't re-enumerate over RF" and needed no
+  handshake, dated 2026-07-26. That was inferred from only ever seeing the
+  dongle mid-session — it stays in `109c` while anything heartbeats it, and
+  a previous session had always left it there. The identity table, the
+  mode-switch section, `PID_DONGLE`/`PID_XINPUT`'s comments, and the README
+  are corrected.
+
 ### Added
 
 - **The GUI now says on screen that the controller isn't playable while the

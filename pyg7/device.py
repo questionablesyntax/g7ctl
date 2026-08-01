@@ -44,10 +44,14 @@ def find_native_identity() -> Optional[usb.core.Device]:
 
 
 def find_writable_device() -> tuple[Optional[usb.core.Device], bool]:
-    """Find a device already ready to accept 0x0f vendor writes -- either the
-    wired controller in vendor mode (PID_VENDOR, requires enter_vendor_mode()
-    first) or the wireless dongle (PID_DONGLE, needs no mode switch at all).
-    Returns (device, via_dongle) or (None, False)."""
+    """Find a device *already* ready to accept 0x0f vendor writes -- the wired
+    controller at PID_VENDOR or the dongle at PID_DONGLE. Returns
+    (device, via_dongle) or (None, False).
+
+    Neither identity is where the hardware idles: both are reached by
+    enter_vendor_mode()'s handshake, and both fall back to PID_XINPUT once
+    heartbeats stop. This finds the ones already switched, which in practice
+    is most of the time -- a previous session usually left it there."""
     dev = find_device(PID_VENDOR)
     if dev is not None:
         return dev, False
@@ -70,7 +74,23 @@ def make_handshake_packets() -> list[bytes]:
     return packets
 
 
-def enter_vendor_mode(timeout_s: float = 10.0) -> Optional[usb.core.Device]:
+def enter_vendor_mode(timeout_s: float = 10.0) -> tuple[Optional[usb.core.Device], bool]:
+    """Handshake the controller out of XInput mode and into a vendor identity.
+
+    Returns `(device, via_dongle)`, the same shape `find_writable_device()`
+    returns -- callers need the flag to pick the session's timeouts and to
+    decide whether the liveness probe applies.
+
+    The wireless dongle re-enumerates too. Corrected 2026-08-01: this
+    function used to wait for `PID_VENDOR` alone, on the belief that the
+    dongle had no XInput identity to switch out of. It does -- an idle
+    dongle sits at `PID_XINPUT` with `xpad` bound, takes the same
+    `"gamesirapp"` handshake, and comes back as `PID_DONGLE`. Waiting for
+    only `109b` meant every dongle connect from idle burned the full
+    `timeout_s` and logged a failure, then quietly succeeded on the caller's
+    next `find_writable_device()` poll. Observed directly: same USB port,
+    `disconnect` at handshake, re-enumerated as `109c` ~2s later.
+    """
     dev = find_device(PID_XINPUT)
     if dev is None:
         if find_native_identity() is not None:
@@ -81,7 +101,7 @@ def enter_vendor_mode(timeout_s: float = 10.0) -> Optional[usb.core.Device]:
                 "try again.", VID, PID_NATIVE)
         else:
             log.error("No device found at %04x:%04x.", VID, PID_XINPUT)
-        return None
+        return None, False
 
     log.info("Found XInput-mode device (bus=%s addr=%s).", dev.bus, dev.address)
     detached = False
@@ -116,10 +136,15 @@ def enter_vendor_mode(timeout_s: float = 10.0) -> Optional[usb.core.Device]:
     log.info("Handshake sent, waiting for re-enumeration to vendor mode...")
     deadline = time.time() + timeout_s
     while time.time() < deadline:
-        vdev = find_device(PID_VENDOR)
-        if vdev is not None:
-            log.info("Now in vendor mode (bus=%s addr=%s).", vdev.bus, vdev.address)
-            return vdev
+        # Wired lands on PID_VENDOR, the dongle on PID_DONGLE. Checked in
+        # that order only because a wired controller is the more specific
+        # case; both are equally valid outcomes of the same handshake.
+        for pid, via_dongle in ((PID_VENDOR, False), (PID_DONGLE, True)):
+            vdev = find_device(pid)
+            if vdev is not None:
+                log.info("Now in vendor mode (%04x:%04x, bus=%s addr=%s).",
+                         VID, pid, vdev.bus, vdev.address)
+                return vdev, via_dongle
         time.sleep(0.3)
     log.error("Timed out waiting for vendor-mode re-enumeration.")
-    return None
+    return None, False
