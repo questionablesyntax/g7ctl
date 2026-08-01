@@ -6,6 +6,17 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **The GUI now says on screen that the controller isn't playable while the
+  app holds it.** An amber note in the status bar, next to the connection
+  state and directly beneath the "Release Device" button that clears it,
+  shown only while a session is actually held; the tray tooltip's "Connected"
+  label says the same, since a user who just found a dead pad is likely
+  looking at the tray rather than a hidden window. This was previously a
+  README-only caveat — and one the README got wrong for wireless users, who
+  had no reason to connect a dead gamepad to this app at all.
+
 ### Fixed
 
 - **Corrected a false claim: the 2.4GHz dongle is not exempt from "Release

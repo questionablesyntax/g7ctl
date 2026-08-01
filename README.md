@@ -88,7 +88,7 @@ packaging-friendly: a standard PEP 517 build, three importable packages with
 the dependency arrow pointing one way (both apps depend on the library, never
 the reverse), PyQt6 isolated behind an optional extra so the library installs
 headless, the udev rule and desktop entry as plain standalone files, no
-vendored dependencies, and 202 tests that run without any hardware attached
+vendored dependencies, and 206 tests that run without any hardware attached
 so a packager can execute them during a build. Packaging for other distros
 should be straightforward, and contributions doing so are welcome.
 
@@ -156,7 +156,7 @@ surfaced as raw hex rather than dropped.
 python3 -m unittest discover -s tests -t .
 ```
 
-202 tests, no controller required -- payload builders and blob decoders run
+206 tests, no controller required -- payload builders and blob decoders run
 against a fake session (`tests/fakes.py`), and `tests/fixtures/live_read.json`
 holds real `read_state()` output captured from a physical controller. The
 GUI's view round-trip tests (headless, offscreen platform) are skipped

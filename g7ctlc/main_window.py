@@ -239,7 +239,7 @@ class MainWindow(QMainWindow):
     def _build_status_bar(self) -> QHBoxLayout:
         """Connection state and errors on the left, job progress on the right.
 
-        Four separate labels rather than one shared message area, so a sync
+        Five separate labels rather than one shared message area, so a sync
         progress update can't wipe out a connection error the user hasn't
         read yet.
         """
@@ -248,6 +248,21 @@ class MainWindow(QMainWindow):
         self.connection_label = QLabel("Device: disconnected")
         self.connection_label.setProperty("role", "muted")
         bottom.addWidget(self.connection_label)
+        # Shown only while a session is actually held -- see
+        # set_connection_state(). Not an error (nothing is wrong), so it gets
+        # its own amber label rather than sharing error_label's red one or
+        # hiding in the muted grey of connection_label.
+        self.playability_label = QLabel("")
+        self.playability_label.setStyleSheet("color: #d99a3f;")
+        self.playability_label.setToolTip(
+            "To read or write configuration the controller has to sit in its "
+            "vendor/config identity, where it is not an Xbox pad and has no "
+            "HID keyboard/mouse to emit your remapped keys. This is just as "
+            "true over the 2.4GHz dongle as it is wired -- the dongle bridges "
+            "the same session through. Click \"Release Device\" to hand the "
+            "controller back without quitting."
+        )
+        bottom.addWidget(self.playability_label)
         self.error_label = QLabel("")
         self.error_label.setStyleSheet("color: #e0524f;")
         bottom.addWidget(self.error_label)
@@ -291,6 +306,15 @@ class MainWindow(QMainWindow):
             "no_controller": "dongle detected, no controller responding",
         }
         self.connection_label.setText(f"Device: {labels.get(state, state)}")
+        # The controller is not usable for playing while this app holds it,
+        # on the dongle as much as wired (see PROTOCOL.md "Device
+        # identities"). Until 2026-08-01 that was documented only in the
+        # README -- and documented there as a wired-only caveat -- so a
+        # wireless user met a dead gamepad with nothing on screen connecting
+        # it to this app or pointing at the button that fixes it.
+        self.playability_label.setText(
+            "not usable as a gamepad until released" if state == "connected" else ""
+        )
         was_connected = self._connection_state == "connected"
         self._connection_state = state
         if state == "connected":

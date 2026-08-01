@@ -33,7 +33,7 @@ _STATE_ICON_FILES = {
 _STATE_LABELS = {
     "disconnected": "Disconnected",
     "connecting": "Connecting…",
-    "connected": "Connected",
+    "connected": "Connected -- controller not usable as a gamepad until released",
     "paused": "Released (click Reconnect to resume)",
     "no_controller": "Dongle detected, no controller responding",
 }

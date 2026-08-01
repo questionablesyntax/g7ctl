@@ -127,3 +127,48 @@ class FailureSurfacingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class PlayabilityWarningTest(unittest.TestCase):
+    """The status bar has to say the controller isn't playable while the app
+    holds it. Added 2026-08-01: this was a README-only caveat, and the README
+    had it wrong -- it claimed the 2.4GHz dongle was exempt. It isn't (the
+    dongle bridges the same session through), so a wireless user hit a dead
+    gamepad with nothing on screen tying it to this app.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+        window = MainWindow()
+        # Pre-set so set_connection_state("connected") sees was_connected and
+        # skips the auto-read; this test is only about the label.
+        window._connection_state = "connected"
+        return window
+
+    def test_warning_shown_while_connected(self):
+        window = self._window()
+        window.set_connection_state("connected")
+        self.assertIn("not usable as a gamepad", window.playability_label.text())
+
+    def test_warning_cleared_once_released(self):
+        window = self._window()
+        window.set_connection_state("connected")
+        window.set_connection_state("paused")
+        self.assertEqual("", window.playability_label.text())
+
+    def test_warning_absent_when_disconnected(self):
+        window = self._window()
+        window.set_connection_state("disconnected")
+        self.assertEqual("", window.playability_label.text())
+
+    def test_tray_connected_tooltip_carries_the_same_warning(self):
+        from g7ctlc.tray import _STATE_LABELS
+        # The window can be hidden to the tray, which is where a user who
+        # just found a dead pad is most likely to look first.
+        self.assertIn("not usable as a gamepad", _STATE_LABELS["connected"])
