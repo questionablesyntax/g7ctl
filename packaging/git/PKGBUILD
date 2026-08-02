@@ -1,0 +1,141 @@
+# Maintainer: J Whittington (onemyndseye, questionablesyntax)
+#
+# VCS package: builds the current tip of `main` rather than a release tag.
+# For people who want the newest work without waiting for a version to be
+# cut -- protocol fixes here tend to land well before a tag. For a stable
+# build use ../PKGBUILD instead, which pins a released tarball by checksum.
+#
+# `pkgver()` reports r<commits>.<shorthash> derived from `git describe`, so
+# pacman orders successive builds correctly and `makepkg -si` in this
+# directory upgrades in place.
+#
+# These are `-git` packages: they conflict with and provide their stable
+# counterparts, so the two sets are mutually exclusive. Installing
+# g7ctlc-git replaces g7ctlc.
+#
+# The install+prune dance in each package_*() mirrors ../PKGBUILD, for the
+# same reason documented at length there: pyproject.toml still builds all
+# three Python packages as ONE wheel, so each package installs that wheel
+# and removes the two-thirds that don't belong to it, and only
+# python-pyg7-git ships the single .dist-info directory (if all three did,
+# pacman would refuse the transaction with "exists in both"). Keep the two
+# files in step -- if the packaging layout changes in one, it has to change
+# in the other.
+#
+# One deliberate difference from ../PKGBUILD: the .dist-info is matched by
+# glob rather than by "$pkgbase-$pkgver". Here $pkgver is a VCS revision
+# (r214.9198e5e) while the wheel's metadata directory is still named after
+# the project version in pyproject.toml (g7ctl-0.1.2.dist-info), so the
+# literal name from ../PKGBUILD would silently match nothing and ship the
+# metadata three times.
+
+pkgbase=g7ctl-git
+pkgname=('python-pyg7-git' 'g7ctl-git' 'g7ctlc-git')
+pkgver=0.0.0
+pkgrel=1
+pkgdesc="Configure a GameSir G7 Pro controller on Linux, without Windows or the Nexus app (git)"
+arch=('any')
+url="https://github.com/questionablesyntax/g7ctl"
+license=('Apache-2.0' 'GPL-3.0-or-later')
+makedepends=('git' 'python-build' 'python-installer' 'python-wheel' 'python-setuptools')
+
+source=("g7ctl::git+https://github.com/questionablesyntax/g7ctl.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$srcdir/g7ctl"
+  # v0.1.2-14-g9198e5e -> 0.1.2.r14.g9198e5e. Falls back to a plain commit
+  # count if the clone ever arrives without tags (a shallow mirror, say),
+  # so the build doesn't die on a version string.
+  git describe --long --tags 2>/dev/null \
+    | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' \
+    || printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  cd "$srcdir/g7ctl"
+  python -m build --wheel --no-isolation
+}
+
+check() {
+  # Cheap here and worth it: the suite needs no hardware, and this is the
+  # one packaging path where the source isn't a reviewed release tag.
+  cd "$srcdir/g7ctl"
+  python -m unittest discover -s tests -t . -q
+}
+
+package_python-pyg7-git() {
+  pkgdesc="Reverse-engineered protocol library for the GameSir G7 Pro controller (git)"
+  depends=('python' 'python-pyusb')
+  license=('Apache-2.0')
+  provides=("python-pyg7=$pkgver")
+  conflicts=('python-pyg7')
+
+  cd "$srcdir/g7ctl"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+  # Keep only pyg7/ -- the wheel bundles g7ctl/g7ctlc too (see header note).
+  find "$pkgdir" -depth \( -name g7ctl -o -name g7ctlc \) -type d -exec rm -rf {} +
+  rm -f "$pkgdir/usr/bin/g7ctl" "$pkgdir/usr/bin/g7ctlc"
+
+  # This package, and only this one, ships the wheel's .dist-info -- see
+  # ../PKGBUILD for why it cannot be split three ways.
+
+  install -Dm644 udev/61-g7ctl.rules \
+    "$pkgdir/usr/lib/udev/rules.d/61-g7ctl.rules"
+
+  install -Dm644 pyg7/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+package_g7ctl-git() {
+  pkgdesc="CLI to configure a GameSir G7 Pro controller on Linux (git)"
+  depends=("python-pyg7-git=$pkgver-$pkgrel")
+  license=('GPL-3.0-or-later')
+  provides=("g7ctl=$pkgver")
+  conflicts=('g7ctl')
+
+  cd "$srcdir/g7ctl"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+  find "$pkgdir" -depth \( -name pyg7 -o -name g7ctlc \) -type d -exec rm -rf {} +
+  rm -f "$pkgdir/usr/bin/g7ctlc"
+  # Owned by python-pyg7-git (a dependency), which ships it once -- see there.
+  rm -rf "$pkgdir"/usr/lib/python*/site-packages/g7ctl-*.dist-info
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+package_g7ctlc-git() {
+  pkgdesc="G7 Control Center -- PyQt6 GUI + tray app for the GameSir G7 Pro (git)"
+  depends=("python-pyg7-git=$pkgver-$pkgrel" 'python-pyqt6')
+  optdepends=('libappindicator-gtk3: tray icon support in some DEs/WMs')
+  license=('GPL-3.0-or-later')
+  provides=("g7ctlc=$pkgver")
+  conflicts=('g7ctlc')
+
+  cd "$srcdir/g7ctl"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+  find "$pkgdir" -depth \( -name pyg7 -o -name g7ctl \) -type d -exec rm -rf {} +
+  rm -f "$pkgdir/usr/bin/g7ctl"
+  # Owned by python-pyg7-git (a dependency), which ships it once -- see there.
+  rm -rf "$pkgdir"/usr/lib/python*/site-packages/g7ctl-*.dist-info
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 g7ctlc/assets/icon_gray.png \
+    "$pkgdir/usr/share/icons/hicolor/512x512/apps/g7ctlc.png"
+
+  # Not packaging/g7ctlc.desktop as-is -- that one's Exec=/Path=/Icon=
+  # hardcode an absolute checkout path on purpose (see README.md "GUI"),
+  # which is exactly wrong for an installed package. This is the installed
+  # equivalent: Exec relies on the g7ctlc console entry point being on PATH,
+  # Icon relies on the hicolor install just above.
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/g7ctlc.desktop" <<-EOF
+	[Desktop Entry]
+	Type=Application
+	Name=G7 Control Center
+	Comment=Configure a GameSir G7 Pro controller (buttons, sticks, triggers, vibration) without Windows
+	Exec=g7ctlc
+	Icon=g7ctlc
+	Categories=Utility;
+	Terminal=false
+	StartupWMClass=g7ctlc
+	EOF
+}

@@ -6,6 +6,18 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **A VCS PKGBUILD at `packaging/git/`**, building the tip of `main` rather
+  than a release tarball: `cd packaging/git && makepkg -si`. Protocol fixes
+  here land well before a version is cut, and until now the only packaged
+  path was a tagged release — you could not build what was on `main`, let
+  alone check that a change still packaged before tagging it. Produces
+  `python-pyg7-git`/`g7ctl-git`/`g7ctlc-git`, which provide and conflict
+  with their stable counterparts, version each build as `0.1.2.rN.g<hash>`
+  so pacman orders them correctly, and run the 209-test suite during the
+  build.
+
 ## [0.1.2] - 2026-08-01
 
 The 2.4GHz dongle release. Everything this project had written down about
