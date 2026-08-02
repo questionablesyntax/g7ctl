@@ -36,12 +36,16 @@
 # Confirmed working end to end on 2026-07-31: all three packages installed
 # via `makepkg -i`, and `g7ctl` resolves on PATH at /usr/bin/g7ctl.
 #
-# Re-verified 2026-08-01 for v0.1.2: `makepkg --verifysource` passes against
-# the sha256sum below, `makepkg` builds all three packages from the release
-# tarball, each .PKGINFO carries 0.1.2-1, and the .dist-info is still owned
-# by python-pyg7 alone (the 0.1.1 "exists in both" failure has not returned).
-# Not re-installed with pacman for this release -- the 0.1.1 install test
-# above is the last one that covered that step.
+# Re-verified 2026-08-01 for v0.1.2 and again for v0.1.3: `makepkg
+# --verifysource` passes against the sha256sum below, `makepkg` builds all
+# three packages from the release tarball, each .PKGINFO carries the right
+# version, and the .dist-info is still owned by python-pyg7 alone (the 0.1.1
+# "exists in both" failure has not returned). For 0.1.3 specifically, the
+# desktop entry extracted from the built package is the one derived from
+# packaging/g7ctlc.desktop -- Settings;HardwareSettings; with Keywords -- and
+# passes desktop-file-validate, which is the change this release exists for.
+# Not re-installed with pacman for either -- the 0.1.1 install test above is
+# the last one that covered that step.
 
 pkgbase=g7ctl
 pkgname=('python-pyg7' 'g7ctl' 'g7ctlc')
@@ -57,7 +61,7 @@ makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools
 # bump -- the checksum below is specific to one tarball, and a stale one
 # fails validation rather than silently building the wrong source.
 source=("$pkgbase-$pkgver.tar.gz::https://github.com/questionablesyntax/g7ctl/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('632adbb5b4c9b73503f87328c564113d32a1147c38e7d63183075d2a58408e3c')
+sha256sums=('78e357d32589040521d9617d84fdf72ec1b9bd970a12d1ca3ef9a2c41b424094')
 
 build() {
   cd "$pkgbase-$pkgver"
