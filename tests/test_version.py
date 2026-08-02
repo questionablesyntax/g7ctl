@@ -11,7 +11,6 @@ installed copy of the test suite (or one run from a wheel) doesn't fail on
 paths that only exist in a checkout or source tarball.
 """
 import re
-import tomllib
 import unittest
 from pathlib import Path
 
@@ -31,8 +30,13 @@ class VersionLockstepTest(unittest.TestCase):
 
     @unittest.skipUnless(_PYPROJECT.is_file(), "pyproject.toml only exists in a checkout/sdist")
     def test_pyproject_agrees(self):
-        declared = tomllib.loads(_PYPROJECT.read_text())["project"]["version"]
-        self.assertEqual(declared, pyg7.__version__,
+        # Read by regex rather than tomllib: tomllib is 3.11+, and this project
+        # supports 3.9. The anchor matters -- an unanchored `version` would also
+        # match [tool.ruff]'s target-version.
+        match = re.search(r'^version\s*=\s*"([^"]+)"$', _PYPROJECT.read_text(),
+                          re.MULTILINE)
+        self.assertIsNotNone(match, "no version= line found in pyproject.toml")
+        self.assertEqual(match.group(1), pyg7.__version__,
                          "pyproject.toml and pyg7.__version__ disagree -- the wheel's "
                          "metadata would report a different version than --version does")
 
