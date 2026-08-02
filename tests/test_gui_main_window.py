@@ -172,3 +172,78 @@ class PlayabilityWarningTest(unittest.TestCase):
         # The window can be hidden to the tray, which is where a user who
         # just found a dead pad is most likely to look first.
         self.assertIn("not usable as a gamepad", _STATE_LABELS["connected"])
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class AutoReleaseOnUnfocusTest(unittest.TestCase):
+    """Releasing the controller when the window loses focus.
+
+    Held, the device sits in vendor/config mode and is not a gamepad at all,
+    so tabbing away to play would find a dead pad. Driven by calling the
+    handlers directly rather than by real focus events: the offscreen
+    platform these run under has no window manager to activate anything.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self, *, active=False, app_window=None):
+        from g7ctlc.main_window import MainWindow
+        window = MainWindow()
+        window._connection_state = "connected"
+        window.isActiveWindow = lambda: active
+        self._patch = mock.patch(
+            "g7ctlc.main_window.QApplication.activeWindow", return_value=app_window)
+        self._patch.start()
+        self.addCleanup(self._patch.stop)
+        self.emitted = []
+        window.release_toggled.connect(self.emitted.append)
+        return window
+
+    def test_unfocused_and_idle_releases(self):
+        window = self._window()
+        window._auto_release_if_still_unfocused()
+        self.assertEqual(self.emitted, [True])
+        self.assertTrue(window._auto_released)
+
+    def test_a_modal_dialog_does_not_count_as_leaving(self):
+        # QMessageBox.question() (the Sync Now / Read confirmations)
+        # deactivates its parent, so releasing on bare unfocus would drop the
+        # device exactly while the user is confirming a write.
+        window = self._window(app_window=object())
+        window._auto_release_if_still_unfocused()
+        self.assertEqual(self.emitted, [])
+        self.assertFalse(window._auto_released)
+
+    def test_mid_sync_defers_instead_of_releasing(self):
+        window = self._window()
+        window._syncing = True
+        window._auto_release_if_still_unfocused()
+        self.assertEqual(self.emitted, [],
+                         "releasing mid-sync would abort a write to persistent config")
+        self.assertTrue(window._auto_release_timer.isActive(),
+                        "the release should be retried, not dropped")
+
+    def test_disconnected_releases_nothing(self):
+        window = self._window()
+        window._connection_state = "disconnected"
+        window._auto_release_if_still_unfocused()
+        self.assertEqual(self.emitted, [])
+
+    def test_refocus_reconnects_after_an_auto_release(self):
+        window = self._window()
+        window._auto_release_if_still_unfocused()
+        self.emitted.clear()
+        window._connection_state = "paused"
+        window._reconnect_after_auto_release()
+        self.assertEqual(self.emitted, [False])
+        self.assertFalse(window._auto_released)
+
+    def test_refocus_never_undoes_an_explicit_release(self):
+        window = self._window()
+        window._connection_state = "paused"  # user clicked Release Device
+        window._reconnect_after_auto_release()
+        self.assertEqual(self.emitted, [],
+                         "an explicit Release Device has to survive refocusing")

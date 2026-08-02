@@ -3,9 +3,10 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import QByteArray, QUrl, pyqtSignal
+from PyQt6.QtCore import QByteArray, QEvent, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QCloseEvent, QDesktopServices
 from PyQt6.QtWidgets import (
+    QApplication,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
@@ -54,6 +55,15 @@ _LEGACY_PROFILES_DIR = (
     / "g7ctl" / "profiles"
 )
 
+# How long the window has to stay unfocused before the controller is handed
+# back. Debounce, not politeness: a modal QMessageBox (the Sync Now / Read
+# confirmations) deactivates its parent window, so releasing the instant
+# focus drops would release the device exactly while the user is confirming
+# a write. The delay plus the "is any window of ours active" check in
+# _auto_release_due() covers that, and stops a quick alt-tab-and-back from
+# costing a full release/reconnect cycle.
+_AUTO_RELEASE_DELAY_MS = 400
+
 
 class MainWindow(QMainWindow):
     release_toggled = pyqtSignal(bool)  # True = release to XInput, False = reconnect
@@ -71,6 +81,15 @@ class MainWindow(QMainWindow):
         self._dirty = False
         self._connection_state = "disconnected"
         self._syncing = False  # true while either a sync-to or read-from-device job is in flight
+        # Set only when *we* released the device because the window lost
+        # focus, so refocusing knows to reconnect. Kept distinct from the
+        # Release Device button: an explicit release has to survive the
+        # window being focused again, and this must never undo one.
+        self._auto_released = False
+        self._auto_release_timer = QTimer(self)
+        self._auto_release_timer.setSingleShot(True)
+        self._auto_release_timer.setInterval(_AUTO_RELEASE_DELAY_MS)
+        self._auto_release_timer.timeout.connect(self._auto_release_if_still_unfocused)
         # True only once self._state has been confirmed against real hardware
         # (a successful Read from Device) or an explicit user Import -- never
         # true for the untouched default_state_dict() scaffold. Gates Sync
@@ -298,6 +317,48 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         self.save_geometry()
         super().closeEvent(event)
+
+    def changeEvent(self, event: QEvent) -> None:
+        """Hand the controller back while the window isn't focused.
+
+        Holding the device keeps it in vendor/config mode, where it isn't a
+        gamepad at all -- so tabbing away to actually play would otherwise
+        find a dead controller until Release Device was clicked by hand.
+        GameSir Nexus releases on unfocus for the same reason. Hiding to the
+        tray deactivates the window too, so that path is covered by this one.
+        """
+        if event.type() == QEvent.Type.ActivationChange:
+            if self.isActiveWindow():
+                self._auto_release_timer.stop()
+                self._reconnect_after_auto_release()
+            else:
+                self._auto_release_timer.start()
+        super().changeEvent(event)
+
+    def _auto_release_if_still_unfocused(self) -> None:
+        if self.isActiveWindow() or QApplication.activeWindow() is not None:
+            # Focus came back, or it only ever went to one of our own windows
+            # -- a modal confirmation dialog, not the user leaving.
+            return
+        if self._connection_state != "connected":
+            return
+        if self._syncing:
+            # Mid sync-to or read-from-device. Dropping the session here
+            # would abort a write to persistent device config, so wait and
+            # re-check rather than skipping the release entirely.
+            self._auto_release_timer.start()
+            return
+        self._auto_released = True
+        self.release_toggled.emit(True)
+
+    def _reconnect_after_auto_release(self) -> None:
+        """Only undoes this class's own release -- an explicit Release Device
+        leaves _auto_released false, so refocusing won't silently reconnect."""
+        if not self._auto_released:
+            return
+        self._auto_released = False
+        if self._connection_state == "paused":
+            self.release_toggled.emit(False)
 
     def set_connection_state(self, state: str) -> None:
         labels = {

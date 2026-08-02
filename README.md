@@ -85,10 +85,13 @@ controller has to be in its vendor/config identity, and in that identity it
 isn't presenting as an Xbox pad: no XInput gamepad, and no HID keyboard/mouse
 to emit your remapped keys.
 
-That's a property of the controller, not of the cable. The GUI's "Release
-Device" hands it back without quitting the app; the CLI holds it only for the
-duration of a command. See [PROTOCOL.md](PROTOCOL.md) "Device identities" for
-the details.
+That's a property of the controller, not of the cable, and mostly it takes care
+of itself: **the GUI hands the controller back whenever its window loses focus**
+— tab away to your game and the pad is a pad again, focus the window and it
+reconnects. Hiding to the tray counts as losing focus. "Release Device" does the
+same thing on demand and stays released until you click "Reconnect". The CLI
+holds the device only for the duration of a command. See
+[PROTOCOL.md](PROTOCOL.md) "Device identities" for the details.
 
 Expect the wireless controller to be a little slower to respond than the wired
 one, handover included — the extra RF hop is why the session runs relaxed
@@ -159,6 +162,10 @@ the window.
   drift from the on-device remap shortcuts below.
 - **"Export…" / "Import…"** save or load the entire current state as a JSON
   snapshot at a path you choose.
+- **Automatic release on unfocus** — the controller goes back to being a gamepad
+  whenever the window isn't focused, and reconnects when it is. A sync or read
+  in flight defers the release until it finishes, so tabbing away mid-write
+  can't abort it.
 
 Both "Sync Now" and "Read from Device" (when it would discard unsynced edits)
 ask for confirmation first — the former pushes to persistent device config, the
