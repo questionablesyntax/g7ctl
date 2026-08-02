@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import QByteArray, QEvent, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QAction, QCloseEvent, QDesktopServices
+from PyQt6.QtGui import QAction, QCloseEvent, QDesktopServices, QHideEvent, QShowEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -328,12 +328,31 @@ class MainWindow(QMainWindow):
         tray deactivates the window too, so that path is covered by this one.
         """
         if event.type() == QEvent.Type.ActivationChange:
-            if self.isActiveWindow():
+            if self.isActiveWindow() and self.isVisible():
                 self._auto_release_timer.stop()
                 self._reconnect_after_auto_release()
             else:
                 self._auto_release_timer.start()
         super().changeEvent(event)
+
+    def hideEvent(self, event: QHideEvent) -> None:
+        """Closing to the tray releases too.
+
+        Hooked directly rather than left to changeEvent: whether a window
+        being hidden gets an ActivationChange at all is platform-dependent
+        (it does under the offscreen platform these tests run on, it does
+        not reliably under a real compositor), and closing the window is a
+        clearer "I'm done with it" than losing focus is.
+        """
+        self._auto_release_timer.start()
+        super().hideEvent(event)
+
+    def showEvent(self, event: QShowEvent) -> None:
+        """Counterpart to hideEvent -- coming back from the tray reconnects
+        without waiting to also be activated, for the same reason."""
+        self._auto_release_timer.stop()
+        self._reconnect_after_auto_release()
+        super().showEvent(event)
 
     def _auto_release_if_still_unfocused(self) -> None:
         if self.isActiveWindow() or QApplication.activeWindow() is not None:
