@@ -17,6 +17,7 @@ import json
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import usb.core
@@ -514,3 +515,39 @@ class BatchReplTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VersionFlagTest(unittest.TestCase):
+    """`--version`, and the batch-safety hole adding it exposed.
+
+    argparse's version action prints and then calls parser.exit() directly,
+    never touching parser.error(). _NonExitingArgumentParser overrode only
+    error(), so before this the flag (and `-h`, which behaves the same way)
+    could end a running batch session from one line -- the exact failure that
+    class exists to prevent.
+    """
+
+    def test_version_prints_and_exits_zero(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), self.assertRaises(SystemExit) as cm:
+            cli_main.build_parser().parse_args(["--version"])
+        self.assertEqual(0, cm.exception.code)
+        self.assertIn(f"g7ctl {cli_main.__version__}", buf.getvalue())
+
+    def test_version_names_the_module_it_ran_from(self):
+        # The number alone can't separate a release from a -git build (both
+        # carry pyproject.toml's version) or a checkout from site-packages.
+        self.assertIn(str(Path(cli_main.__file__).resolve().parent),
+                      cli_main._version_string())
+
+    def test_version_on_a_batch_line_does_not_end_the_session(self):
+        parser = cli_main.build_parser(parser_class=cli_main._NonExitingArgumentParser)
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(cli_main._BatchLineError):
+                parser.parse_args(["--version"])
+
+    def test_help_on_a_batch_line_does_not_end_the_session_either(self):
+        parser = cli_main.build_parser(parser_class=cli_main._NonExitingArgumentParser)
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(cli_main._BatchLineError):
+                parser.parse_args(["-h"])

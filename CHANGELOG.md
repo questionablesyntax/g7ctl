@@ -6,6 +6,34 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`g7ctl --version`.** There was no way to ask the CLI what it was; the
+  GUI has shown its version in About since 0.1.0. It reports the running
+  package's own `__version__` and the directory it was imported from,
+  because the number alone cannot answer the question people actually need
+  answered: `g7ctl-git` builds the same `pyproject.toml` version as `g7ctl`
+  (only its pacman version carries the revision), so the path is what
+  separates a release from a VCS build, and a checkout from site-packages.
+  Installed distribution metadata is appended only when it disagrees with
+  the running module — which means a checkout shadowing an installed
+  package, or genuine version drift.
+- **A test pinning the five version strings a release bumps by hand**
+  (`pyproject.toml`, the three packages' `__init__.py`, and the release
+  PKGBUILD's `pkgver`). Nothing checked they agreed, and a miss is silent in
+  the worst place: `--version` reporting one number while the wheel metadata
+  and pacman report another.
+
+### Fixed
+
+- **`--version` and `-h` could kill a running batch session.**
+  `_NonExitingArgumentParser` exists so one bad line in a hundred-line
+  script doesn't end the process, but it overrode only `error()` — and
+  argparse's version and help actions print and then call `exit()` directly,
+  never touching `error()`. Both now raise the same per-line error as any
+  other invalid line. Latent before this release, since neither option
+  existed at the top level; adding `--version` would have made it reachable.
+
 ## [0.1.3] - 2026-08-01
 
 A packaging release, cut so the corrected launcher entry actually reaches

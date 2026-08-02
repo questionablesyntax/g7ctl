@@ -36,11 +36,13 @@ Confirmed via USB capture + testing:
 """
 import argparse
 import contextlib
+import importlib.metadata
 import logging
 import shlex
 import sys
 import time
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Callable, Optional
 
 import usb.core
@@ -49,6 +51,8 @@ from pyg7 import buttons, dock_settings, dpad_options, report_rate, sticks, trig
 from pyg7 import state as state_mod
 from pyg7.device import enter_vendor_mode, find_writable_device
 from pyg7.session import VendorSession
+
+from . import __version__
 
 DEFAULT_PRE_HEARTBEATS = 3
 DEFAULT_POST_HEARTBEATS = 5
@@ -78,6 +82,17 @@ class _NonExitingArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         raise _BatchLineError(message)
 
+    def exit(self, status: int = 0, message: Optional[str] = None) -> None:
+        """Same contract as error(), for the argparse actions that terminate
+        without going through it -- `--version` and `-h` both print and then
+        call exit() directly. Overriding error() alone left those two able to
+        kill a running batch session from a single line, which is precisely
+        what this class exists to prevent. Nothing inside a batch line has a
+        legitimate reason to end the process."""
+        if message:
+            raise _BatchLineError(message.strip())
+        raise _BatchLineError("this option isn't valid inside a batch session")
+
 
 def _add_heartbeat_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--pre-heartbeats", type=int, default=DEFAULT_PRE_HEARTBEATS,
@@ -99,11 +114,47 @@ def _wrapped_write(sess: VendorSession, args: argparse.Namespace, write_fn: Call
         sess.heartbeat()
 
 
+def _version_string() -> str:
+    """What `--version` prints.
+
+    Leads with this package's own `__version__` -- the version of the code
+    that is actually executing -- rather than installed distribution
+    metadata. Running `python3 g7ctl_tool.py` from a checkout on a machine
+    that also has the package installed imports the checkout, and the
+    metadata would name the installed package instead: the wrong answer to
+    the only question `--version` is ever asked.
+
+    The module path is appended because neither number distinguishes the two
+    package sets this project ships. `g7ctl-git` builds the same
+    pyproject.toml version as `g7ctl` -- only its *pacman* version carries
+    the revision -- so "0.1.3" alone cannot tell a release apart from a VCS
+    build, while the path separates a checkout from site-packages at a
+    glance.
+
+    Distribution metadata still appears when it disagrees, which means
+    either a checkout running ahead of the installed package or genuine
+    drift between g7ctl/__init__.py and pyproject.toml (a release bumps five
+    version strings by hand; tests/test_version.py pins them together).
+    """
+    line = f"g7ctl {__version__} ({Path(__file__).resolve().parent})"
+    try:
+        installed = importlib.metadata.version("g7ctl")
+    except importlib.metadata.PackageNotFoundError:
+        return line
+    if installed != __version__:
+        line += f" [installed distribution reports {installed}]"
+    return line
+
+
 def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.ArgumentParser:
     """`parser_class` is a hook for batch/REPL mode's _NonExitingArgumentParser
     -- every other caller (the real CLI entry point) gets the normal
     exit-on-error argparse.ArgumentParser, unchanged."""
     ap = parser_class(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    # Safe on the batch/REPL parser too: _NonExitingArgumentParser.exit()
+    # turns the terminating actions into a per-line error instead of ending
+    # the session.
+    ap.add_argument("--version", action="version", version=_version_string())
     sub = ap.add_subparsers(dest="action", required=True)
 
     sub.add_parser("enter-vendor", help="Switch the controller from XInput mode into vendor/config mode.")
