@@ -247,3 +247,59 @@ class AutoReleaseOnUnfocusTest(unittest.TestCase):
         window._reconnect_after_auto_release()
         self.assertEqual(self.emitted, [],
                          "an explicit Release Device has to survive refocusing")
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class HideShowReleaseTest(unittest.TestCase):
+    """Closing the window to the tray must release, not just unfocusing.
+
+    Driven through hideEvent/showEvent directly: whether hiding also
+    produces an ActivationChange is platform-dependent, and relying on it
+    is exactly the bug this covers -- close-to-tray left the controller
+    held on a real compositor while the offscreen platform released fine.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+        window = MainWindow()
+        window._connection_state = "connected"
+        self.emitted = []
+        window.release_toggled.connect(self.emitted.append)
+        return window
+
+    def test_hiding_arms_the_release(self):
+        from PyQt6.QtGui import QHideEvent
+        window = self._window()
+        window._auto_release_timer.stop()
+        window.hideEvent(QHideEvent())
+        self.assertTrue(window._auto_release_timer.isActive(),
+                        "close-to-tray has to release the controller too")
+
+    def test_showing_reconnects_after_an_auto_release(self):
+        from PyQt6.QtGui import QShowEvent
+        window = self._window()
+        window._auto_released = True
+        window._connection_state = "paused"
+        window.showEvent(QShowEvent())
+        self.assertEqual(self.emitted, [False])
+        self.assertFalse(window._auto_released)
+
+    def test_showing_cancels_a_pending_release(self):
+        from PyQt6.QtGui import QHideEvent, QShowEvent
+        window = self._window()
+        window.hideEvent(QHideEvent())
+        window.showEvent(QShowEvent())
+        self.assertFalse(window._auto_release_timer.isActive(),
+                         "reopening before the timer fires should not release")
+
+    def test_showing_never_undoes_an_explicit_release(self):
+        from PyQt6.QtGui import QShowEvent
+        window = self._window()
+        window._connection_state = "paused"  # user clicked Release Device
+        window.showEvent(QShowEvent())
+        self.assertEqual(self.emitted, [])
