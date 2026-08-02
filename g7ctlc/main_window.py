@@ -60,8 +60,8 @@ _LEGACY_PROFILES_DIR = (
 # confirmations) deactivates its parent window, so releasing the instant
 # focus drops would release the device exactly while the user is confirming
 # a write. The delay plus the "is any window of ours active" check in
-# _auto_release_due() covers that, and stops a quick alt-tab-and-back from
-# costing a full release/reconnect cycle.
+# _auto_release_if_still_unfocused() covers that, and stops a quick
+# alt-tab-and-back from costing a full release/reconnect cycle.
 _AUTO_RELEASE_DELAY_MS = 400
 
 
