@@ -127,20 +127,20 @@ package_g7ctlc() {
   install -Dm644 g7ctlc/assets/icon_gray.png \
     "$pkgdir/usr/share/icons/hicolor/512x512/apps/g7ctlc.png"
 
-  # Not packaging/g7ctlc.desktop as-is -- that one's Exec=/Path=/Icon=
-  # hardcode an absolute checkout path on purpose (see README.md "GUI"),
-  # which is exactly wrong for an installed package. This is the installed
-  # equivalent: Exec relies on the g7ctlc console entry point being on
-  # PATH, Icon relies on the hicolor install just above.
-  install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/g7ctlc.desktop" <<-EOF
-	[Desktop Entry]
-	Type=Application
-	Name=G7 Control Center
-	Comment=Configure a GameSir G7 Pro controller (buttons, sticks, triggers, vibration) without Windows
-	Exec=g7ctlc
-	Icon=g7ctlc
-	Categories=Utility;
-	Terminal=false
-	StartupWMClass=g7ctlc
-	EOF
+  # Derived from packaging/g7ctlc.desktop rather than written out again here.
+  # That file's Exec=/Path=/Icon= hardcode an absolute checkout path on
+  # purpose (see README.md "GUI"), which is exactly wrong for an installed
+  # package -- so those three lines, and only those, are rewritten: Exec
+  # relies on the g7ctlc console entry point being on PATH, Icon on the
+  # hicolor install just above, and Path= is meaningless once installed.
+  # Everything else (Name, Comment, Categories, Keywords, StartupWMClass)
+  # comes through unchanged, so there is one place to edit it.
+  sed -e 's|^Exec=.*|Exec=g7ctlc|' \
+      -e 's|^Icon=.*|Icon=g7ctlc|' \
+      -e '/^Path=/d' \
+      -e '/^#/d' \
+      packaging/g7ctlc.desktop \
+      > "$srcdir/g7ctlc.desktop"
+  install -Dm644 "$srcdir/g7ctlc.desktop" \
+    "$pkgdir/usr/share/applications/g7ctlc.desktop"
 }

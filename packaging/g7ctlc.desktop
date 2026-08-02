@@ -1,10 +1,34 @@
 [Desktop Entry]
+# The single source of truth for this application's launcher entry, in both
+# forms it takes:
+#
+#   - Checkout use: the Exec/Path/Icon lines carry a /path/to/g7ctl
+#     placeholder, since a launcher run from a clone has no way to know where
+#     you put it. README.md "GUI" has the one-line sed that substitutes your
+#     actual path into ~/.local/share/applications/.
+#   - Packaged use: both PKGBUILDs rewrite those same three lines to the
+#     installed equivalents (Exec=g7ctlc on PATH, Icon=g7ctlc from hicolor,
+#     no Path= at all) rather than each carrying its own copy of this file.
+#
+# Everything else -- Name, Comment, Categories, Keywords, StartupWMClass --
+# is shared by both, which is the point: edit it here and both follow.
+Version=1.0
 Type=Application
 Name=G7 Control Center
+GenericName=Game Controller Configuration
 Comment=Configure a GameSir G7 Pro controller (buttons, sticks, triggers, vibration) without Windows
 Exec=/path/to/g7ctl/g7ctlc_launcher.py
 Path=/path/to/g7ctl
 Icon=/path/to/g7ctl/g7ctlc/assets/icon_gray.png
-Categories=Utility;
 Terminal=false
+# Where someone actually looks for device configuration. HardwareSettings is
+# an additional category and needs its main category, Settings, alongside it.
+# Deliberately only ONE main category: adding Utility back lists the app
+# twice in menus that honour both (desktop-file-validate warns about exactly
+# this), and Keywords below already covers findability.
+Categories=Settings;HardwareSettings;
+# Launcher search terms -- nobody hunting for this types "G7 Control Center".
+Keywords=gamesir;g7;controller;gamepad;joystick;remap;paddle;trigger;deadzone;
+# Matches the process name g7ctlc.app.main() sets via prctl(PR_SET_NAME) --
+# see README.md "GUI". Without it, window managers key rules off "python3".
 StartupWMClass=g7ctlc

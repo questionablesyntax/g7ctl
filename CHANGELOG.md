@@ -6,6 +6,25 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`packaging/g7ctlc.desktop` is now the single source of the launcher
+  entry.** Both PKGBUILDs used to carry their own heredoc copy, so the same
+  content lived in three places and had already drifted apart in structure.
+  They now derive the installed entry from that one file, rewriting only the
+  three lines that must differ (`Exec`/`Icon` to their installed forms,
+  `Path=` dropped) and stripping comments. Editing the entry is now a
+  one-file change.
+- **The launcher entry gained `Keywords`, `GenericName` and a corrected
+  `Categories`.** It was `Categories=Utility;` with no search terms, so it
+  surfaced only for someone already typing its name. It now sits under
+  `Settings;HardwareSettings;`, where a user looks for device configuration,
+  and matches searches for gamesir, controller, gamepad, remap, deadzone and
+  so on. Deliberately one main category: keeping `Utility` alongside
+  `Settings` makes some menus list the app twice, which
+  `desktop-file-validate` warns about. Both the checkout and packaged forms
+  validate clean.
+
 ### Added
 
 - **A VCS PKGBUILD at `packaging/git/`**, building the tip of `main` rather
