@@ -93,7 +93,7 @@ cd g7ctl/packaging/git && makepkg -si
 That produces `python-pyg7-git`, `g7ctl-git` and `g7ctlc-git`, which
 conflict with and provide their stable counterparts, so the two sets are
 mutually exclusive: installing `g7ctlc-git` replaces `g7ctlc`. It clones the
-repository itself, versions each build as `0.1.2.rN.g<hash>` so pacman
+repository itself, versions each build as `<latest tag>.rN.g<hash>` so pacman
 orders successive builds correctly, and runs the test suite during the build
 -- worth doing on a source that isn't a reviewed release tag.
 
