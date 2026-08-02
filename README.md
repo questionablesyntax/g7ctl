@@ -4,7 +4,7 @@ Configure your GameSir G7 Pro from Linux — button remapping, stick and trigger
 tuning, vibration, polling rate, dock settings. Everything the GameSir Nexus
 app does on Windows, with no Windows and no Nexus.
 
-<img src="docs/screenshot.png" alt="G7 Control Center showing the Buttons tab: each of the 21 buttons listed with its Default Layer and Shift Layer binding, a profile selector and report rate in the top bar, and Read from Device / Sync Now actions along the bottom." width="480">
+<img src="docs/screenshot.png" alt="G7 Control Center showing the Buttons tab: each of the 21 buttons listed with its Default Layer and Shift Layer binding, a profile selector and report rate in the top bar, and Read from Device / Sync Now actions along the bottom." width="320">
 
 Three pieces, one repo:
 
