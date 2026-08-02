@@ -55,7 +55,7 @@ confirmed pattern.
 | `g7ctlc/` | The GUI + tray app. |
 | `g7ctl_tool.py` | Convenience shim: runs the CLI straight from a checkout, no install. Equivalent to the `g7ctl` command. |
 | `g7ctlc_launcher.py` | Same idea for the GUI.  |
-| `packaging/`, `udev/` | Arch PKGBUILD and desktop entry; the udev rule for non-root USB access. |
+| `packaging/`, `udev/` | Arch PKGBUILDs (`packaging/` for a released tarball, `packaging/git/` for the tip of `main`) and desktop entry; the udev rule for non-root USB access. |
 
 The two root-level scripts exist purely so a fresh `git clone` is runnable
 with nothing installed. If you install the package, use the `g7ctl` and
@@ -82,6 +82,20 @@ done -- you can skip [Running without root](#running-without-root) entirely.
 application launcher.
 
 Not on the AUR yet; build it from a checkout as above.
+
+To build the current tip of `main` instead of the last release -- protocol
+fixes tend to land well before a version is cut -- use the VCS PKGBUILD:
+
+```bash
+cd g7ctl/packaging/git && makepkg -si
+```
+
+That produces `python-pyg7-git`, `g7ctl-git` and `g7ctlc-git`, which
+conflict with and provide their stable counterparts, so the two sets are
+mutually exclusive: installing `g7ctlc-git` replaces `g7ctlc`. It clones the
+repository itself, versions each build as `0.1.2.rN.g<hash>` so pacman
+orders successive builds correctly, and runs the test suite during the build
+-- worth doing on a source that isn't a reviewed release tag.
 
 Nothing here is Arch-specific, though, and the layout is deliberately
 packaging-friendly: a standard PEP 517 build, three importable packages with

@@ -17,3 +17,7 @@ src/
 pkg/
 *.pkg.tar.zst
 *.tar.gz
+
+# Local packaging test tool (see its header) -- deliberately untracked.
+/test-build.sh
+packaging/.testbuild/
