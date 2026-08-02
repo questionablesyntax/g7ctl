@@ -6,6 +6,26 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-01
+
+The 2.4GHz dongle release. Everything this project had written down about
+the dongle since 2026-07-26 was wrong in the same way: it had only ever been
+observed while our own tool was holding it, so the state it idles in was
+never once seen. Correcting that fixed a slow connect, a session running the
+wrong timeouts, and a README that told wireless users the opposite of the
+truth.
+
+### Added
+
+- **The GUI now says on screen that the controller isn't playable while the
+  app holds it.** An amber note in the status bar, next to the connection
+  state and directly beneath the "Release Device" button that clears it,
+  shown only while a session is actually held; the tray tooltip's "Connected"
+  label says the same, since a user who just found a dead pad is likely
+  looking at the tray rather than a hidden window. This was previously a
+  README-only caveat — and one the README got wrong for wireless users, who
+  had no reason to connect a dead gamepad to this app at all.
+
 ### Changed
 
 - **`pyg7.device.enter_vendor_mode()` now returns `(device, via_dongle)`**
@@ -17,6 +37,14 @@ adheres to [semantic versioning](https://semver.org/).
 
 ### Fixed
 
+- **The 2.4GHz dongle is not exempt from "Release Device".** The README,
+  `PROTOCOL.md`, and the `PID_DONGLE` comment all said the dongle accepted
+  configuration writes while continuing to work as a plain gamepad, so the
+  README told wireless users they could leave the app connected and never
+  think about it. They cannot: the controller is held in its vendor identity
+  over the dongle exactly as it is over the cable, and is just as unplayable.
+  Verified from daily use and with `g7ctlc` connected over the dongle —
+  interface 0 bound to `usbfs`, nothing bound to `xpad`, no `/dev/input/js*`.
 - **The wireless dongle does take the mode-switch handshake, and
   `enter_vendor_mode()` never waited for its landing PID.** An idle dongle
   enumerates as `100a` (an ordinary Xbox pad, `xpad` bound), takes the same
@@ -40,34 +68,6 @@ adheres to [semantic versioning](https://semver.org/).
   a previous session had always left it there. The identity table, the
   mode-switch section, `PID_DONGLE`/`PID_XINPUT`'s comments, and the README
   are corrected.
-
-### Added
-
-- **The GUI now says on screen that the controller isn't playable while the
-  app holds it.** An amber note in the status bar, next to the connection
-  state and directly beneath the "Release Device" button that clears it,
-  shown only while a session is actually held; the tray tooltip's "Connected"
-  label says the same, since a user who just found a dead pad is likely
-  looking at the tray rather than a hidden window. This was previously a
-  README-only caveat — and one the README got wrong for wireless users, who
-  had no reason to connect a dead gamepad to this app at all.
-
-### Fixed
-
-- **Corrected a false claim: the 2.4GHz dongle is not exempt from "Release
-  Device".** The README, `PROTOCOL.md`, and the `PID_DONGLE` comment all said
-  the dongle accepted configuration writes while continuing to work as a
-  plain gamepad. It does not. The dongle is a USB bridge, not a second
-  personality: the controller behind it is captured the same way it is over
-  the cable -- same claimed interface, same heartbeat stream holding it in
-  config mode -- and is just as unplayable while the app is connected.
-  Verified 2026-07-31 from daily use, and with `g7ctlc` connected over the
-  dongle: interface 0 bound to `usbfs`, nothing bound to `xpad`, no
-  `/dev/input/js*`. What "no handshake needed" actually means is narrower
-  than it was written to mean: the dongle already exposes the vendor
-  interface, so there is no local re-enumeration to trigger, and no PID
-  change to watch for on the way back out. Documentation only; no code
-  behavior changed.
 
 ## [0.1.1] - 2026-07-31
 
@@ -99,8 +99,8 @@ or GUI; the protocol code is byte-for-byte identical to 0.1.0.
   an XInput pad and cannot emit remapped keys — so over USB it is not usable
   for playing while the GUI is connected. The button that reverts it was
   present in the UI but appeared nowhere in the README. (This entry
-  originally claimed the 2.4GHz dongle was exempt; it isn't — corrected
-  under Unreleased above.)
+  originally claimed the 2.4GHz dongle was exempt; it isn't — corrected in
+  0.1.2 above.)
 - A repository-layout table in the README, explaining `g7ctl_tool.py` and
   `g7ctlc_launcher.py` — the two root-level scripts that let a fresh clone
   run with nothing installed.
@@ -197,6 +197,7 @@ and motion/gyro is unimplemented by choice.
 - The PKGBUILD is structurally validated but has not been build-tested
   against a real release tarball.
 
-[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/questionablesyntax/g7ctl/releases/tag/v0.1.0

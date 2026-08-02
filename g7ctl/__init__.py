@@ -16,4 +16,4 @@ Layout:
   main.py   argument parsing, command dispatch, on-device command handlers
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
