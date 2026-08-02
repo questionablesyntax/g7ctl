@@ -6,6 +6,14 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-01
+
+A packaging release, cut so the corrected launcher entry actually reaches
+installed systems: `packaging/PKGBUILD` builds from a release tarball, so
+0.1.2's packages still ship the old one no matter what `main` says. No
+change to the library, CLI, or GUI code — the protocol path is identical to
+0.1.2.
+
 ### Changed
 
 - **`packaging/g7ctlc.desktop` is now the single source of the launcher
@@ -33,7 +41,7 @@ adheres to [semantic versioning](https://semver.org/).
   path was a tagged release — you could not build what was on `main`, let
   alone check that a change still packaged before tagging it. Produces
   `python-pyg7-git`/`g7ctl-git`/`g7ctlc-git`, which provide and conflict
-  with their stable counterparts, version each build as `0.1.2.rN.g<hash>`
+  with their stable counterparts, version each build as `<latest tag>.rN.g<hash>`
   so pacman orders them correctly, and run the 209-test suite during the
   build.
 
@@ -228,7 +236,8 @@ and motion/gyro is unimplemented by choice.
 - The PKGBUILD is structurally validated but has not been build-tested
   against a real release tarball.
 
-[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/questionablesyntax/g7ctl/releases/tag/v0.1.0
