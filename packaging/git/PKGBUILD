@@ -22,6 +22,15 @@
 # files in step -- if the packaging layout changes in one, it has to change
 # in the other.
 #
+# Build-tested 2026-08-01 against the real remote, this file unmodified:
+# cloned over git+https, pkgver() resolved to 0.1.2.r2.g3e405e0, check() ran
+# 209 tests, all three packages built. Verified in the results -- each
+# package holds exactly one Python package and its own /usr/bin entry,
+# python-pyg7-git alone ships the .dist-info and the udev rule, g7ctlc-git
+# ships the desktop entry and hicolor icon, and the three package file lists
+# share ZERO paths pairwise (that last one is precisely what pacman refuses
+# a transaction over). Not installed with pacman -U.
+#
 # One deliberate difference from ../PKGBUILD: the .dist-info is matched by
 # glob rather than by "$pkgbase-$pkgver". Here $pkgver is a VCS revision
 # (r214.9198e5e) while the wheel's metadata directory is still named after
