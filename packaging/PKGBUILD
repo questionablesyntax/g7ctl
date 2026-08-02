@@ -35,6 +35,13 @@
 #
 # Confirmed working end to end on 2026-07-31: all three packages installed
 # via `makepkg -i`, and `g7ctl` resolves on PATH at /usr/bin/g7ctl.
+#
+# Re-verified 2026-08-01 for v0.1.2: `makepkg --verifysource` passes against
+# the sha256sum below, `makepkg` builds all three packages from the release
+# tarball, each .PKGINFO carries 0.1.2-1, and the .dist-info is still owned
+# by python-pyg7 alone (the 0.1.1 "exists in both" failure has not returned).
+# Not re-installed with pacman for this release -- the 0.1.1 install test
+# above is the last one that covered that step.
 
 pkgbase=g7ctl
 pkgname=('python-pyg7' 'g7ctl' 'g7ctlc')
@@ -50,7 +57,7 @@ makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools
 # bump -- the checksum below is specific to one tarball, and a stale one
 # fails validation rather than silently building the wrong source.
 source=("$pkgbase-$pkgver.tar.gz::https://github.com/questionablesyntax/g7ctl/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('10f7a94451e9c89a8aa3f7802e49fc2bbec99e905288123537d4a609771050a7')
+sha256sums=('632adbb5b4c9b73503f87328c564113d32a1147c38e7d63183075d2a58408e3c')
 
 build() {
   cd "$pkgbase-$pkgver"
