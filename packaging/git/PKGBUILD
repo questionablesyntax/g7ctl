@@ -128,7 +128,7 @@ package_g7ctlc-git() {
   rm -rf "$pkgdir"/usr/lib/python*/site-packages/g7ctl-*.dist-info
 
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-  install -Dm644 g7ctlc/assets/icon_gray.png \
+  install -Dm644 g7ctlc/assets/icon_black.png \
     "$pkgdir/usr/share/icons/hicolor/512x512/apps/g7ctlc.png"
 
   # Derived from packaging/g7ctlc.desktop rather than written out again here

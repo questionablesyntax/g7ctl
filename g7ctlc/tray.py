@@ -1,13 +1,15 @@
 """System tray icon: reflects DeviceWatcher connection state.
 
-Icons live in g7ctlc/assets/. As of 2026-07-29, all four states use
-an abstract gamepad-outline glyph (icon_gray/orange/green/red.png), recolored
-per state -- not derived from any GameSir product photo or artwork, replacing
-the earlier AI-rendered controller-on-dock icons that carried unclear
-derivative-work/copyright status. Note the new glyph set is itself
-AI-generated (Google Gemini, per the source filenames) -- it resolves the
-product-photo derivative-work risk but not the separate "AI output may not
-be independently copyrightable" question, which is still open for this art.
+Icons live in g7ctlc/assets/. As of 2026-08-02 the four states are
+icon_black/yellow/green/red.png: a rendered controller whose centre
+indicator carries the state colour. The indicator is enlarged ~2.2x from
+the source artwork, with a contrasting rim -- at the 16-22px a panel
+actually renders a tray icon at, the original dot was ~3px and the states
+were not tellable apart. This replaces the abstract gamepad-outline glyph
+set used from 2026-07-29.
+
+The "AI output may not be independently copyrightable" question raised for
+the previous set has not been re-answered for this one.
 """
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -24,11 +26,11 @@ if TYPE_CHECKING:
 
 _ASSETS_DIR = Path(__file__).parent / "assets"
 _STATE_ICON_FILES = {
-    "disconnected": "icon_gray.png",
-    "connecting": "icon_orange.png",
+    "disconnected": "icon_black.png",
+    "connecting": "icon_yellow.png",
     "connected": "icon_green.png",
     "paused": "icon_red.png",
-    "no_controller": "icon_orange.png",
+    "no_controller": "icon_yellow.png",
 }
 _STATE_LABELS = {
     "disconnected": "Disconnected",
