@@ -35,11 +35,9 @@ from .views.vibration_view import VibrationView
 # the tray icon (see tray.py's TrayIcon) reflects state with color. A
 # per-state window icon was tried and reverted (2026-07-29): distracting in
 # the title bar/taskbar, which users expect to stay constant for an app.
-# Reuses the "disconnected" glyph (icon_gray.png) rather than a dedicated
-# static asset -- a denser solid-silhouette design was tried first but its
-# small button holes aliased into a busy speckle at the ~16px size KWin
-# renders the title-bar icon at; the open-outline glyph survives that fine.
-_APP_ICON_FILE = "icon_gray.png"
+# Reuses the "disconnected" icon (icon_black.png) rather than a dedicated
+# static asset, so the launcher/taskbar entry stays state-neutral.
+_APP_ICON_FILE = "icon_black.png"
 
 _GEOMETRY_PATH = (
     Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
