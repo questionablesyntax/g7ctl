@@ -122,8 +122,30 @@ active." See "Profile scoping" below for how this was confirmed.
 ```
 byte = profile_number(1-4) + (4 if Shift Layer else 0)
 ```
-Confirmed: 1+Default=`01`, 2+Default=`02`, 1+Shift=`05`. Formula predicts
-the rest. This is the only category confirmed to carry a profile-targeting
+**Only five values exist: `01`-`04` (Profiles 1-4, Default layer) and `05`
+(Profile 1, Shift layer).** Profiles 2-4 have no Shift layer. The formula
+above generates `06`/`07`/`08` for them; the firmware implements no such
+category and **falls back to Profile 1's Default-layer blob instead of
+failing** -- a read returns Profile 1's bindings, and a write *modifies
+Profile 1's Default layer*.
+
+Confirmed 2026-08-07, wired, by reading all 256 possible category bytes:
+exactly six return distinct data -- `01`-`04`, `05`, and `20` (dock, a
+separate scheme; see "Dock settings"). The remaining 250 all return Profile
+1's Default-layer blob, byte-for-byte across the full 480. A write test
+pinned the write side: remapping Y on category `08` changed Profile 1's
+Default layer at offset `0x90` and nothing else on the device.
+
+This document previously said the formula "predicts the rest", on the
+strength of three confirmed values -- `01`, `02` and `05`, which are exactly
+the three that work. Note that a write-then-read-back test cannot detect
+this, because the fallback redirects both halves of the round trip to the
+same blob: a Profile 2 Shift binding reads back exactly as written, from
+Profile 1. Whether the hardware supports per-profile Shift bindings through
+some other mechanism is **unresolved** -- nothing in the category byte space
+does.
+
+This is the only category confirmed to carry a profile-targeting
 byte at all (see "Profile scoping" below).
 
 **BUTTON_ID -- always send the 2-byte allocate form**, `[allocate_id,
@@ -424,7 +446,11 @@ Request, on the normal `0x0f` OUT channel:
 0f 00 [SEQ] 05 04 [CATEGORY] [OFFSET_HI] [OFFSET_LO] [LENGTH]
 ```
 
-`CATEGORY` = same `profile + (4 if shift)` byte Buttons writes use.
+`CATEGORY` = same `profile + (4 if shift)` byte Buttons writes use, with the
+same five valid values (`01`-`04`, `05`) -- see "Buttons". **An unimplemented
+category is not rejected: it returns Profile 1's Default-layer blob.** A
+reader that trusts the echoed category byte gets plausible, wrong data, so
+treat any category outside those five as unreadable rather than empty.
 `OFFSET` = 16-bit big-endian offset into that category's config blob.
 `LENGTH` = `0x37` (55) per chunk, `0x28` (40) for a region's final chunk
 (480 bytes total per profile).
@@ -492,6 +518,10 @@ physically active on the controller (no M-button combo ever required from
 software):
 
 - **Buttons**: explicit per-write via the `PROFILE+LAYER` byte (see above).
+  The *profile* axis is fully scoped across all 4; the *layer* axis is not,
+  because only Profile 1 has a Shift layer at all. Targeting a Shift layer
+  on Profiles 2-4 does not fail -- it writes into Profile 1's Default
+  layer. See "Buttons".
 - **Sticks/Triggers/Vibration/Report Rate**: explicit per-write via the
   prefix's middle byte, a plain profile number 1-4 (see "Category
   prefixes" above). An earlier single test wrongly suggested these
