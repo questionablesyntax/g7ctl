@@ -38,7 +38,7 @@ from typing import Callable, Optional
 from . import buttons, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
 from .constants import DOCK_READ_CATEGORY, FULL_BLOB_LENGTH
 from .curves import CURVE_PRESETS as _CURVE_PRESETS
-from .session import VendorSession, profile_layer_byte
+from .session import SHIFT_LAYER_PROFILES, VendorSession, profile_layer_byte, shift_layer_supported
 
 log = logging.getLogger(__name__)
 
@@ -178,9 +178,24 @@ def validate_state(data: dict) -> None:
     if auto is not None and not isinstance(auto, bool):
         raise StateError(f"dock_auto_on_off must be a bool or null, got {auto!r}")
 
+    slot = data.get("controller_slot") or 1
     for layer_name, bindings in data["buttons"].items():
         if layer_name not in ("default", "shift"):
             raise StateError(f"unknown button layer {layer_name!r}, expected 'default' or 'shift'")
+        # Refuse Shift bindings for a profile with no Shift storage, here
+        # rather than at write time: writing one corrupts Profile 1's
+        # Default layer (see session.profile_layer_byte()), and failing
+        # mid-sync would leave the earlier steps already applied. A state
+        # read back by a version before this check carries Profile 1's
+        # Default bindings mislabelled as this profile's Shift layer, so
+        # refusing is also refusing to write back bogus data.
+        if layer_name == "shift" and bindings and not shift_layer_supported(slot):
+            raise StateError(
+                f"profile {slot} declares {len(bindings)} Shift-layer binding(s), but the "
+                f"controller has no Shift layer for it -- only profile(s) "
+                f"{', '.join(str(p) for p in SHIFT_LAYER_PROFILES)}. Writing them would "
+                "overwrite Profile 1's Default layer. Clear the shift layer for this profile, "
+                "or re-read the profile from the device to get a correct state.")
         for btn, keycode_name in bindings.items():
             if btn.lower() not in buttons.KNOWN_BUTTON_IDS:
                 raise StateError(f"unknown button {btn!r}")
@@ -321,11 +336,13 @@ def read_state(session: VendorSession, slot: int = 1, interval: float = 0.05,
     behavior) so every other caller, including the CLI's standalone
     `read-state`, is unaffected.
 
-    NOTE on scope: this reads ONE profile per call (the `category` byte
-    covers profile+shift = 8 addressable blobs total -- 4 profiles x
-    Default/Shift -- see session.py's profile_layer_byte()). All 4 stored
-    profiles ARE readable this same way, just one call per profile; this
-    function doesn't loop over all of them itself.
+    NOTE on scope: this reads ONE profile per call. The `category` byte
+    addresses five profile blobs, not eight: Profiles 1-4's Default layers
+    (0x01-0x04) plus Profile 1's Shift layer (0x05). Profiles 2-4 have no
+    Shift layer -- see session.py's profile_layer_byte() -- so their
+    "shift" section comes back empty. All 4 stored profiles ARE readable
+    this same way, just one call per profile; this function doesn't loop
+    over all of them itself.
 
     Sends a few heartbeats before the first read, same reasoning as
     WRITE_PRE_HEARTBEATS for writes: a session with no recent heartbeat
@@ -366,7 +383,15 @@ def read_state(session: VendorSession, slot: int = 1, interval: float = 0.05,
         "controller_slot": slot,
         "buttons": {
             "default": buttons.decode_button_table(default_blob),
-            "shift": buttons.read_button_bindings(session, profile=slot, shift=True, interval=interval),
+            # Only Profile 1 has a Shift layer the firmware can address. For
+            # the others this used to read category 0x06/0x07/0x08, which the
+            # device answers with Profile 1's Default-layer blob -- so the
+            # GUI showed Profile 1's bindings labelled as Profile 3's Shift
+            # layer. An empty dict is "this profile declares no Shift
+            # bindings", which write_state() correctly treats as nothing to
+            # write. See session.profile_layer_byte().
+            "shift": (buttons.read_button_bindings(session, profile=slot, shift=True, interval=interval)
+                      if shift_layer_supported(slot) else {}),
         },
         "report_rate_hz": report_rate.decode_settings(default_blob)["report_rate_hz"],
         # Both D-pad options come out of a single decode -- calling it once

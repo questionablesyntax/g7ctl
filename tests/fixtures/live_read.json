@@ -183,29 +183,7 @@
         "x": null,
         "y": null
       },
-      "shift": {
-        "a": "native_a",
-        "b": "native_b",
-        "dpad_down": "native_dpad_down",
-        "dpad_left": "native_dpad_left",
-        "dpad_right": "native_dpad_right",
-        "dpad_up": "native_dpad_up",
-        "l3": "native_l3",
-        "l4": "numpad1",
-        "l5": "numpad9",
-        "lb": "native_lb",
-        "lt": "native_lt",
-        "menu": "native_menu",
-        "r3": "native_r3",
-        "r4": "numpad3",
-        "r5": "numpad7",
-        "rb": "native_rb",
-        "rt": "native_rt",
-        "share": "f11",
-        "view": "native_view",
-        "x": "native_x",
-        "y": "native_y"
-      }
+      "shift": {}
     },
     "controller_slot": 3,
     "dock_auto_on_off": true,

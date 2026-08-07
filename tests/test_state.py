@@ -11,6 +11,14 @@ Two things matter here:
 The fixtures under tests/fixtures/ are genuine read_state() output captured
 from the development controller, so the decoders are exercised against real
 device data and not only against hand-built blobs.
+
+One correction to that, 2026-08-07: `profile3_factory`'s "shift" section was
+captured back when read_state() read category 0x07 for it, which the firmware
+answers with Profile 1's *Default* layer -- so the fixture recorded Profile
+1's bindings as though they were Profile 3's Shift layer. It reads `{}` now,
+which is what the device actually offers for that profile. The rest of the
+fixture is untouched and still genuine. See pyg7/session.py's
+profile_layer_byte() for the hardware evidence.
 """
 import json
 import pathlib
@@ -95,6 +103,36 @@ class ValidateStateTest(unittest.TestCase):
         self.state["buttons"]["turbo"] = {}
         with self.assertRaises(state_mod.StateError):
             state_mod.validate_state(self.state)
+
+    def test_rejects_shift_bindings_on_profiles_without_a_shift_layer(self):
+        """Caught before any write, not partway through one.
+
+        A Shift write on Profiles 2-4 lands in Profile 1's Default layer
+        (see session.profile_layer_byte()). Letting profile_layer_byte()
+        raise mid-sync would leave every earlier step already applied to the
+        device, so the refusal belongs here.
+        """
+        for profile in (2, 3, 4):
+            with self.subTest(profile=profile):
+                self.state["controller_slot"] = profile
+                self.state["buttons"]["shift"] = {"y": "f1"}
+                with self.assertRaises(state_mod.StateError) as ctx:
+                    state_mod.validate_state(self.state)
+                self.assertIn("Shift", str(ctx.exception))
+
+    def test_allows_shift_bindings_on_profile_1(self):
+        self.state["controller_slot"] = 1
+        self.state["buttons"]["shift"] = {"y": "f1"}
+        state_mod.validate_state(self.state)  # must not raise
+
+    def test_allows_empty_shift_layer_on_any_profile(self):
+        """read_state() returns {} for these profiles -- a fresh read must
+        still round-trip through validate_state()/write_state() cleanly."""
+        for profile in (1, 2, 3, 4):
+            with self.subTest(profile=profile):
+                self.state["controller_slot"] = profile
+                self.state["buttons"]["shift"] = {}
+                state_mod.validate_state(self.state)
 
     def test_rejects_unknown_keycode_name(self):
         self.state["buttons"]["default"]["a"] = "hyperspace"

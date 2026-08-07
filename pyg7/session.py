@@ -42,14 +42,49 @@ READ_CHUNK_TIMEOUT = 2.0
 READ_CHUNK_TIMEOUT_DONGLE = 4.0
 
 
+# Profiles whose Shift layer the firmware actually implements. Only
+# Profile 1: see profile_layer_byte() below for the hardware evidence.
+SHIFT_LAYER_PROFILES = (1,)
+
+
+def shift_layer_supported(profile: int) -> bool:
+    """Does `profile` have a Shift layer the firmware can address? Only
+    Profile 1 does -- see profile_layer_byte(). Callers that would otherwise
+    read or write a Shift binding should check this first and skip the
+    layer, rather than letting profile_layer_byte() raise mid-operation."""
+    return profile in SHIFT_LAYER_PROFILES
+
+
 def profile_layer_byte(profile: int = 1, shift: bool = False) -> int:
     """Encodes BOTH the target profile (1-4) and the layer (Default/Shift)
     into one byte, used by the Buttons category's write prefix:
     byte = profile + (4 if shift else 0).
 
-    Confirmed: profile1+default=0x01, profile2+default=0x02, profile1+shift=
-    0x05. Profiles 3/4 and shift for profiles 2-4 follow the same formula but
-    aren't independently confirmed.
+    Valid values are 0x01-0x04 (Profiles 1-4, Default layer) and 0x05
+    (Profile 1, Shift layer). **There is no Shift layer for Profiles 2-4** --
+    this raises rather than returning 0x06/0x07/0x08.
+
+    The formula above once claimed to cover all 8 combinations. It does not,
+    and the three values it was confirmed on (0x01, 0x02, 0x05) were exactly
+    the ones that work. Hardware evidence, 2026-08-07, wired:
+
+    - Reading all 256 possible category bytes returns just six distinct
+      blobs: 0x01-0x04, 0x05, and 0x20 (dock, a separate scheme -- see
+      dock_settings.py). The other 250 values, 0x06/0x07/0x08 included,
+      return Profile 1's Default-layer blob rather than failing.
+    - So a Shift-layer *read* on Profiles 2-4 silently returned Profile 1's
+      Default layer, byte-for-byte across all 480 bytes.
+    - Worse, a Shift-layer *write* landed there too: remapping Y on
+      Profile 4's Shift layer (category 0x08) changed Profile 1's Default
+      layer at offset 0x90, 0x0c -> the written keycode. Nothing else on the
+      device changed. The firmware does not reject the unimplemented
+      category; it falls back to blob 1 and corrupts it.
+
+    That fallback also means our own write-then-read-back tests could not
+    have caught this: both halves of the loop are redirected to the same
+    place, so a Profile 2 Shift write reads back exactly as written. Whether
+    the hardware supports per-profile Shift bindings by some *other*
+    mechanism is unresolved -- nothing in the category byte space does.
 
     Sticks/Triggers/Vibration/Report Rate do NOT use this combined byte --
     they carry a plain profile number (1-4) in their own prefix's middle
@@ -60,6 +95,11 @@ def profile_layer_byte(profile: int = 1, shift: bool = False) -> int:
     """
     if not 1 <= profile <= 4:
         raise ValueError("profile must be 1-4")
+    if shift and not shift_layer_supported(profile):
+        raise ValueError(
+            f"profile {profile} has no Shift layer -- the firmware implements one only for "
+            f"profile(s) {', '.join(str(p) for p in SHIFT_LAYER_PROFILES)}. Writing to it "
+            "corrupts Profile 1's Default layer; reading it returns Profile 1's data.")
     return profile + (4 if shift else 0)
 
 

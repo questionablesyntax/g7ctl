@@ -15,7 +15,7 @@ import unittest
 from pyg7 import buttons, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
 from pyg7.constants import CMD_WRITE, prefix_sticks, prefix_triggers_vibration
 from pyg7.curves import curve_preset_payload
-from pyg7.session import profile_layer_byte
+from pyg7.session import profile_layer_byte, shift_layer_supported
 
 from .fakes import FakeSession
 
@@ -29,9 +29,29 @@ class ProfileLayerByteTest(unittest.TestCase):
         self.assertEqual(profile_layer_byte(2, shift=False), 0x02)
         self.assertEqual(profile_layer_byte(1, shift=True), 0x05)
 
-    def test_formula_extends_to_all_slots(self):
+    def test_formula_extends_to_all_default_layer_slots(self):
+        self.assertEqual(profile_layer_byte(3, shift=False), 0x03)
         self.assertEqual(profile_layer_byte(4, shift=False), 0x04)
-        self.assertEqual(profile_layer_byte(4, shift=True), 0x08)
+
+    def test_shift_layer_rejected_for_profiles_without_one(self):
+        """0x06/0x07/0x08 must never reach the wire.
+
+        This test previously asserted the opposite -- that
+        profile_layer_byte(4, shift=True) == 0x08 -- which is what the
+        formula predicted and what the firmware does NOT implement. A write
+        to category 0x08 lands in Profile 1's Default layer instead
+        (hardware-confirmed 2026-08-07; see profile_layer_byte()'s
+        docstring), so the GUI's Shift column silently corrupted Profile 1
+        for anyone editing Profiles 2-4.
+        """
+        for profile in (2, 3, 4):
+            with self.assertRaises(ValueError):
+                profile_layer_byte(profile, shift=True)
+
+    def test_shift_layer_supported_only_for_profile_1(self):
+        self.assertTrue(shift_layer_supported(1))
+        for profile in (2, 3, 4):
+            self.assertFalse(shift_layer_supported(profile))
 
     def test_rejects_out_of_range(self):
         for bad in (0, 5, -1):
@@ -85,8 +105,17 @@ class ButtonWriteTest(unittest.TestCase):
 
     def test_remap_targets_shift_layer_and_profile(self):
         sess = FakeSession()
-        buttons.remap(sess, buttons.KNOWN_BUTTON_IDS["a"], 0x3E, profile=2, shift=True)
-        self.assertEqual(sess.only_payload()[1], 0x06)  # profile 2 + shift
+        buttons.remap(sess, buttons.KNOWN_BUTTON_IDS["a"], 0x3E, profile=1, shift=True)
+        self.assertEqual(sess.only_payload()[1], 0x05)  # profile 1 + shift
+
+    def test_remap_refuses_the_shift_layer_of_a_profile_without_one(self):
+        # This case used to assert the payload carried 0x06 (profile 2 +
+        # shift). The firmware has no such category and writes it into
+        # Profile 1's Default layer instead -- see profile_layer_byte().
+        sess = FakeSession()
+        with self.assertRaises(ValueError):
+            buttons.remap(sess, buttons.KNOWN_BUTTON_IDS["a"], 0x3E, profile=2, shift=True)
+        self.assertEqual(sess.sent, [], "nothing may reach the wire on a rejected write")
 
     def test_unbind_payload_differs_from_remap(self):
         sess = FakeSession()
