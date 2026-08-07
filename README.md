@@ -13,7 +13,9 @@ Three pieces, one repo:
   script or a service. PyUSB only, no Qt.
 
 Every settings category Nexus exposes as a page of its own is mapped, read
-*and* write: button remapping (21 buttons, Default and Shift layers, the whole
+*and* write: button remapping (21 buttons, Default layer on all four profiles
+and the Shift layer on Profile 1 — the controller has no Shift-layer storage
+for the other three; the whole
 keycode picker including native gamepad/paddle functions), sticks, triggers,
 vibration, report rate, D-pad options, and the dock's LED brightness and auto
 on-off. Every per-profile category targets one of the controller's 4 onboard
