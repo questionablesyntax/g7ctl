@@ -135,6 +135,24 @@ QComboBox:hover, QSpinBox:hover, QLineEdit:hover {{
 QComboBox:focus, QSpinBox:focus, QLineEdit:focus {{
     border-color: {ACCENT};
 }}
+/* Styling an input's background/color above overrides Qt's own palette-based
+   greying, so without these a disabled combo/spinbox is pixel-identical to an
+   editable one. That is not cosmetic: the Buttons tab disables the whole
+   Shift column on profiles with no Shift layer, and the profile picker
+   disables itself mid-sync -- both looked fully interactive. The :hover
+   override matters just as much, since the rule above would otherwise light
+   up the accent border on a control that cannot be used. */
+QComboBox:disabled, QSpinBox:disabled, QLineEdit:disabled {{
+    color: {TEXT_MUTED};
+    background: {SURFACE};
+    border-color: {BORDER};
+}}
+QComboBox:disabled:hover, QSpinBox:disabled:hover, QLineEdit:disabled:hover {{
+    border-color: {BORDER};
+}}
+QCheckBox:disabled, QLabel:disabled {{
+    color: {TEXT_MUTED};
+}}
 QComboBox::drop-down {{
     border: none;
     width: 22px;
