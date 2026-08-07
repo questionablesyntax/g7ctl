@@ -100,6 +100,56 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         shown = {button for button, _layer in view._combos}
         self.assertEqual(shown, set(KNOWN_BUTTON_IDS))
 
+    def _view_for_profile(self, slot, shift_bindings=None):
+        from g7ctlc.views.buttons_view import ButtonsView
+        from pyg7 import state as state_mod
+        state = state_mod.default_state_dict("test")
+        state["controller_slot"] = slot
+        if shift_bindings:
+            state["buttons"]["shift"].update(shift_bindings)
+        view = ButtonsView()
+        view.load_state(state)
+        return view, state
+
+    def test_shift_column_is_editable_on_profile_1(self):
+        view, _state = self._view_for_profile(1)
+        self.assertTrue(view._combos[("a", "shift")].isEnabled())
+        self.assertTrue(view._combos[("a", "default")].isEnabled())
+
+    def test_shift_column_is_disabled_on_profiles_without_a_shift_layer(self):
+        """The firmware has no Shift storage for Profiles 2-4, and a write
+        aimed at one lands in Profile 1's Default layer -- so the column must
+        not be editable there. See pyg7/session.py's profile_layer_byte()."""
+        for slot in (2, 3, 4):
+            with self.subTest(slot=slot):
+                view, _state = self._view_for_profile(slot)
+                self.assertFalse(view._combos[("a", "shift")].isEnabled())
+                # The Default column stays fully editable on every profile.
+                self.assertTrue(view._combos[("a", "default")].isEnabled())
+
+    def test_stale_shift_bindings_are_dropped_for_profiles_without_a_shift_layer(self):
+        """A state exported before the fix carries Profile 1's Default layer
+        recorded as this profile's Shift layer. validate_state() refuses to
+        write those, and the disabled column gives the user no way to clear
+        them, so loading must drop them rather than dead-end at sync."""
+        from pyg7 import state as state_mod
+        view, state = self._view_for_profile(3, {"a": "f11", "y": "numpad1"})
+        self.assertEqual(state["buttons"]["shift"], {})
+        self.assertFalse(view._combos[("a", "shift")].isEnabled())
+        state_mod.validate_state(state)  # must not raise
+
+    def test_switching_to_an_unsupported_profile_disables_the_column(self):
+        """The column's state has to follow the profile combo, not just the
+        profile the view happened to be built with."""
+        view, state = self._view_for_profile(1)
+        self.assertTrue(view._combos[("a", "shift")].isEnabled())
+        state["controller_slot"] = 2
+        view.load_state(state)
+        self.assertFalse(view._combos[("a", "shift")].isEnabled())
+        state["controller_slot"] = 1
+        view.load_state(state)
+        self.assertTrue(view._combos[("a", "shift")].isEnabled())
+
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
 class SticksDirectionBindingsTest(unittest.TestCase):

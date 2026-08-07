@@ -26,6 +26,20 @@ adheres to [semantic versioning](https://semver.org/).
 
 ### Fixed
 
+- **Editing the Shift layer on Profiles 2-4 overwrote Profile 1.** The
+  controller stores Shift-layer bindings for Profile 1 only. Asking for one
+  on another profile produced category `0x06`/`0x07`/`0x08`, which the
+  firmware does not implement and does not reject: it falls back to Profile
+  1's Default-layer blob. So the Buttons tab's Shift column, on Profiles
+  2-4, wrote each binding into Profile 1's Default layer -- and then read
+  Profile 1's bindings back and displayed them as that profile's Shift
+  layer, which is why the damage was invisible from inside the app. If you
+  have edited Shift bindings on Profiles 2-4, check Profile 1's Default
+  layer against what you expect. The Shift column is now disabled on those
+  profiles, reads return no Shift layer for them, and the protocol layer
+  refuses to put an unimplemented category on the wire at all. Whether the
+  hardware supports per-profile Shift bindings by some other means is
+  unresolved -- nothing in the category byte space does.
 - **`--version` and `-h` could kill a running batch session.**
   `_NonExitingArgumentParser` exists so one bad line in a hundred-line
   script doesn't end the process, but it overrode only `error()` — and
