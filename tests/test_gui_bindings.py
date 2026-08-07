@@ -116,10 +116,10 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         self.assertTrue(view._combos[("a", "shift")].isEnabled())
         self.assertTrue(view._combos[("a", "default")].isEnabled())
 
-    def test_shift_column_is_disabled_on_profiles_without_a_shift_layer(self):
-        """The firmware has no Shift storage for Profiles 2-4, and a write
-        aimed at one lands in Profile 1's Default layer -- so the column must
-        not be editable there. See pyg7/session.py's profile_layer_byte()."""
+    def test_shift_column_is_disabled_where_the_layer_is_unreachable(self):
+        """No category byte reaches a Shift layer for Profiles 2-4, and a
+        write aimed at one lands in Profile 1's Default layer -- so the
+        column must not be editable there. See profile_layer_byte()."""
         for slot in (2, 3, 4):
             with self.subTest(slot=slot):
                 view, _state = self._view_for_profile(slot)
@@ -127,7 +127,7 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
                 # The Default column stays fully editable on every profile.
                 self.assertTrue(view._combos[("a", "default")].isEnabled())
 
-    def test_stale_shift_bindings_are_dropped_for_profiles_without_a_shift_layer(self):
+    def test_stale_shift_bindings_are_dropped_when_the_layer_is_unreachable(self):
         """A state exported before the fix carries Profile 1's Default layer
         recorded as this profile's Shift layer. validate_state() refuses to
         write those, and the disabled column gives the user no way to clear
@@ -138,7 +138,7 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         self.assertFalse(view._combos[("a", "shift")].isEnabled())
         state_mod.validate_state(state)  # must not raise
 
-    def test_switching_to_an_unsupported_profile_disables_the_column(self):
+    def test_switching_to_an_unreachable_profile_disables_the_column(self):
         """The column's state has to follow the profile combo, not just the
         profile the view happened to be built with."""
         view, state = self._view_for_profile(1)
