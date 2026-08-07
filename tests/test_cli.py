@@ -150,6 +150,24 @@ class MainErrorHandlingTest(unittest.TestCase):
         self.assertIn("Error:", stderr)
         self.assertNotIn("Traceback", stderr)
 
+    def test_shift_on_a_profile_without_one_is_rejected_before_the_device(self):
+        """Must fail on the arguments alone, not after a handshake+settle.
+
+        The device layer is faked out here, so reaching it would still
+        "work" -- what this pins is that find_writable_device() is never
+        called at all, which is the difference between an instant error and
+        one that arrives several seconds later.
+        """
+        called = []
+        cli_main.find_writable_device = lambda: called.append(True) or (object(), False)
+        for profile in ("2", "3", "4"):
+            with self.subTest(profile=profile):
+                code, stderr = self._run(["remap", "a", "f12", "--profile", profile, "--shift"])
+                self.assertEqual(code, 1)
+                self.assertIn("no Shift layer", stderr)
+                self.assertNotIn("Traceback", stderr)
+        self.assertEqual(called, [], "the device must not be touched for an argument-level error")
+
     def test_out_of_range_raw_hex_keycode_is_a_clean_error(self):
         code, stderr = self._run(["remap", "a", "1ff", "--interval", "0"])
         self.assertEqual(code, 1)

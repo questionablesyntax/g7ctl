@@ -20,7 +20,11 @@ Confirmed via USB capture + testing:
     SEQ increments each command sent (shared with the heartbeat 0f 00 SEQ 02 f2 00).
     Buttons category payload: 03 [PROFILE+LAYER] 00 [BUTTON_ID] 01 [KEYCODE].
     PROFILE+LAYER: one byte encodes BOTH the target profile (1-4) and layer:
-    byte = profile + (4 if shift layer else 0). See PROTOCOL.md "Profile
+    byte = profile + (4 if shift layer else 0), but only five values exist --
+    01-04 (Default layer) and 05 (Profile 1's Shift layer). Profiles 2-4 have
+    no Shift layer, and the firmware answers the categories the formula
+    predicts for them (06/07/08) with Profile 1's blob rather than an error,
+    so asking for one silently hits Profile 1. See PROTOCOL.md "Profile
     scoping". Sticks/Triggers/Vibrations use their own
     category prefixes -- see pyg7/sticks.py, triggers.py, vibration.py.
   - IMPORTANT: an isolated write with no heartbeat before/after appears to
@@ -50,7 +54,7 @@ import usb.core
 from pyg7 import buttons, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
 from pyg7 import state as state_mod
 from pyg7.device import enter_vendor_mode, find_writable_device
-from pyg7.session import VendorSession
+from pyg7.session import SHIFT_LAYER_PROFILES, VendorSession, shift_layer_supported
 
 from . import __version__
 
@@ -163,13 +167,15 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
     p_remap.add_argument("button", help=f"Button ID: name ({', '.join(buttons.KNOWN_BUTTON_IDS)}) or raw hex bytes")
     p_remap.add_argument("keycode", help=f"Target keycode: name ({', '.join(buttons.KNOWN_KEYCODES)}) or raw hex byte")
     _add_heartbeat_args(p_remap)
-    p_remap.add_argument("--shift", action="store_true", help="Target the Shift Layer instead of the Default layer")
+    p_remap.add_argument("--shift", action="store_true",
+                          help="Target the Shift Layer instead of the Default layer (Profile 1 only)")
     p_remap.add_argument("--profile", type=int, default=1, choices=[1, 2, 3, 4], help="Target profile 1-4 (default 1)")
 
     p_unbind = sub.add_parser("unbind", help="Clear a button's binding entirely (device must already be in vendor mode).")
     p_unbind.add_argument("button", help=f"Button ID: name ({', '.join(buttons.KNOWN_BUTTON_IDS)}) or raw hex bytes")
     _add_heartbeat_args(p_unbind)
-    p_unbind.add_argument("--shift", action="store_true", help="Target the Shift Layer instead of the Default layer")
+    p_unbind.add_argument("--shift", action="store_true",
+                           help="Target the Shift Layer instead of the Default layer (Profile 1 only)")
     p_unbind.add_argument("--profile", type=int, default=1, choices=[1, 2, 3, 4], help="Target profile 1-4 (default 1)")
 
     p_stick = sub.add_parser("stick-set", help="Set a Sticks-tab setting (device must already be in vendor mode).")
@@ -622,6 +628,16 @@ def main() -> None:
         state_mod.save_state(args.path, state_mod.default_state_dict(args.name))
         print(f"Wrote a new default state to {args.path}")
         return
+
+    # Checked before the device is touched: profile_layer_byte() rejects this
+    # too, but only once a session is open, so the user waits through a
+    # handshake and settle to be told something knowable from the arguments
+    # alone. See pyg7/session.py for why these profiles have no Shift layer.
+    if getattr(args, "shift", False) and not shift_layer_supported(getattr(args, "profile", 1)):
+        print(f"Error: profile {args.profile} has no Shift layer -- the controller stores "
+              f"Shift-layer bindings for profile(s) "
+              f"{', '.join(str(p) for p in SHIFT_LAYER_PROFILES)} only.", file=sys.stderr)
+        sys.exit(1)
 
     # Everything below touches the device, directly or via _dispatch() (which
     # can also load/validate a state JSON file or parse a raw hex payload) --
