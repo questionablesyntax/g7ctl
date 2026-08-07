@@ -150,7 +150,7 @@ class MainErrorHandlingTest(unittest.TestCase):
         self.assertIn("Error:", stderr)
         self.assertNotIn("Traceback", stderr)
 
-    def test_shift_on_a_profile_without_one_is_rejected_before_the_device(self):
+    def test_unaddressable_shift_is_rejected_before_touching_the_device(self):
         """Must fail on the arguments alone, not after a handshake+settle.
 
         The device layer is faked out here, so reaching it would still
@@ -164,7 +164,7 @@ class MainErrorHandlingTest(unittest.TestCase):
             with self.subTest(profile=profile):
                 code, stderr = self._run(["remap", "a", "f12", "--profile", profile, "--shift"])
                 self.assertEqual(code, 1)
-                self.assertIn("no Shift layer", stderr)
+                self.assertIn("cannot be addressed", stderr)
                 self.assertNotIn("Traceback", stderr)
         self.assertEqual(called, [], "the device must not be touched for an argument-level error")
 

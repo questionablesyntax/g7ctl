@@ -38,7 +38,7 @@ from typing import Callable, Optional
 from . import buttons, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
 from .constants import DOCK_READ_CATEGORY, FULL_BLOB_LENGTH
 from .curves import CURVE_PRESETS as _CURVE_PRESETS
-from .session import SHIFT_LAYER_PROFILES, VendorSession, profile_layer_byte, shift_layer_supported
+from .session import SHIFT_ADDRESSABLE_PROFILES, VendorSession, profile_layer_byte, shift_layer_addressable
 
 log = logging.getLogger(__name__)
 
@@ -189,11 +189,11 @@ def validate_state(data: dict) -> None:
         # read back by a version before this check carries Profile 1's
         # Default bindings mislabelled as this profile's Shift layer, so
         # refusing is also refusing to write back bogus data.
-        if layer_name == "shift" and bindings and not shift_layer_supported(slot):
+        if layer_name == "shift" and bindings and not shift_layer_addressable(slot):
             raise StateError(
                 f"profile {slot} declares {len(bindings)} Shift-layer binding(s), but the "
-                f"controller has no Shift layer for it -- only profile(s) "
-                f"{', '.join(str(p) for p in SHIFT_LAYER_PROFILES)}. Writing them would "
+                f"controller offers no address for it -- only profile(s) "
+                f"{', '.join(str(p) for p in SHIFT_ADDRESSABLE_PROFILES)}. Writing them would "
                 "overwrite Profile 1's Default layer. Clear the shift layer for this profile, "
                 "or re-read the profile from the device to get a correct state.")
         for btn, keycode_name in bindings.items():
@@ -338,9 +338,10 @@ def read_state(session: VendorSession, slot: int = 1, interval: float = 0.05,
 
     NOTE on scope: this reads ONE profile per call. The `category` byte
     addresses five profile blobs, not eight: Profiles 1-4's Default layers
-    (0x01-0x04) plus Profile 1's Shift layer (0x05). Profiles 2-4 have no
-    Shift layer -- see session.py's profile_layer_byte() -- so their
-    "shift" section comes back empty. All 4 stored profiles ARE readable
+    (0x01-0x04) plus one Shift layer (0x05). Nothing addresses a Shift layer
+    for Profiles 2-4 -- see session.py's profile_layer_byte(), including why
+    that is not the same as saying they don't have one -- so their "shift"
+    section comes back empty. All 4 stored profiles ARE readable
     this same way, just one call per profile; this function doesn't loop
     over all of them itself.
 
@@ -391,7 +392,7 @@ def read_state(session: VendorSession, slot: int = 1, interval: float = 0.05,
             # bindings", which write_state() correctly treats as nothing to
             # write. See session.profile_layer_byte().
             "shift": (buttons.read_button_bindings(session, profile=slot, shift=True, interval=interval)
-                      if shift_layer_supported(slot) else {}),
+                      if shift_layer_addressable(slot) else {}),
         },
         "report_rate_hz": report_rate.decode_settings(default_blob)["report_rate_hz"],
         # Both D-pad options come out of a single decode -- calling it once

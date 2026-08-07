@@ -54,7 +54,7 @@ import usb.core
 from pyg7 import buttons, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
 from pyg7 import state as state_mod
 from pyg7.device import enter_vendor_mode, find_writable_device
-from pyg7.session import SHIFT_LAYER_PROFILES, VendorSession, shift_layer_supported
+from pyg7.session import SHIFT_ADDRESSABLE_PROFILES, VendorSession, shift_layer_addressable
 
 from . import __version__
 
@@ -632,11 +632,12 @@ def main() -> None:
     # Checked before the device is touched: profile_layer_byte() rejects this
     # too, but only once a session is open, so the user waits through a
     # handshake and settle to be told something knowable from the arguments
-    # alone. See pyg7/session.py for why these profiles have no Shift layer.
-    if getattr(args, "shift", False) and not shift_layer_supported(getattr(args, "profile", 1)):
-        print(f"Error: profile {args.profile} has no Shift layer -- the controller stores "
-              f"Shift-layer bindings for profile(s) "
-              f"{', '.join(str(p) for p in SHIFT_LAYER_PROFILES)} only.", file=sys.stderr)
+    # alone. See pyg7/session.py for why these profiles are unreachable.
+    if getattr(args, "shift", False) and not shift_layer_addressable(getattr(args, "profile", 1)):
+        print(f"Error: profile {args.profile}'s Shift layer cannot be addressed -- g7ctl reaches "
+              f"the Shift layer of profile(s) "
+              f"{', '.join(str(p) for p in SHIFT_ADDRESSABLE_PROFILES)} only. Aiming at another "
+              "profile's would write into Profile 1's Default layer.", file=sys.stderr)
         sys.exit(1)
 
     # Everything below touches the device, directly or via _dispatch() (which

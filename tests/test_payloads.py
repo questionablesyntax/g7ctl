@@ -15,7 +15,7 @@ import unittest
 from pyg7 import buttons, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
 from pyg7.constants import CMD_WRITE, prefix_sticks, prefix_triggers_vibration
 from pyg7.curves import curve_preset_payload
-from pyg7.session import profile_layer_byte, shift_layer_supported
+from pyg7.session import profile_layer_byte, shift_layer_addressable
 
 from .fakes import FakeSession
 
@@ -33,7 +33,7 @@ class ProfileLayerByteTest(unittest.TestCase):
         self.assertEqual(profile_layer_byte(3, shift=False), 0x03)
         self.assertEqual(profile_layer_byte(4, shift=False), 0x04)
 
-    def test_shift_layer_rejected_for_profiles_without_one(self):
+    def test_shift_layer_rejected_where_it_cannot_be_addressed(self):
         """0x06/0x07/0x08 must never reach the wire.
 
         This test previously asserted the opposite -- that
@@ -48,10 +48,10 @@ class ProfileLayerByteTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 profile_layer_byte(profile, shift=True)
 
-    def test_shift_layer_supported_only_for_profile_1(self):
-        self.assertTrue(shift_layer_supported(1))
+    def test_shift_layer_addressable_only_for_profile_1(self):
+        self.assertTrue(shift_layer_addressable(1))
         for profile in (2, 3, 4):
-            self.assertFalse(shift_layer_supported(profile))
+            self.assertFalse(shift_layer_addressable(profile))
 
     def test_rejects_out_of_range(self):
         for bad in (0, 5, -1):

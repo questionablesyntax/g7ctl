@@ -42,17 +42,22 @@ READ_CHUNK_TIMEOUT = 2.0
 READ_CHUNK_TIMEOUT_DONGLE = 4.0
 
 
-# Profiles whose Shift layer the firmware actually implements. Only
-# Profile 1: see profile_layer_byte() below for the hardware evidence.
-SHIFT_LAYER_PROFILES = (1,)
+# Profiles whose Shift layer this protocol can address. Exactly one category
+# byte (0x05) reaches a Shift layer at all -- see profile_layer_byte() for
+# the evidence, and for why "addressable" is deliberately not the same claim
+# as "the only Shift layer that exists".
+SHIFT_ADDRESSABLE_PROFILES = (1,)
 
 
-def shift_layer_supported(profile: int) -> bool:
-    """Does `profile` have a Shift layer the firmware can address? Only
-    Profile 1 does -- see profile_layer_byte(). Callers that would otherwise
-    read or write a Shift binding should check this first and skip the
-    layer, rather than letting profile_layer_byte() raise mid-operation."""
-    return profile in SHIFT_LAYER_PROFILES
+def shift_layer_addressable(profile: int) -> bool:
+    """Can this protocol reach `profile`'s Shift layer? Only Profile 1's --
+    see profile_layer_byte(). Callers that would otherwise read or write a
+    Shift binding should check this first and skip the layer, rather than
+    letting profile_layer_byte() raise mid-operation.
+
+    Note the name: this says nothing about whether Profiles 2-4 *have* a
+    Shift layer, only that nothing here can address one."""
+    return profile in SHIFT_ADDRESSABLE_PROFILES
 
 
 def profile_layer_byte(profile: int = 1, shift: bool = False) -> int:
@@ -60,9 +65,10 @@ def profile_layer_byte(profile: int = 1, shift: bool = False) -> int:
     into one byte, used by the Buttons category's write prefix:
     byte = profile + (4 if shift else 0).
 
-    Valid values are 0x01-0x04 (Profiles 1-4, Default layer) and 0x05
-    (Profile 1, Shift layer). **There is no Shift layer for Profiles 2-4** --
-    this raises rather than returning 0x06/0x07/0x08.
+    Valid values are 0x01-0x04 (Profiles 1-4, Default layer) and 0x05, the
+    one and only category that reaches a Shift layer. **0x06/0x07/0x08 do not
+    address Profiles 2-4's Shift layers** -- they land in Profile 1 -- so
+    this raises rather than returning them.
 
     The formula above once claimed to cover all 8 combinations. It does not,
     and the three values it was confirmed on (0x01, 0x02, 0x05) were exactly
@@ -82,9 +88,21 @@ def profile_layer_byte(profile: int = 1, shift: bool = False) -> int:
 
     That fallback also means our own write-then-read-back tests could not
     have caught this: both halves of the loop are redirected to the same
-    place, so a Profile 2 Shift write reads back exactly as written. Whether
-    the hardware supports per-profile Shift bindings by some *other*
-    mechanism is unresolved -- nothing in the category byte space does.
+    place, so a Profile 2 Shift write reads back exactly as written.
+
+    **Do not read this as "Profiles 2-4 have no Shift layer."** All that is
+    established is that no category byte addresses one. Two things point the
+    other way: G7 Pro users report per-profile Shift bindings as normal
+    behaviour in GameSir Nexus, and blob 0x05 is not a bindings-only table --
+    it carries its own stick deadzone/sensitivity/direction bindings, trigger
+    deadzone and vibration levels, all differing from 0x01's (that is how
+    "separate ADS and hipfire curves" is built). A whole parallel
+    configuration, reachable at exactly one address, is more consistent with
+    0x05 being a *window onto the active profile's* Shift layer than with
+    only one Shift layer existing. Every observation behind this docstring
+    was taken with one profile active, which cannot tell those apart.
+    Settling it needs the active profile switched on the controller and 0x05
+    re-read; until then, treat the scope of 0x05 as unresolved.
 
     Sticks/Triggers/Vibration/Report Rate do NOT use this combined byte --
     they carry a plain profile number (1-4) in their own prefix's middle
@@ -95,10 +113,11 @@ def profile_layer_byte(profile: int = 1, shift: bool = False) -> int:
     """
     if not 1 <= profile <= 4:
         raise ValueError("profile must be 1-4")
-    if shift and not shift_layer_supported(profile):
+    if shift and not shift_layer_addressable(profile):
         raise ValueError(
-            f"profile {profile} has no Shift layer -- the firmware implements one only for "
-            f"profile(s) {', '.join(str(p) for p in SHIFT_LAYER_PROFILES)}. Writing to it "
+            f"profile {profile}'s Shift layer cannot be addressed -- the only category that "
+            f"reaches a Shift layer is profile(s) "
+            f"{', '.join(str(p) for p in SHIFT_ADDRESSABLE_PROFILES)}'s. Writing this one "
             "corrupts Profile 1's Default layer; reading it returns Profile 1's data.")
     return profile + (4 if shift else 0)
 

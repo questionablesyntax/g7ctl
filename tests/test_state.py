@@ -16,7 +16,8 @@ One correction to that, 2026-08-07: `profile3_factory`'s "shift" section was
 captured back when read_state() read category 0x07 for it, which the firmware
 answers with Profile 1's *Default* layer -- so the fixture recorded Profile
 1's bindings as though they were Profile 3's Shift layer. It reads `{}` now,
-which is what the device actually offers for that profile. The rest of the
+matching what read_state() reports when it has no address for a Shift
+layer. The rest of the
 fixture is untouched and still genuine. See pyg7/session.py's
 profile_layer_byte() for the hardware evidence.
 """
@@ -104,7 +105,7 @@ class ValidateStateTest(unittest.TestCase):
         with self.assertRaises(state_mod.StateError):
             state_mod.validate_state(self.state)
 
-    def test_rejects_shift_bindings_on_profiles_without_a_shift_layer(self):
+    def test_rejects_shift_bindings_where_the_layer_cannot_be_addressed(self):
         """Caught before any write, not partway through one.
 
         A Shift write on Profiles 2-4 lands in Profile 1's Default layer

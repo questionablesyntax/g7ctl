@@ -122,12 +122,12 @@ active." See "Profile scoping" below for how this was confirmed.
 ```
 byte = profile_number(1-4) + (4 if Shift Layer else 0)
 ```
-**Only five values exist: `01`-`04` (Profiles 1-4, Default layer) and `05`
-(Profile 1, Shift layer).** Profiles 2-4 have no Shift layer. The formula
-above generates `06`/`07`/`08` for them; the firmware implements no such
-category and **falls back to Profile 1's Default-layer blob instead of
-failing** -- a read returns Profile 1's bindings, and a write *modifies
-Profile 1's Default layer*.
+**Only five values exist: `01`-`04` (Profiles 1-4, Default layer) and `05`,
+the single category that reaches a Shift layer.** The formula above
+generates `06`/`07`/`08` for Profiles 2-4's Shift layers; the firmware
+implements no such category and **falls back to Profile 1's Default-layer
+blob instead of failing** -- a read returns Profile 1's bindings, and a
+write *modifies Profile 1's Default layer*.
 
 Confirmed 2026-08-07, wired, by reading all 256 possible category bytes:
 exactly six return distinct data -- `01`-`04`, `05`, and `20` (dock, a
@@ -141,12 +141,52 @@ strength of three confirmed values -- `01`, `02` and `05`, which are exactly
 the three that work. Note that a write-then-read-back test cannot detect
 this, because the fallback redirects both halves of the round trip to the
 same blob: a Profile 2 Shift binding reads back exactly as written, from
-Profile 1. Whether the hardware supports per-profile Shift bindings through
-some other mechanism is **unresolved** -- nothing in the category byte space
-does.
+Profile 1.
+
+**What `05`'s scope actually is remains open.** It is *not* established that
+Profiles 2-4 lack a Shift layer -- only that no category byte reaches one.
+Two things argue against the simple reading. G7 Pro users report
+per-profile Shift bindings as ordinary Nexus behaviour; and `05` is not a
+bindings-only blob, but a full parallel configuration (see "The Shift layer
+is not bindings-only" below). A complete second config reachable at exactly
+one address fits "`05` is a window onto the **active** profile's Shift
+layer" at least as well as it fits "only one Shift layer exists". Every
+observation here was taken with a single profile active, which cannot
+distinguish the two. The test that would: switch the active profile on the
+controller, re-read `05`, see whether its contents follow.
 
 This is the only category confirmed to carry a profile-targeting
 byte at all (see "Profile scoping" below).
+
+### The Shift layer is not bindings-only
+
+Category `05`'s blob differs from `01`'s in 43 bytes, and only 11 of those
+are inside the button table. The rest decode, through the same
+`sticks.py`/`triggers.py`/`vibration.py` decoders used on the Default blob,
+as a full second set of settings. Measured on the development controller,
+2026-08-07:
+
+| Setting | Default (`01`) | Shift (`05`) |
+|---|---|---|
+| Stick deadzone, initial | 5 | 10 |
+| Stick overlap area | 50 | 0 |
+| Stick direction bindings | `w`/`a`/`s`/`d` + `shift` ring | all unbound |
+| Trigger deadzone, max | 100 | 95 |
+| Vibration, all four channels | 50 | 75 |
+
+So the Shift layer is a parallel *configuration*, not a second keymap --
+which is how the community's "separate ADS and hipfire curves" setup works:
+hipfire settings on the Default layer, ADS settings on the Shift layer,
+swapped by holding the Shift button.
+
+`read_state()` does not expose any of this: it decodes Sticks/Triggers/
+Vibration from the Default blob only, on the assumption that those
+categories are not layer-scoped. That assumption is wrong. Nothing here
+corrupts anything -- the writes for those categories carry a plain profile
+number with no layer axis (see "Category prefixes"), so they act on the
+Default layer -- but the Shift layer's own stick/trigger/vibration values
+are currently invisible to this tool and cannot be edited by it. How Nexus
+addresses them for a *write* is not yet known.
 
 **BUTTON_ID -- always send the 2-byte allocate form**, `[allocate_id,
 0x02]`, never the compact 1-byte form. A button's "has this been
