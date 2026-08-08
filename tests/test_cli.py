@@ -273,9 +273,9 @@ class DongleNoControllerTest(unittest.TestCase):
 
 
 class DpadDockSetCommandTest(unittest.TestCase):
-    """Roadmap item 19: dpad-set/dock-set replaced the four old bespoke
-    subcommands (dpad-diagonal-lock-set, swap-stick-dpad-set,
-    dock-brightness-set, dock-auto-set) with two generic ones, matching
+    """dpad-set/dock-set replaced four bespoke subcommands
+    (dpad-diagonal-lock-set, swap-stick-dpad-set, dock-brightness-set,
+    dock-auto-set) with two generic ones, matching
     stick-set/trigger-set/vibration-set's shape. These drive main() end to
     end (device layer faked out) and inspect what actually got sent."""
 

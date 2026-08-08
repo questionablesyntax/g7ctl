@@ -385,9 +385,9 @@ class DpadOptionsTest(unittest.TestCase):
         self.assertEqual(suffix, blob[0x2D:0x2D + 53])
 
     def test_set_value_dispatches_to_the_same_payloads(self):
-        # Roadmap item 19: set_value() is a name-based front door onto the
-        # same two functions above, matching sticks.py/triggers.py/
-        # vibration.py/report_rate.py's shape -- not a separate code path.
+        # set_value() is a name-based front door onto the same two
+        # functions above, matching sticks.py/triggers.py/vibration.py/
+        # report_rate.py's shape -- not a separate code path.
         direct = FakeSession()
         dpad_options.set_diagonal_lock(direct, True, profile=2)
         via_dispatch = FakeSession()
@@ -421,7 +421,7 @@ class DockSettingsTest(unittest.TestCase):
             dock_settings.set_brightness(FakeSession(), 150)
 
     def test_set_value_dispatches_to_the_same_payloads(self):
-        # Roadmap item 19: same reasoning as DpadOptionsTest's version.
+        # Same reasoning as DpadOptionsTest's version of this test.
         direct = FakeSession()
         dock_settings.set_brightness(direct, 75)
         via_dispatch = FakeSession()

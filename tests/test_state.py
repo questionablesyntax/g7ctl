@@ -31,10 +31,11 @@ FIXTURES = json.loads((pathlib.Path(__file__).parent / "fixtures" / "live_read.j
 
 
 class ReadStateIncludeDockTest(unittest.TestCase):
-    """Roadmap item 19: dock settings are device-global, so re-reading them
-    on every profile switch is pure waste -- read_state()'s `include_dock`
-    lets a caller (the GUI's DeviceWatcher) skip that ~10-chunk read once
-    it already has a known-good value from earlier in the same connection.
+    """Dock settings are device-global, not profile-scoped (see
+    pyg7/dock_settings.py), so re-reading them on every profile switch is
+    pure waste -- read_state()'s `include_dock` lets a caller (the GUI's
+    DeviceWatcher) skip that ~10-chunk read once it already has a
+    known-good value from earlier in the same connection.
     """
 
     def _session(self):
@@ -223,8 +224,9 @@ class LiveFixtureTest(unittest.TestCase):
         self.assertEqual(b["r5"], "native_r5")
 
     def test_unnamed_keycodes_survive_a_round_trip(self):
-        # Guards the roadmap-item-15 bug class in general (an unnamed
-        # keycode must not be dropped or turned into an unbind), independent
+        # Guards the bug class in general (a keycode with no name in
+        # KNOWN_KEYCODES must not be dropped or turned into an unbind on its
+        # way back out), independent
         # of any specific value -- l4/r4/l5/r5 no longer demonstrate this
         # (see the test above), so this uses a synthetic value guaranteed to
         # stay outside KNOWN_KEYCODES.
