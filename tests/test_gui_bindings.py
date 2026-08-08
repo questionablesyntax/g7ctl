@@ -112,10 +112,21 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         return view, state
 
     def test_default_layer_is_the_column_shown_by_default(self):
+        """A freshly-constructed view must already be on the Default layer.
+
+        This used to assert `isVisible() or not view.isVisible()`, which is a
+        tautology on an unshown widget and passed no matter what the view
+        did -- so it did not catch the Shift column being visible on every
+        fresh launch until the user changed profile. `isVisibleTo(parent)`
+        reports the explicit hide flag without needing a shown window, which
+        is the thing actually worth asserting here.
+        """
         view, _state = self._view_for_profile(1)
-        self.assertTrue(view._combos[("a", "default")].isVisible()
-                        or not view.isVisible())  # visibility needs a shown parent
         self.assertEqual(view.column_header.text(), "Default Layer")
+        self.assertTrue(view._combos[("a", "default")].isVisibleTo(view))
+        self.assertFalse(view._combos[("a", "shift")].isVisibleTo(view),
+                         "the shared Shift column is showing inside the "
+                         "per-profile screen before any profile change")
 
     def test_set_layer_switches_which_column_is_shown(self):
         """One column, and which layer it edits follows the profile selector.
