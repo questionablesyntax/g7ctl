@@ -61,7 +61,7 @@ makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools
 # bump -- the checksum below is specific to one tarball, and a stale one
 # fails validation rather than silently building the wrong source.
 source=("$pkgbase-$pkgver.tar.gz::https://github.com/questionablesyntax/g7ctl/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('95797f045098ac14879a91002e2faf0e59670ca765a2da47440744e13ade86ea')
+sha256sums=('df5620c51cea1f787d3782c19b2393edca64103e5d50236f7fe5341a83a86170')
 
 build() {
   cd "$pkgbase-$pkgver"
