@@ -6,6 +6,19 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Documentation
+
+- **Switching profiles on the controller re-enumerates it, twice.** Pressing
+  `M`+`Y`/`B`/`A`/`X` drops the controller off the USB bus, brings it back as
+  a different USB device for roughly 45 seconds, then drops it again on the
+  way back. This is GameSir firmware — it happens with nothing running — but
+  it has two consequences worth knowing, now documented in the README and
+  PROTOCOL.md. Steam and anything else tracking gamepads sees a different
+  device and loses a custom controller name. And keyboard/mouse remaps stop
+  working for that window, because the HID interfaces that emit them do not
+  exist in the other identity — while the gamepad itself keeps working, so it
+  presents as "my remaps broke" rather than "my controller disconnected".
+
 ## [0.1.5] - 2026-08-07
 
 **The Shift layer is one layer, shared by all four profiles.** 0.1.4 stopped
