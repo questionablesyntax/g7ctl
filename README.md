@@ -305,7 +305,7 @@ commands instead — they do the same thing.
 python3 -m unittest discover -s tests -t .
 ```
 
-216 tests, no controller required — payload builders and blob decoders run
+245 tests, no controller required — payload builders and blob decoders run
 against a fake session (`tests/fakes.py`), and `tests/fixtures/live_read.json`
 holds real `read_state()` output captured from a physical controller. The GUI's
 view round-trip tests (headless, offscreen platform) are skipped automatically
