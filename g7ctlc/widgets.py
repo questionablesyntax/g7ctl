@@ -140,7 +140,7 @@ KEYCODE_GROUPS = [
 ]
 
 # Every name in KNOWN_KEYCODES must be reachable from the picker, or a
-# binding using it renders as "(Unbound)" and then gets dropped from the
+# binding using it renders as "(Default)" and then gets dropped from the
 # state dict by the next unrelated edit (ButtonsView._on_edit sweeps every
 # combo, not just the one that changed). That is silent data loss on
 # Export, and it is exactly what happened when the 0x85-0x8A, 0xCB/0xCC,
@@ -159,7 +159,7 @@ def _assert_keycode_coverage() -> None:
     if unreachable:
         raise RuntimeError(
             "keycodes missing from KEYCODE_GROUPS (they would render as "
-            f"'(Unbound)' and be silently dropped): {unreachable}"
+            f"'(Default)' and be silently dropped): {unreachable}"
         )
     phantom = sorted(listed - set(KNOWN_KEYCODES))
     if phantom:
@@ -171,10 +171,18 @@ _assert_keycode_coverage()
 
 def make_keycode_combo() -> QComboBox:
     """QComboBox listing every KNOWN_KEYCODES name, grouped for readability.
-    itemData is the keycode name (str), or None for "(Unbound)". Item text
-    is "{group_label}: {short_label}" -- see KEYCODE_GROUPS above for why."""
+    itemData is the keycode name (str), or None for "(Default)". Item text
+    is "{group_label}: {short_label}" -- see KEYCODE_GROUPS above for why.
+
+    Index 0 reads "(Default)", not "(Unbound)". A slot with no explicit
+    binding is not dead -- the button performs its factory function, and
+    the device cannot even represent "explicitly dead" (unbinding returns a
+    slot to byte-identical never-configured state). "(Unbound)" made
+    Profiles 2-4, which are mostly unconfigured, look broken next to what
+    GameSir Nexus shows. See PROTOCOL.md "An empty slot means factory
+    default, not unbound"."""
     combo = QComboBox()
-    combo.addItem("(Unbound)", None)
+    combo.addItem("(Default)", None)
     for group_label, entries in KEYCODE_GROUPS:
         available = [(name, label) for name, label in entries if name in KNOWN_KEYCODES]
         if not available:
@@ -201,7 +209,7 @@ def select_by_data(combo: QComboBox, value: Optional[str]) -> None:
     "Keycodes"), and KNOWN_KEYCODES' coverage is still not exhaustive in
     general.
 
-    Falling back to index 0 ("(Unbound)") for those would misreport the
+    Falling back to index 0 ("(Default)") for those would misreport the
     device and then let ButtonsView._on_edit drop the binding from the
     state dict entirely on the next unrelated edit. So an unrecognised
     non-None value gets its own item appended instead: the combo shows it
