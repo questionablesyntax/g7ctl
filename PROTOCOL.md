@@ -216,10 +216,19 @@ disabling the button.
 ### The Shift layer is button bindings only
 
 Blob `05` carries stick/trigger/vibration bytes, but only because all five
-blobs share one 480-byte layout. Their values are plain factory defaults,
-identical to an untouched profile's; Nexus never exposes them; and nothing
-can write them, since those categories' prefixes carry a plain profile
-number and no profile number addresses `05`.
+blobs share one 480-byte layout. Nexus never exposes them, and **nothing
+can write them**, since those categories' prefixes carry a plain profile
+number and no profile number addresses `05`. That last point is the one
+that matters: it is why reading only the Default layer is correct.
+
+Their values are *close* to an untouched profile's, not identical. Measured
+2026-08-08 against a capture's own read responses, `05` differs from
+Profile 2 in 43 bytes; 34 are button-table slots and 4 more are the LT/RT
+keycodes (also bindings), leaving exactly five non-button differences --
+the left stick's four curve control points. `05` holds the Standard preset
+there; untouched profiles hold a different curve. Note also that profiles
+2 and 3 differ from each other in 125 bytes, so "an untouched profile" is
+not a single reference to compare against.
 
 An earlier revision of this document claimed the opposite -- that the Shift
 layer had its own curves, deadzones and vibration levels, "which is how

@@ -15,17 +15,26 @@ and "Sticks/Triggers/Vibration storage offsets" for where each value lives
 (offsets confirmed 2026-07-27 via live write+read-diff on every setting).
 
 Sticks/Triggers/Vibration are decoded from the **Default layer's blob
-only**. This used to be justified by claiming those categories aren't
-layer-scoped -- that there is no Shift-layer variant of a deadzone or a
-vibration level. That is false: the Shift blob carries its own stick
-deadzone, sensitivity, direction bindings, trigger deadzone and vibration
-levels, all differing from the Default layer's (measured 2026-08-07, see
-PROTOCOL.md "The Shift layer is not bindings-only"). Reading only the
-Default layer is now a known gap rather than a justified choice. It is not
-a corruption risk -- those categories' writes carry a plain profile number
-with no layer axis, so they act on the Default layer either way -- but the
-Shift layer's own curves are invisible here, and how to write them is not
-yet known.
+only**, and that is correct rather than a gap: nothing can write those
+categories on the Shift layer. Their prefixes carry a plain profile number
+(1-4), and no profile number addresses blob 0x05 -- see PROTOCOL.md "The
+Shift layer is button bindings only".
+
+The Shift blob does carry stick/trigger/vibration bytes, but only because
+all five blobs share one 480-byte layout, and Nexus never exposes them.
+Their values are close to an untouched profile's but not identical:
+measured 2026-08-08 from a capture's own read responses, blob 0x05 differs
+from Profile 2 in five non-button bytes, all of them the left stick's curve
+control points (0x05 holds the Standard preset; untouched profiles hold a
+different curve). That does not affect anything here -- the reason to read
+only the Default layer is that nothing can *write* those bytes -- but the
+blob is not the byte-identical factory copy an earlier version of this
+docstring claimed. An earlier revision claimed something stronger -- that
+the Shift layer had its own deadzones, curves and vibration levels, making
+this a known gap. That was wrong: it compared blob 0x05 against Profile 1,
+the one *configured* profile, and read the difference as layer-scoping.
+Profiles 2, 3 and 4 show the same values as 0x05. The difference was
+configured-versus-factory, not default-versus-shift.
 
 Every category targets `controller_slot` explicitly and deterministically,
 independent of whichever profile is physically active on the controller:
