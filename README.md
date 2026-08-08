@@ -216,6 +216,16 @@ regardless of this tool — and two of them can change settings **out from under
 a configuration you synced, which is the main reason "Read from Device" exists.
 
 - **Switch profile:** `M`+`Y` = 1, `M`+`B` = 2, `M`+`A` = 3, `M`+`X` = 4.
+  Note the controller **disconnects and reconnects twice** when you do this:
+  it re-enumerates as a different USB device for roughly 45 seconds, then
+  again on the way back. That is the firmware, not this tool — it happens
+  with nothing running. Two things follow. Steam (and anything else that
+  tracks gamepads) sees a different device and will show it under a
+  different name, losing a custom name you assigned. And your keyboard/mouse
+  remaps stop working for that window, because the HID keyboard and mouse
+  interfaces that emit them are absent while it sits in the other identity.
+  See [PROTOCOL.md](PROTOCOL.md) "A profile switch re-enumerates the
+  controller, twice".
 - **Remap a back paddle on the fly** (`L4`/`R4`/`L5`/`R5`): hold `M` + the
   paddle until the Xbox indicator flashes slowly, press the button you want
   mirrored onto it, indicator goes solid. Press the paddle again while still
