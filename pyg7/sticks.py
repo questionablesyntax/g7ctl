@@ -13,7 +13,13 @@ while, but that read of the evidence didn't hold up.
 """
 from .buttons import decode_keycode, resolve_keycode
 from .constants import CMD_WRITE, RIGHT_STICK_OFFSET, prefix_sticks, prefix_triggers_vibration
-from .curves import CURVE_PRESET_NAMES, curve_preset_payload
+from .curves import (
+    CURVE_PRESET_NAMES,
+    curve_point_payloads,
+    curve_preset_payload,
+    decode_curve_points,
+    parse_points,
+)
 from .session import VendorSession
 from .values import SettingValue, side_offset
 from .values import boolean as _bool
@@ -22,6 +28,11 @@ from .values import percent as _percent
 SETTING_IDS = {
     "trajectory": 0x3D,
     "curve": 0x44,
+    # The curve's three interior control points. Shares the curve's own
+    # SETTING_ID because the points are addressed relative to it (+4/+6/+8)
+    # -- see curves.CURVE_POINT_OFFSETS. The side offset applies once, to
+    # the curve ID, and the points follow.
+    "curve_points": 0x44,
     "deadzone_initial": 0x3F,
     "deadzone_max": 0x40,
     "anti_deadzone_initial": 0x41,
@@ -111,7 +122,10 @@ def decode_settings(blob: bytes, side: str = "left") -> dict:
 
     return {
         "trajectory": "raw" if b("trajectory") == 0x01 else "circle",
-        "curve": {"preset": CURVE_PRESET_NAMES.get(b("curve"))},
+        "curve": {
+            "preset": CURVE_PRESET_NAMES.get(b("curve")),
+            "points": decode_curve_points(blob, SETTING_IDS["curve"] + STORAGE_BASE + off),
+        },
         "deadzone": {"initial": b("deadzone_initial"), "max": b("deadzone_max")},
         "anti_deadzone": {"initial": b("anti_deadzone_initial"), "max": b("anti_deadzone_max")},
         "resolution_bits": (12 - res_val) if res_val is not None else None,
@@ -140,6 +154,14 @@ def set_value(session: VendorSession, side: str, setting: str, value: SettingVal
         payload = prefix + bytes([sid, 0x01, val])
     elif setting == "curve":
         payload = prefix + curve_preset_payload(sid, value)
+    elif setting == "curve_points":
+        # Three separate 2-byte writes, not one payload -- see
+        # curves.curve_point_payloads(). Returns the last packet sent, same
+        # as every other branch here.
+        pkt = b""
+        for point_payload in curve_point_payloads(sid, parse_points(value)):
+            pkt = session.send_raw(CMD_WRITE, prefix + point_payload)
+        return pkt
     elif setting == "deadzone_initial":
         suffix = session.read_live_suffix(profile, sid + STORAGE_BASE, _DEADZONE_INITIAL_SUFFIX_LEN)
         payload = prefix + bytes([sid, _DEADZONE_INITIAL_MARKER, _percent(value)]) + suffix

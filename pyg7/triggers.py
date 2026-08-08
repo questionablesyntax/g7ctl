@@ -13,7 +13,13 @@ earlier single test had wrongly suggested no profile targeting existed
 here).
 """
 from .constants import CMD_WRITE, RIGHT_TRIGGER_OFFSET, prefix_triggers_vibration
-from .curves import CURVE_PRESET_NAMES, curve_preset_payload
+from .curves import (
+    CURVE_PRESET_NAMES,
+    curve_point_payloads,
+    curve_preset_payload,
+    decode_curve_points,
+    parse_points,
+)
 from .session import VendorSession
 from .values import SettingValue, side_offset
 from .values import percent as _percent
@@ -25,6 +31,10 @@ SETTING_IDS = {
     "anti_deadzone_initial": 0xD1,
     "anti_deadzone_max": 0xD2,
     "curve": 0xDC,
+    # See sticks.py: shares the curve's SETTING_ID because the three
+    # interior points are addressed relative to it (+4/+6/+8), and the
+    # Right Trigger's +0x1C offset applies once, to the curve ID.
+    "curve_points": 0xDC,
 }
 SETTINGS = set(SETTING_IDS)
 
@@ -80,7 +90,10 @@ def decode_settings(blob: bytes, side: str = "left") -> dict:
         "hair_trigger_mode": _HAIR_TRIGGER_MODE_NAMES.get(b("hair_trigger_mode")),
         "deadzone": {"initial": b("deadzone_initial"), "max": b("deadzone_max")},
         "anti_deadzone": {"initial": b("anti_deadzone_initial"), "max": b("anti_deadzone_max")},
-        "curve": {"preset": CURVE_PRESET_NAMES.get(b("curve"))},
+        "curve": {
+            "preset": CURVE_PRESET_NAMES.get(b("curve")),
+            "points": decode_curve_points(blob, SETTING_IDS["curve"] + STORAGE_BASE + off),
+        },
     }
 
 
@@ -99,6 +112,12 @@ def set_value(session: VendorSession, side: str, setting: str, value: SettingVal
         payload = prefix + bytes([sid, 0x01, val])
     elif setting == "curve":
         payload = prefix + curve_preset_payload(sid, value)
+    elif setting == "curve_points":
+        # Three separate 2-byte writes -- see curves.curve_point_payloads().
+        pkt = b""
+        for point_payload in curve_point_payloads(sid, parse_points(value)):
+            pkt = session.send_raw(CMD_WRITE, prefix + point_payload)
+        return pkt
     elif setting == "deadzone_initial":
         suffix = session.read_live_suffix(profile, sid + STORAGE_BASE, _DEADZONE_INITIAL_SUFFIX_LEN)
         payload = prefix + bytes([sid, _DEADZONE_INITIAL_MARKER, _percent(value)]) + suffix

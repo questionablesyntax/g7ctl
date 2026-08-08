@@ -385,14 +385,18 @@ def _print_state(state: dict, slot: int) -> None:
     for side in ("left", "right"):
         s = state["sticks"][side]
         am = s["advanced_mapping"]
-        print(f"  {side} stick: trajectory={s['trajectory']} curve={s['curve']['preset']} "
+        pts = s["curve"].get("points")
+        pts_str = " points=" + ",".join(f"({x},{y})" for x, y in pts) if pts else ""
+        print(f"  {side} stick: trajectory={s['trajectory']} curve={s['curve']['preset']}{pts_str} "
               f"deadzone={s['deadzone']['initial']}-{s['deadzone']['max']} "
               f"anti={s['anti_deadzone']['initial']}-{s['anti_deadzone']['max']} "
               f"bits={s['resolution_bits']} mode={am['output_mode']} "
               f"invert=({am['invert_x']},{am['invert_y']})")
     for side in ("left", "right"):
         t = state["triggers"][side]
-        print(f"  {side} trigger: hair={t['hair_trigger_mode']} curve={t['curve']['preset']} "
+        tp = t["curve"].get("points")
+        tp_str = " points=" + ",".join(f"({x},{y})" for x, y in tp) if tp else ""
+        print(f"  {side} trigger: hair={t['hair_trigger_mode']} curve={t['curve']['preset']}{tp_str} "
               f"deadzone={t['deadzone']['initial']}-{t['deadzone']['max']} "
               f"anti={t['anti_deadzone']['initial']}-{t['anti_deadzone']['max']}")
     v = state["vibration"]

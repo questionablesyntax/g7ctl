@@ -11,12 +11,28 @@ plus its 9 shape bytes, and 0x01 = 1 = the index alone. Same convention as
 every other write in this protocol -- see PROTOCOL.md "Config writes are
 addressed writes into a register file".
 
-The 9 shape bytes are `[scale=0x64] [P0] [P1] [P2] [P3]`, four (x, y)
-control points in 0-255 space with P0 always (0, 0). Only preset selection
-is implemented here; individual control-point editing is decoded but not
-implemented (see PROTOCOL.md "Editing a single control point"), and the
-interpolation used to draw a curve through the points is not established.
+The 9 shape bytes are `[scale=0x64] [origin] [P1] [P2] [P3]`: a scale byte,
+a fixed `00 00` origin corner, and the three draggable interior points as
+(x, y) pairs in 0-255 space.
+
+A curve has FIVE handles in Nexus, but only these three live here. The
+other two are the endpoints, and they are the Deadzone/Anti-Deadzone
+registers -- deadzone initial/max are the endpoints' X coordinates and
+anti-deadzone initial/max are their Y coordinates. So `set_value(...,
+"curve_points", ...)` below moves the interior of the curve, and the
+deadzone/anti-deadzone setters move its ends. See PROTOCOL.md "A curve is
+five handles".
+
+Two units are in play, which is a real trap: **interior points are 0-255,
+the endpoints are 0-100 percentages.** Confirmed by writing 0x00 and 0xFF
+to an interior point and reading both back unchanged (2026-08-08,
+Profile 4).
+
+The interpolation drawn through the points is NOT established -- Bezier and
+Catmull-Rom both fit the presets. Nothing here needs it; a renderer would.
 """
+from collections.abc import Iterable, Sequence
+from typing import Union
 
 CURVE_PRESET_INDEX = {"standard": 0x00, "concave": 0x01, "s_curve": 0x02}
 
@@ -47,6 +63,93 @@ _CURVE_SHAPE_DATA = {
     0x01: bytes.fromhex("6400005e17b04fe8a1"),
     0x02: bytes.fromhex("64000028 4c 80 80 d7 b2".replace(" ", "")),
 }
+
+
+# The three interior points sit at the curve SETTING_ID + these offsets --
+# so Left Stick's curve at 0x44 puts them at 0x48/0x4A/0x4C, and every side
+# offset (Sticks +0x20, Triggers +0x1C) carries through automatically
+# because it is applied to the curve ID before these are added. All six
+# addresses hardware-confirmed 2026-08-08 (left stick, right stick, both
+# triggers).
+CURVE_POINT_OFFSETS = (4, 6, 8)
+CURVE_POINT_COUNT = len(CURVE_POINT_OFFSETS)
+
+# Where the points sit inside the 10-byte block, for decoding a blob read:
+# [index][scale][origin x2][P1 x2][P2 x2][P3 x2]
+CURVE_POINTS_BLOCK_OFFSET = 4
+
+
+def parse_points(value: Union[str, Sequence]) -> list[tuple[int, int]]:
+    """Coerce a curve-points value to [(x, y), (x, y), (x, y)].
+
+    Accepts what the CLI passes (a string "x1,y1,x2,y2,x3,y3") and what the
+    GUI/state JSON passes (a nested sequence [[x, y], ...] or a flat one).
+    """
+    if isinstance(value, str):
+        parts = [p.strip() for p in value.split(",") if p.strip() != ""]
+        flat = [int(p, 0) for p in parts]
+    else:
+        flat = []
+        for item in value:
+            if isinstance(item, (list, tuple)):
+                flat.extend(int(v) for v in item)
+            else:
+                flat.append(int(item))
+    if len(flat) != CURVE_POINT_COUNT * 2:
+        raise ValueError(
+            f"curve_points needs {CURVE_POINT_COUNT} (x, y) pairs "
+            f"({CURVE_POINT_COUNT * 2} numbers), got {len(flat)}")
+    for v in flat:
+        # 0-255, NOT 0-100. The endpoints are percentages; these are not.
+        if not 0 <= v <= 255:
+            raise ValueError(f"curve point coordinate {v} out of range: must be 0-255")
+    return [(flat[i], flat[i + 1]) for i in range(0, len(flat), 2)]
+
+
+def curve_point_payloads(setting_id: int, points: Iterable[tuple[int, int]]) -> list[bytes]:
+    """One payload per interior point: [addr] 02 [x] [y].
+
+    Deliberately three separate 2-byte writes rather than one 10-byte write
+    of the whole block. Both forms exist on the wire, but this is the one
+    that was hardware-verified end to end (write, read back, diff: exactly
+    the intended bytes changed and nothing else). The single-write form is
+    what the presets use, and rewriting the whole block would also clobber
+    the scale and origin bytes for no benefit.
+    """
+    payloads = []
+    for off, (x, y) in zip(CURVE_POINT_OFFSETS, points):
+        addr = setting_id + off
+        if addr > 0xFF:
+            # Right Trigger's third point lands at 0x100 -- past the end of
+            # the one-byte SETTING_ID field. Under the register-file model
+            # that is page 1, offset 0x00, so it would need a *different
+            # prefix* mid-sequence (03 [profile] 01 instead of ...00).
+            #
+            # That encoding is inferred, never observed: test60 confirmed
+            # the Right Trigger's curve preset (0xF8) and second point
+            # (0xFE), but nothing has ever written its third. Refusing is
+            # deliberate -- guessing an address wrong here does not fail
+            # loudly, it writes a byte into someone's persistent config.
+            # One capture of dragging that point in Nexus closes it.
+            raise ValueError(
+                f"curve point address {addr:#05x} crosses the page boundary "
+                "(Right Trigger's third point). The encoding for this is "
+                "inferred but unverified, so it is refused rather than "
+                "guessed -- see PROTOCOL.md 'Editing points'.")
+        payloads.append(bytes([addr, 0x02, x, y]))
+    return payloads
+
+
+def decode_curve_points(blob: bytes, storage_offset: int) -> "list[list[int]] | None":
+    """Read the three interior points out of a config blob. Returns
+    [[x, y], ...] (lists, so it round-trips through JSON), or None if the
+    blob is too short to cover them."""
+    start = storage_offset + CURVE_POINTS_BLOCK_OFFSET
+    end = start + CURVE_POINT_COUNT * 2
+    if end > len(blob):
+        return None
+    chunk = blob[start:end]
+    return [[chunk[i], chunk[i + 1]] for i in range(0, len(chunk), 2)]
 
 
 def curve_preset_payload(setting_id: int, preset: str) -> bytes:

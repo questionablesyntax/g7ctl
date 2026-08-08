@@ -58,6 +58,7 @@ from typing import Callable, Optional
 from . import buttons, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
 from .constants import DOCK_READ_CATEGORY, FULL_BLOB_LENGTH
 from .curves import CURVE_PRESETS as _CURVE_PRESETS
+from .curves import parse_points as _parse_points
 from .session import VendorSession, profile_layer_byte
 
 log = logging.getLogger(__name__)
@@ -87,7 +88,7 @@ WRITE_POST_HEARTBEATS = 3
 def _default_stick_settings() -> dict:
     return {
         "trajectory": "circle",
-        "curve": {"preset": "standard"},
+        "curve": {"preset": "standard", "points": None},
         "deadzone": {"initial": 0, "max": 100},
         "anti_deadzone": {"initial": 0, "max": 100},
         "resolution_bits": 12,
@@ -108,7 +109,7 @@ def _default_trigger_settings() -> dict:
         "hair_trigger_mode": "off",
         "deadzone": {"initial": 0, "max": 100},
         "anti_deadzone": {"initial": 0, "max": 100},
-        "curve": {"preset": "standard"},
+        "curve": {"preset": "standard", "points": None},
     }
 
 
@@ -248,12 +249,30 @@ def _validate_percent(v: object, label: str) -> None:
         raise StateError(f"{label} must be 0-100, got {v!r}")
 
 
+def _validate_curve(curve: dict, label: str) -> None:
+    """Preset name plus, optionally, the three interior control points.
+
+    `points` is validated through curves.parse_points() so the accepted
+    shapes stay identical to what set_value() will accept -- a value that
+    validates here but blows up at write time is the failure mode this
+    whole validation layer exists to prevent. Note the range is 0-255, not
+    0-100: interior points and the deadzone endpoints use different units
+    (see curves.py).
+    """
+    if curve.get("preset") is not None and curve["preset"] not in _CURVE_PRESETS:
+        raise StateError(f"unknown curve preset {curve.get('preset')!r}")
+    pts = curve.get("points")
+    if pts is not None:
+        try:
+            _parse_points(pts)
+        except (ValueError, TypeError) as exc:
+            raise StateError(f"{label}.curve.points: {exc}") from exc
+
+
 def _validate_stick_settings(s: dict) -> None:
     if s.get("trajectory") not in (None, "circle", "raw"):
         raise StateError(f"stick trajectory must be 'circle' or 'raw', got {s.get('trajectory')!r}")
-    curve = s.get("curve") or {}
-    if curve.get("preset") is not None and curve["preset"] not in _CURVE_PRESETS:
-        raise StateError(f"unknown curve preset {curve.get('preset')!r}")
+    _validate_curve(s.get("curve") or {}, "stick")
     for field_name in ("deadzone", "anti_deadzone"):
         block = s.get(field_name) or {}
         _validate_percent(block.get("initial"), f"{field_name}.initial")
@@ -279,9 +298,7 @@ def _validate_stick_settings(s: dict) -> None:
 def _validate_trigger_settings(s: dict) -> None:
     if s.get("hair_trigger_mode") is not None and s["hair_trigger_mode"] not in _HAIR_TRIGGER_MODES:
         raise StateError(f"unknown hair_trigger_mode {s.get('hair_trigger_mode')!r}")
-    curve = s.get("curve") or {}
-    if curve.get("preset") is not None and curve["preset"] not in _CURVE_PRESETS:
-        raise StateError(f"unknown curve preset {curve.get('preset')!r}")
+    _validate_curve(s.get("curve") or {}, "trigger")
     for field_name in ("deadzone", "anti_deadzone"):
         block = s.get(field_name) or {}
         _validate_percent(block.get("initial"), f"{field_name}.initial")
@@ -460,6 +477,20 @@ def read_state(session: VendorSession, slot: int = 1, interval: float = 0.05,
 # helpers below decide WHAT to write. Keeping the two apart is what makes
 # the diff logic testable without a controller attached.
 # ---------------------------------------------------------------------------
+
+
+def _points_key(points) -> Optional[str]:
+    """Normalise curve points to a comparable string, or None.
+
+    Baseline diffing compares target against live device state, and the two
+    arrive in different shapes -- read_state() produces lists of lists while
+    a hand-edited JSON file may hold tuples or a flat list. Comparing those
+    directly reports a spurious difference and rewrites points that already
+    match, so both sides go through the same normalisation.
+    """
+    if points is None:
+        return None
+    return ",".join(f"{x},{y}" for x, y in _parse_points(points))
 
 
 ProgressCallback = Optional[Callable[[int, int, str], None]]
@@ -689,6 +720,12 @@ def _stick_steps(side: str, s: dict, baseline: Optional[dict] = None, profile: i
     _add(curve.get("preset"), baseline_curve.get("preset"),
          f"{label}: curve={curve.get('preset')}",
          lambda sess, v: sticks.set_value(sess, side, "curve", v, profile=profile))
+    # Points go after the preset deliberately: selecting a preset rewrites
+    # the whole block including the points, so writing them first would be
+    # undone by the preset write that follows.
+    _add(_points_key(curve.get("points")), _points_key(baseline_curve.get("points")),
+         f"{label}: curve points={_points_key(curve.get('points'))}",
+         lambda sess, v: sticks.set_value(sess, side, "curve_points", v, profile=profile))
     # Deadzone/anti-deadzone: re-enabled 2026-07-28 now that sticks.set_value()
     # builds the write's trailing suffix from a live read of the device's own
     # current state (see VendorSession.read_live_suffix()) instead of a stale captured
@@ -772,6 +809,10 @@ def _trigger_steps(side: str, t: dict, baseline: Optional[dict] = None, profile:
     _add(curve.get("preset"), baseline_curve.get("preset"),
          f"{label}: curve={curve.get('preset')}",
          lambda sess, v: triggers.set_value(sess, side, "curve", v, profile=profile))
+    # After the preset, for the same reason as _stick_steps().
+    _add(_points_key(curve.get("points")), _points_key(baseline_curve.get("points")),
+         f"{label}: curve points={_points_key(curve.get('points'))}",
+         lambda sess, v: triggers.set_value(sess, side, "curve_points", v, profile=profile))
     # Deadzone/anti-deadzone: re-enabled 2026-07-28 now that triggers.set_value()
     # builds the write's trailing suffix from a live, side-aware read of the
     # device's own current state (see VendorSession.read_live_suffix()) instead of a
