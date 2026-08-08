@@ -712,6 +712,71 @@ from those confirmations, not individually observed.
 
 Not implemented in `pyg7/`.
 
+## The input stream on report `0x10` (including a full 6-axis IMU)
+
+While a vendor session is open, the device pushes a continuous stream of its
+own input state on report `0x10` -- the same report `CMD_READ` answers on,
+distinguished by byte 4 (`0x05` = read response, `0xE0` = input frame).
+
+**This is how Nexus lets you drive its UI with the controller** ("Direction
+Control / A Confirm / B Back" in its footer). In vendor mode the HID gamepad
+interface does not exist, so the app needs its own path to read inputs.
+
+Decoded 2026-08-08 from a manual sweep (each input moved in turn, logged
+read-only over one held session):
+
+| Offset | Contents |
+|---|---|
+| 5-8 | stick axes, **processed** -- rest at exactly `0x80`, full range 0-255 |
+| 9, 10 | button bitfields |
+| 12, 13 | triggers, 0 at rest, `0xFF` at full |
+| **17-22** | **gyroscope** x, y, z -- int16 little-endian signed |
+| **23-28** | **accelerometer** x, y, z -- int16 little-endian signed |
+| 51-54 | stick axes, **raw** -- rest at 134/126/133/132, i.e. uncalibrated |
+| 55-60 | buttons and triggers again, raw group |
+
+The IMU identification is not a guess. All three gyro axes have a median of
+**exactly 0** (angular rate is zero at rest), and the accelerometer's vector
+magnitude stays near-constant at **~8446** while its components swing --
+which is gravity. At 8192 LSB/g (a ±4g range) that reads **1.03 g**.
+
+The two axis groups differ in exactly the way calibration predicts: the
+first rests at a perfect `0x80` on all four axes, the second at 134/126/133/
+132. Processed versus raw ADC.
+
+Which bit of `0x09`/`0x0A` belongs to which button is not mapped -- the
+sweep did not record button order reliably.
+
+### The gamepad and this stream are mutually exclusive
+
+Tempting idea, ruled out 2026-08-08: the HID interface at `100a` *declares*
+this protocol in its report descriptor --
+
+```
+06 f0 ff  Usage Page (Vendor-Defined 0xFFF0)
+  85 10     Report ID 0x10, 63-byte INPUT
+  85 12     Report ID 0x12, 63-byte INPUT
+  85 0f     Report ID 0x0F, 63-byte OUTPUT
+```
+
+-- which suggests config access via `hidraw` on interface 1 while `xpad`
+keeps interface 0 and the pad stays playable. **It does not work.** Writing
+heartbeats and a `CMD_READ` request to report `0x0F` on `/dev/hidraw*` at
+`100a` succeeds at the OS level and produces **no response of any kind**;
+nothing streams there unprompted either. The firmware declares the reports
+but only services them in vendor mode -- where interface 1 is isochronous
+audio and the HID interface does not exist at all.
+
+So there is no arrangement in which configuration and a working gamepad
+coexist. That is a property of the firmware, and the "not usable for playing
+while connected" limitation is unavoidable rather than a design choice here.
+
+**GameSir Nexus behaves identically** -- it takes the device over completely
+for the duration, on Windows, with the vendor's own software. That is the
+strongest available evidence that this is the hardware's design and not a
+shortcoming of this project's approach: if a workaround existed, the app
+written by the people who made the firmware would use it.
+
 ## Motion / gyro
 
 Located 2026-08-08 (`test61`), layout known, individual settings not
