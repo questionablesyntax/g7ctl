@@ -136,9 +136,10 @@ class ButtonsView(QWidget):
         self.swap_stick_dpad = QCheckBox("Swap Left Stick and D-pad")
         self.swap_stick_dpad.toggled.connect(self._on_edit)
         self.swap_stick_dpad.setToolTip(
-            "Implemented 2026-07-28 from a single captured write -- not yet "
-            "confirmed with a real write+read round trip on hardware. See "
-            "pyg7/dpad_options.py."
+            "Hardware-verified 2026-07-29: a full-blob diff of a real ON then "
+            "OFF write changed exactly the two intended bytes each time, and "
+            "the OFF blob came back byte-identical to the pre-write baseline. "
+            "See pyg7/dpad_options.py."
         )
         rows.addWidget(self.swap_stick_dpad)
 
@@ -148,6 +149,15 @@ class ButtonsView(QWidget):
 
         rows.addStretch(1)
         scroll.setWidget(rows_widget)
+
+        # Apply the starting layer rather than trusting the caller to.
+        # Both layers' combos are built above and are visible by default, so
+        # without this the Shift column sits next to the Default one until
+        # something calls set_layer() -- which MainWindow only does on a
+        # profile *change*. That put a shared, device-global column inside
+        # the per-profile screen on every fresh launch, showing exactly the
+        # thing the Shift-as-its-own-screen change existed to stop showing.
+        self.set_layer(self._layer)
 
     def set_layer(self, layer: str) -> None:
         """Show the Default layer's bindings, or the shared Shift layer's.

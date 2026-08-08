@@ -379,3 +379,26 @@ class ShiftViewSelectorTest(unittest.TestCase):
         # ...and the Shift bindings that read brought back are on screen.
         self.assertEqual(window.buttons_view._combos[("a", "shift")].currentData(), "f11")
 
+
+    def test_shift_column_is_hidden_on_a_freshly_launched_window(self):
+        """Regression: the Shift column was visible on Profile 1 until the
+        user changed profile.
+
+        MainWindow only called `_apply_view()` from `_on_profile_changed`, so
+        on a fresh launch nothing ever set the Buttons view's layer and both
+        columns stayed visible. Switching away and back "fixed" it for the
+        rest of the session, which is why it read as a redraw glitch rather
+        than a missing call. Reported from the real desktop 2026-08-08.
+
+        Asserted with `isVisibleTo()`, not `isVisible()`: nothing is shown
+        under the offscreen platform, so `isVisible()` is False for every
+        widget here and would pass whether or not the bug was present.
+        """
+        window = self._window()
+        view = window.buttons_view
+        self.assertEqual(window.profile_combo.currentData(), 1)
+        self.assertEqual(view.column_header.text(), "Default Layer")
+        self.assertFalse(view._combos[("a", "shift")].isVisibleTo(view),
+                         "Shift column visible on Profile 1 before any "
+                         "profile change")
+        self.assertTrue(view._combos[("a", "default")].isVisibleTo(view))
