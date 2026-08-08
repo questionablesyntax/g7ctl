@@ -81,10 +81,17 @@ Contributions doing so are welcome.
 ## Before you start
 
 **While the app is connected, the controller is not usable for playing — wired
-and over the 2.4GHz dongle alike.** To read or write configuration the
-controller has to be in its vendor/config identity, and in that identity it
-isn't presenting as an Xbox pad: no XInput gamepad, and no HID keyboard/mouse
-to emit your remapped keys.
+and over the 2.4GHz dongle alike.** Two things combine. To read or write
+configuration the controller has to be in its vendor/config identity, where
+interface 1 carries audio instead of the HID keyboard and mouse that emit your
+remapped keys. And while the app holds the session it claims the gamepad
+interface directly, which detaches the kernel's `xpad` driver, so there is no
+XInput pad either.
+
+The second half is the app's doing, not the identity's: the controller sitting
+in that identity with nothing holding it still enumerates as a gamepad. That
+distinction matters after an on-device profile switch — see
+[On-device features](#on-device-features-no-software-needed).
 
 That's a property of the controller, not of the cable, and mostly it takes care
 of itself: **the GUI hands the controller back whenever its window loses focus**
