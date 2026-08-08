@@ -122,9 +122,112 @@ active." See "Profile scoping" below for how this was confirmed.
 ```
 byte = profile_number(1-4) + (4 if Shift Layer else 0)
 ```
-Confirmed: 1+Default=`01`, 2+Default=`02`, 1+Shift=`05`. Formula predicts
-the rest. This is the only category confirmed to carry a profile-targeting
+**Only five values exist: `01`-`04` (Profiles 1-4, Default layer) and `05`,
+the single category that reaches a Shift layer.** The formula above
+generates `06`/`07`/`08` for Profiles 2-4's Shift layers; the firmware
+implements no such category and **falls back to Profile 1's Default-layer
+blob instead of failing** -- a read returns Profile 1's bindings, and a
+write *modifies Profile 1's Default layer*.
+
+Confirmed 2026-08-07, wired, by reading all 256 possible category bytes:
+exactly six return distinct data -- `01`-`04`, `05`, and `20` (dock, a
+separate scheme; see "Dock settings"). The remaining 250 all return Profile
+1's Default-layer blob, byte-for-byte across the full 480. A write test
+pinned the write side: remapping Y on category `08` changed Profile 1's
+Default layer at offset `0x90` and nothing else on the device.
+
+This document previously said the formula "predicts the rest", on the
+strength of three confirmed values -- `01`, `02` and `05`, which are exactly
+the three that work. Note that a write-then-read-back test cannot detect
+this, because the fallback redirects both halves of the round trip to the
+same blob: a Profile 2 Shift binding reads back exactly as written, from
+Profile 1.
+
+**What `05`'s scope actually is remains open**, but one candidate is now
+ruled out. It is *not* established that Profiles 2-4 lack a Shift layer --
+only that no category byte reaches one, and `05` is a full parallel
+configuration rather than a bindings-only blob (see "The Shift layer is not
+bindings-only" below), which suggested `05` might be a window onto the
+**active** profile's Shift layer.
+
+It is not. Tested 2026-08-07: the controller was switched to Profile 2 with
+`M`+`B`, the switch verified behaviourally (Profile 1's `L4` -> Num Pad 1
+binding stopped producing a keystroke, and all buttons read as normal
+gamepad inputs in Steam Input and KDE's controller settings), and `05` read
+back **byte-identical to its Profile 1 reading, all 480 bytes**. Switching
+the active profile does not change what `05` returns.
+
+Note this also cost a vendor session: switching profiles on the controller
+drops config mode entirely. The kernel log shows the device disconnect and
+re-enumerate as `100a`, then back to `109b` on the next handshake. Any tool
+holding a session will lose it when the user switches profiles, so a
+sequence like this has to close the session, switch, and reconnect -- and
+sparingly, since rapid vendor-mode cycling is what wedges `CMD_READ` (see
+"Known firmware quirks").
+
+So this protocol reaches exactly one Shift layer, and nothing found so far
+varies it. That still does not prove the hardware stores only one. If the
+community reports of per-profile Shift bindings in Nexus are right, Nexus
+reaches them by something other than the category byte, the active profile,
+or an offset inside the profile blob -- all three now searched. The
+unexamined axis is `READ_SUBCOMMAND`, held constant by every read here.
+**Do not scan it blindly**: an unknown subcommand under `CMD_READ` need not
+be a read.
+
+This is the only category confirmed to carry a profile-targeting
 byte at all (see "Profile scoping" below).
+
+### An empty slot means "factory default", not "unbound"
+
+A button table slot whose record does not start with `01` -- and an LT/RT
+keycode byte of `00` -- means the button has never been explicitly
+configured, **not** that it does nothing. The firmware allocates a slot on
+first write (see BUTTON_ID below); until then the button performs its
+factory function.
+
+Confirmed 2026-08-07 on Profile 2, whose table has only `a` and the four
+paddles allocated and whose LT/RT bytes are `00`: every face button, D-pad
+direction, shoulder, stick click and trigger behaved as a normal gamepad
+input in Steam Input and KDE's controller settings. Nexus displays the
+factory function for these slots, which is why its display disagrees with
+a naive "no record = unbound" reading.
+
+Note the consequence for `unbind`: unbinding a button returns its slot to
+exactly the bytes of a never-configured slot (verified by writing a keycode
+to a scratch profile, unbinding it, and diffing back to a byte-identical
+baseline). The device cannot represent "explicitly dead" as distinct from
+"never configured", so **unbind restores the factory function** rather than
+disabling the button.
+
+### The Shift layer is not bindings-only
+
+Category `05`'s blob differs from `01`'s in 43 bytes, and only 11 of those
+are inside the button table. The rest decode, through the same
+`sticks.py`/`triggers.py`/`vibration.py` decoders used on the Default blob,
+as a full second set of settings. Measured on the development controller,
+2026-08-07:
+
+| Setting | Default (`01`) | Shift (`05`) |
+|---|---|---|
+| Stick deadzone, initial | 5 | 10 |
+| Stick overlap area | 50 | 0 |
+| Stick direction bindings | `w`/`a`/`s`/`d` + `shift` ring | all unbound |
+| Trigger deadzone, max | 100 | 95 |
+| Vibration, all four channels | 50 | 75 |
+
+So the Shift layer is a parallel *configuration*, not a second keymap --
+which is how the community's "separate ADS and hipfire curves" setup works:
+hipfire settings on the Default layer, ADS settings on the Shift layer,
+swapped by holding the Shift button.
+
+`read_state()` does not expose any of this: it decodes Sticks/Triggers/
+Vibration from the Default blob only, on the assumption that those
+categories are not layer-scoped. That assumption is wrong. Nothing here
+corrupts anything -- the writes for those categories carry a plain profile
+number with no layer axis (see "Category prefixes"), so they act on the
+Default layer -- but the Shift layer's own stick/trigger/vibration values
+are currently invisible to this tool and cannot be edited by it. How Nexus
+addresses them for a *write* is not yet known.
 
 **BUTTON_ID -- always send the 2-byte allocate form**, `[allocate_id,
 0x02]`, never the compact 1-byte form. A button's "has this been
@@ -424,7 +527,11 @@ Request, on the normal `0x0f` OUT channel:
 0f 00 [SEQ] 05 04 [CATEGORY] [OFFSET_HI] [OFFSET_LO] [LENGTH]
 ```
 
-`CATEGORY` = same `profile + (4 if shift)` byte Buttons writes use.
+`CATEGORY` = same `profile + (4 if shift)` byte Buttons writes use, with the
+same five valid values (`01`-`04`, `05`) -- see "Buttons". **An unimplemented
+category is not rejected: it returns Profile 1's Default-layer blob.** A
+reader that trusts the echoed category byte gets plausible, wrong data, so
+treat any category outside those five as unreadable rather than empty.
 `OFFSET` = 16-bit big-endian offset into that category's config blob.
 `LENGTH` = `0x37` (55) per chunk, `0x28` (40) for a region's final chunk
 (480 bytes total per profile).
@@ -492,6 +599,10 @@ physically active on the controller (no M-button combo ever required from
 software):
 
 - **Buttons**: explicit per-write via the `PROFILE+LAYER` byte (see above).
+  The *profile* axis is fully scoped across all 4; the *layer* axis is not,
+  because only Profile 1 has a Shift layer at all. Targeting a Shift layer
+  on Profiles 2-4 does not fail -- it writes into Profile 1's Default
+  layer. See "Buttons".
 - **Sticks/Triggers/Vibration/Report Rate**: explicit per-write via the
   prefix's middle byte, a plain profile number 1-4 (see "Category
   prefixes" above). An earlier single test wrongly suggested these

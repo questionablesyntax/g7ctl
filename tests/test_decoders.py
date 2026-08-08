@@ -205,3 +205,36 @@ class DockDecodeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UnconfiguredTriggerDecodeTest(unittest.TestCase):
+    """LT/RT's keycode byte is 0x00 until the trigger is explicitly bound.
+
+    That means "performs its factory function", not "no keycode": Profile 2
+    carries 0x00 for both triggers and both work normally (verified in Steam
+    Input and KDE controller settings, 2026-08-07). It decodes to None, the
+    same as every other unconfigured slot, so the GUI shows "(Default)"
+    rather than "Raw: 0x00" on an untouched profile.
+    """
+
+    def _blob_with_triggers(self, lt_byte, rt_byte):
+        blob = bytearray(0x200)
+        blob[buttons.TRIGGER_BUTTON_OFFSETS["lt"]] = lt_byte
+        blob[buttons.TRIGGER_BUTTON_OFFSETS["rt"]] = rt_byte
+        return bytes(blob)
+
+    def test_zero_decodes_as_unconfigured(self):
+        decoded = buttons.decode_button_table(self._blob_with_triggers(0x00, 0x00))
+        self.assertIsNone(decoded["lt"])
+        self.assertIsNone(decoded["rt"])
+
+    def test_a_real_keycode_still_decodes_normally(self):
+        decoded = buttons.decode_button_table(self._blob_with_triggers(0x13, 0x14))
+        self.assertEqual(decoded["lt"], "native_lt")
+        self.assertEqual(decoded["rt"], "native_rt")
+
+    def test_zero_is_not_treated_as_unset_everywhere(self):
+        """Scoped to the trigger offsets on purpose -- 0x00 is not a
+        universal 'unset' marker, and decode_keycode() must keep returning
+        the raw hex string for it so other callers aren't changed."""
+        self.assertEqual(buttons.decode_keycode(0x00), "0x00")

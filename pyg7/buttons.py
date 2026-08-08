@@ -422,7 +422,21 @@ def decode_button_table(blob: bytes) -> dict:
         result[slot] = decode_keycode(code)
     for slot, off in TRIGGER_BUTTON_OFFSETS.items():
         if off < len(blob):
-            result[slot] = decode_keycode(blob[off])
+            # 0x00 here means "never configured", the trigger's equivalent of
+            # a table slot whose record doesn't start with 0x01 -- so it maps
+            # to None like every other unconfigured slot, not to the raw hex
+            # string "0x00". Confirmed 2026-08-07: Profile 2 carries 0x00 for
+            # both triggers and both triggers work normally (Steam Input and
+            # KDE controller settings), so the byte means "factory function",
+            # not "no keycode". Rendering it as "Raw: 0x00" made an untouched
+            # profile look broken. See PROTOCOL.md "An empty slot means
+            # factory default, not unbound".
+            #
+            # Deliberately scoped to these two offsets rather than to
+            # decode_keycode(): 0x00 is not a universal "unset" marker. The
+            # Sticks direction bindings use 0xFF for that (see sticks.py),
+            # and what 0x00 means there is not established.
+            result[slot] = None if blob[off] == 0x00 else decode_keycode(blob[off])
     return result
 
 

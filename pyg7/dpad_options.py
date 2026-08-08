@@ -53,8 +53,9 @@ _SWAP_STICK_DPAD_LEN = 0x37
 # The 53 bytes following [val_2B, val_2C], extracted from the same capture
 # for exactness (not from memory) -- only its LENGTH is used; the actual
 # bytes sent are read live via VendorSession.read_live_suffix(), never this
-# stale capture, precisely to avoid the collateral-corruption class roadmap
-# item 12 fixed for Sticks/Triggers deadzone.
+# stale capture, precisely to avoid the collateral-corruption class this
+# same live-suffix read fixed for Sticks/Triggers deadzone -- see
+# PROTOCOL.md "Sticks" and VendorSession.read_live_suffix().
 _SWAP_STICK_DPAD_SUFFIX_LEN = len(bytes.fromhex(
     "0000000200000000000000000000000000000000000101000000000001020000000000010300000000000104000000000001050000"
 ))

@@ -42,14 +42,78 @@ READ_CHUNK_TIMEOUT = 2.0
 READ_CHUNK_TIMEOUT_DONGLE = 4.0
 
 
+# Profiles whose Shift layer this protocol can address. Exactly one category
+# byte (0x05) reaches a Shift layer at all -- see profile_layer_byte() for
+# the evidence, and for why "addressable" is deliberately not the same claim
+# as "the only Shift layer that exists".
+SHIFT_ADDRESSABLE_PROFILES = (1,)
+
+
+def shift_layer_addressable(profile: int) -> bool:
+    """Can this protocol reach `profile`'s Shift layer? Only Profile 1's --
+    see profile_layer_byte(). Callers that would otherwise read or write a
+    Shift binding should check this first and skip the layer, rather than
+    letting profile_layer_byte() raise mid-operation.
+
+    Note the name: this says nothing about whether Profiles 2-4 *have* a
+    Shift layer, only that nothing here can address one."""
+    return profile in SHIFT_ADDRESSABLE_PROFILES
+
+
 def profile_layer_byte(profile: int = 1, shift: bool = False) -> int:
     """Encodes BOTH the target profile (1-4) and the layer (Default/Shift)
     into one byte, used by the Buttons category's write prefix:
     byte = profile + (4 if shift else 0).
 
-    Confirmed: profile1+default=0x01, profile2+default=0x02, profile1+shift=
-    0x05. Profiles 3/4 and shift for profiles 2-4 follow the same formula but
-    aren't independently confirmed.
+    Valid values are 0x01-0x04 (Profiles 1-4, Default layer) and 0x05, the
+    one and only category that reaches a Shift layer. **0x06/0x07/0x08 do not
+    address Profiles 2-4's Shift layers** -- they land in Profile 1 -- so
+    this raises rather than returning them.
+
+    The formula above once claimed to cover all 8 combinations. It does not,
+    and the three values it was confirmed on (0x01, 0x02, 0x05) were exactly
+    the ones that work. Hardware evidence, 2026-08-07, wired:
+
+    - Reading all 256 possible category bytes returns just six distinct
+      blobs: 0x01-0x04, 0x05, and 0x20 (dock, a separate scheme -- see
+      dock_settings.py). The other 250 values, 0x06/0x07/0x08 included,
+      return Profile 1's Default-layer blob rather than failing.
+    - So a Shift-layer *read* on Profiles 2-4 silently returned Profile 1's
+      Default layer, byte-for-byte across all 480 bytes.
+    - Worse, a Shift-layer *write* landed there too: remapping Y on
+      Profile 4's Shift layer (category 0x08) changed Profile 1's Default
+      layer at offset 0x90, 0x0c -> the written keycode. Nothing else on the
+      device changed. The firmware does not reject the unimplemented
+      category; it falls back to blob 1 and corrupts it.
+
+    That fallback also means our own write-then-read-back tests could not
+    have caught this: both halves of the loop are redirected to the same
+    place, so a Profile 2 Shift write reads back exactly as written.
+
+    **Do not read this as "Profiles 2-4 have no Shift layer."** All that is
+    established is that no category byte addresses one. Blob 0x05 is also
+    not a bindings-only table -- it carries its own stick deadzone/
+    sensitivity/direction bindings, trigger deadzone and vibration levels,
+    all differing from 0x01's (that is how "separate ADS and hipfire curves"
+    is built), so what sits at 0x05 is a whole parallel configuration.
+
+    One candidate explanation is now ruled out. A complete second config
+    reachable at exactly one address suggested 0x05 might be a window onto
+    the *active* profile's Shift layer. It is not: with the controller
+    switched to Profile 2 (verified behaviourally -- Profile 1's paddle
+    binding stopped typing), 0x05 read back byte-identical to its Profile 1
+    reading, all 480 bytes. Switching the active profile does not change
+    what 0x05 returns.
+
+    So this protocol reaches exactly one Shift layer, and no addressing we
+    have found varies it. That still does not prove the hardware stores only
+    one: G7 Pro users report per-profile Shift bindings as ordinary Nexus
+    behaviour, and if they are right, Nexus reaches them by something other
+    than the category byte, the active profile, or an offset inside the
+    profile blob -- all three of which have now been searched. The
+    unexamined axis is READ_SUBCOMMAND, which every read here holds constant.
+    Do not scan it blindly: an unknown subcommand under CMD_READ may not be
+    a read at all.
 
     Sticks/Triggers/Vibration/Report Rate do NOT use this combined byte --
     they carry a plain profile number (1-4) in their own prefix's middle
@@ -60,6 +124,12 @@ def profile_layer_byte(profile: int = 1, shift: bool = False) -> int:
     """
     if not 1 <= profile <= 4:
         raise ValueError("profile must be 1-4")
+    if shift and not shift_layer_addressable(profile):
+        raise ValueError(
+            f"profile {profile}'s Shift layer cannot be addressed -- the only category that "
+            f"reaches a Shift layer is profile(s) "
+            f"{', '.join(str(p) for p in SHIFT_ADDRESSABLE_PROFILES)}'s. Writing this one "
+            "corrupts Profile 1's Default layer; reading it returns Profile 1's data.")
     return profile + (4 if shift else 0)
 
 
