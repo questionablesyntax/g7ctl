@@ -31,8 +31,11 @@ Profile 4).
 The interpolation drawn through the points is NOT established -- Bezier and
 Catmull-Rom both fit the presets. Nothing here needs it; a renderer would.
 """
+import time
 from collections.abc import Iterable, Sequence
-from typing import Union
+from typing import Optional, Union
+
+from .constants import CMD_WRITE
 
 CURVE_PRESET_INDEX = {"standard": 0x00, "concave": 0x01, "s_curve": 0x02}
 
@@ -138,6 +141,41 @@ def curve_point_payloads(setting_id: int, points: Iterable[tuple[int, int]]) -> 
                 "guessed -- see PROTOCOL.md 'Editing points'.")
         payloads.append(bytes([addr, 0x02, x, y]))
     return payloads
+
+
+# Pacing between the three point writes. Every other setting in this
+# library is ONE write, so its caller (write_state, the CLI's
+# _wrapped_write) supplies the heartbeats around it. Curve points are the
+# first multi-write setting, and firing all three back-to-back does not
+# work: hardware, 2026-08-08, the third write was silently discarded every
+# time while the first two landed. The firmware drops writes that are not
+# heartbeat-wrapped -- documented since the very first captures -- so a
+# multi-write setting has to pace itself.
+CURVE_POINT_WRITE_INTERVAL = 0.3
+
+
+def write_curve_points(session, prefix: bytes, setting_id: int,
+                       points: Iterable[tuple[int, int]],
+                       interval: Optional[float] = None) -> bytes:
+    """Send the three interior-point writes, heartbeat-paced.
+
+    Shared by sticks.py and triggers.py so the pacing cannot drift between
+    them. Returns the last packet sent, matching set_value()'s contract.
+    """
+    # Resolved here rather than as a default argument so a test can patch
+    # CURVE_POINT_WRITE_INTERVAL down to 0 -- a default is bound once at
+    # import time and would ignore the patch. Same pattern session.py uses
+    # for its read timeouts.
+    if interval is None:
+        interval = CURVE_POINT_WRITE_INTERVAL
+
+    pkt = b""
+    for payload in curve_point_payloads(setting_id, points):
+        pkt = session.send_raw(CMD_WRITE, prefix + payload)
+        time.sleep(interval)
+        session.heartbeat()
+        time.sleep(interval)
+    return pkt
 
 
 def decode_curve_points(blob: bytes, storage_offset: int) -> "list[list[int]] | None":
