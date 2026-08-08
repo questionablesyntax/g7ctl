@@ -223,7 +223,9 @@ a configuration you synced, which is the main reason "Read from Device" exists.
   tracks gamepads) sees a different device and will show it under a
   different name, losing a custom name you assigned. And your keyboard/mouse
   remaps stop working for that window, because the HID keyboard and mouse
-  interfaces that emit them are absent while it sits in the other identity.
+  interfaces that emit them are absent while it sits in the other identity —
+  note the gamepad itself keeps working throughout, so this presents as "my
+  remaps broke", not "my controller disconnected".
   See [PROTOCOL.md](PROTOCOL.md) "A profile switch re-enumerates the
   controller, twice".
 - **Remap a back paddle on the fly** (`L4`/`R4`/`L5`/`R5`): hold `M` + the
