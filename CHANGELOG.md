@@ -6,7 +6,55 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Buttons tab showed both the Default and Shift columns on every fresh
+  launch.** Switching to any other profile corrected it and it stayed
+  corrected for the rest of the session, so it looked like a redraw glitch
+  rather than a missing call. The Shift layer is shared by all four
+  profiles, so a Shift column sitting inside the per-profile screen implies
+  a scope it does not have — which is exactly what moving Shift into the
+  profile selector was meant to stop showing.
+
+### Changed
+
+- **The "Swap Left Stick and D-pad" tooltip no longer understates what is
+  known about it.** It described the setting as not yet confirmed against
+  hardware while pointing at the source file that records it as
+  hardware-verified since 2026-07-29.
+
 ### Documentation
+
+- **The config protocol is a paged register file, and PROTOCOL.md now says
+  so.** Every config write is `03 [PROFILE] [PAGE] [OFFSET] [LEN]` followed
+  by `LEN` bytes, writing at `(PAGE << 8) + OFFSET` — verified against every
+  config write in the capture corpus. Several things previously documented
+  as separate mechanisms are the same one: the prefix's third byte is a
+  256-byte page selector (which is why Sticks and the dock share a `0x100`
+  base), the byte after `SETTING_ID` is a length rather than a format
+  marker, and `SETTING_ID` is itself a byte address. Buttons' "allocate
+  form" and "compact form" are one format at two addresses — the allocate
+  write includes the record's `01` marker byte and the compact one does not,
+  which is the whole reason a compact write to an unconfigured button
+  vanishes.
+- **Custom stick and trigger curves are decoded**: a ten-byte block holding
+  four `(x, y)` control points, at four known addresses, with per-point
+  addresses listed. Not implemented — and the interpolation drawn between
+  the points is explicitly *not* established, so anything rendering these
+  curves would be guessing.
+- **Corrected a claim about the shared Shift layer that was wrong in two
+  different ways.** 0.1.5 retracted "the Shift layer has its own curves" in
+  PROTOCOL.md but left the retracted claim standing in `pyg7/state.py`,
+  complete with a measurement date and a cross-reference to a section that
+  no longer existed. The sentence that replaced it then overstated the other
+  way, calling the Shift blob's non-button bytes identical to an untouched
+  profile's; measured, they differ in five bytes, all of them left-stick
+  curve control points. The conclusion both versions supported is unchanged
+  and the code was always correct: nothing can write those bytes, so reading
+  only the Default layer is right.
+- Recorded two unmapped areas rather than leaving them undocumented: five
+  undecoded bytes in every button-table record (not always zero), and two
+  stick-shaped configuration blocks nothing has ever been seen writing.
 
 - **Switching profiles on the controller re-enumerates it, twice.** Pressing
   `M`+`Y`/`B`/`A`/`X` drops the controller off the USB bus, brings it back as

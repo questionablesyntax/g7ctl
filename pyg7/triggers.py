@@ -37,9 +37,11 @@ _HAIR_TRIGGER_MODE_NAMES = {v: k for k, v in HAIR_TRIGGER_MODES.items()}
 STORAGE_BASE = 0x00
 
 # Long-form Deadzone/Anti-Deadzone templates, re-extracted directly from the
-# stored live USB captures, same approach as
-# sticks.py -- the marker byte appears inconsequential (varied 0x14/0x15/0x16
-# across real samples for the same setting), value byte is what matters.
+# stored live USB captures, same approach as sticks.py. The byte after the
+# setting ID is a LENGTH, not a marker: it "varied 0x14/0x15/0x16 across real
+# samples for the same setting" because those samples carried different
+# amounts of trailing data. See sticks.py's note and PROTOCOL.md "Config
+# writes are addressed writes into a register file".
 #
 # The trailing suffix bytes are NOT sent verbatim: see
 # VendorSession.read_live_suffix(), which reads the live span instead. These

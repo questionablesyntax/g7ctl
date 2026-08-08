@@ -2,11 +2,20 @@
 0x44 for Left Stick) and Triggers (0xDC for Left Trigger) -- see PROTOCOL.md
 "Curve preset payload".
 
-Standard/Concave/S-Curve carry real curve-shape data (the "long form",
-marked by a 0x0A byte after the preset index); Custom is just a mode-select
-flag (the "short form", marked by 0x01) since Custom has no fixed preset
-curve of its own -- only the mode flag is implemented here, not actual
-curve-point editing (out of scope -- that uses an undecoded 0x4A write).
+Standard/Concave/S-Curve carry real curve-shape data (the "long form", 0x0A
+after the setting ID); Custom is just a mode-select flag (the "short form",
+0x01) since Custom has no fixed preset curve of its own.
+
+That byte is a LENGTH, not a format marker: 0x0A = 10 = the preset index
+plus its 9 shape bytes, and 0x01 = 1 = the index alone. Same convention as
+every other write in this protocol -- see PROTOCOL.md "Config writes are
+addressed writes into a register file".
+
+The 9 shape bytes are `[scale=0x64] [P0] [P1] [P2] [P3]`, four (x, y)
+control points in 0-255 space with P0 always (0, 0). Only preset selection
+is implemented here; individual control-point editing is decoded but not
+implemented (see PROTOCOL.md "Editing a single control point"), and the
+interpolation used to draw a curve through the points is not established.
 """
 
 CURVE_PRESET_INDEX = {"standard": 0x00, "concave": 0x01, "s_curve": 0x02}
@@ -42,7 +51,8 @@ _CURVE_SHAPE_DATA = {
 
 def curve_preset_payload(setting_id: int, preset: str) -> bytes:
     """Build the payload (after the fixed category prefix) for selecting a
-    curve preset: [SETTING_ID] [marker] [index] [shape data or nothing]."""
+    curve preset: [SETTING_ID] [LEN] [index] [shape data or nothing], where
+    LEN counts everything after it (10 for a preset, 1 for Custom)."""
     preset = preset.lower()
     if preset == "custom":
         return bytes([setting_id, 0x01, 0x03, 0x00])
