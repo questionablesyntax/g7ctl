@@ -111,44 +111,60 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         view.load_state(state)
         return view, state
 
-    def test_shift_column_is_editable_on_profile_1(self):
+    def test_default_layer_is_the_column_shown_by_default(self):
         view, _state = self._view_for_profile(1)
-        self.assertTrue(view._combos[("a", "shift")].isEnabled())
-        self.assertTrue(view._combos[("a", "default")].isEnabled())
+        self.assertTrue(view._combos[("a", "default")].isVisible()
+                        or not view.isVisible())  # visibility needs a shown parent
+        self.assertEqual(view.column_header.text(), "Default Layer")
 
-    def test_shift_column_is_disabled_where_the_layer_is_unreachable(self):
-        """No category byte reaches a Shift layer for Profiles 2-4, and a
-        write aimed at one lands in Profile 1's Default layer -- so the
-        column must not be editable there. See profile_layer_byte()."""
-        for slot in (2, 3, 4):
-            with self.subTest(slot=slot):
-                view, _state = self._view_for_profile(slot)
-                self.assertFalse(view._combos[("a", "shift")].isEnabled())
-                # The Default column stays fully editable on every profile.
-                self.assertTrue(view._combos[("a", "default")].isEnabled())
+    def test_set_layer_switches_which_column_is_shown(self):
+        """One column, and which layer it edits follows the profile selector.
 
-    def test_stale_shift_bindings_are_dropped_when_the_layer_is_unreachable(self):
-        """A state exported before the fix carries Profile 1's Default layer
-        recorded as this profile's Shift layer. validate_state() refuses to
-        write those, and the disabled column gives the user no way to clear
-        them, so loading must drop them rather than dead-end at sync."""
+        The Shift layer is device-global, so it lives behind its own entry in
+        the selector rather than beside a per-profile column -- a global
+        column sitting in a per-profile screen is what made it look
+        profile-scoped in the first place.
+        """
+        view, _state = self._view_for_profile(1)
+        view.set_layer("shift")
+        self.assertIn("shared", view.column_header.text())
+        self.assertFalse(view._combos[("a", "default")].isVisible())
+        view.set_layer("default")
+        self.assertEqual(view.column_header.text(), "Default Layer")
+        self.assertFalse(view._combos[("a", "shift")].isVisible())
+
+    def test_dpad_options_hide_on_the_shift_screen(self):
+        """They are profile-scoped and cannot be written to the Shift blob."""
+        view, _state = self._view_for_profile(1)
+        view.set_layer("shift")
+        self.assertFalse(view.swap_stick_dpad.isVisibleTo(view))
+        self.assertFalse(view.dpad_diagonal_lock.isVisibleTo(view))
+        view.set_layer("default")
+        self.assertTrue(view.swap_stick_dpad.isVisibleTo(view))
+
+    def test_switching_layers_does_not_drop_bindings(self):
+        """_on_edit() sweeps every combo, so a hidden column must keep its
+        values or switching views would silently clear the other layer."""
         from pyg7 import state as state_mod
-        view, state = self._view_for_profile(3, {"a": "f11", "y": "numpad1"})
-        self.assertEqual(state["buttons"]["shift"], {})
-        self.assertFalse(view._combos[("a", "shift")].isEnabled())
-        state_mod.validate_state(state)  # must not raise
-
-    def test_switching_to_an_unreachable_profile_disables_the_column(self):
-        """The column's state has to follow the profile combo, not just the
-        profile the view happened to be built with."""
         view, state = self._view_for_profile(1)
-        self.assertTrue(view._combos[("a", "shift")].isEnabled())
-        state["controller_slot"] = 2
+        state["buttons"]["shift"]["y"] = "numpad1"
+        state["buttons"]["default"]["a"] = "f11"
         view.load_state(state)
-        self.assertFalse(view._combos[("a", "shift")].isEnabled())
-        state["controller_slot"] = 1
-        view.load_state(state)
-        self.assertTrue(view._combos[("a", "shift")].isEnabled())
+        view.set_layer("shift")
+        combo = view._combos[("y", "shift")]
+        combo.setCurrentIndex(combo.findData("numpad3"))
+        self.assertEqual(state["buttons"]["shift"]["y"], "numpad3")
+        self.assertEqual(state["buttons"]["default"]["a"], "f11",
+                         "the hidden Default layer was swept out of the state")
+        state_mod.validate_state(state)
+
+    def test_shift_bindings_survive_a_profile_that_is_not_1(self):
+        """They used to be dropped on load for Profiles 2-4. The Shift layer
+        is shared, so those bindings are real wherever they were read."""
+        view, state = self._view_for_profile(3, {"a": "f11"})
+        self.assertEqual(state["buttons"]["shift"].get("a"), "f11")
+        view.set_layer("shift")
+        self.assertEqual(view._combos[("a", "shift")].currentData(), "f11")
 
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")

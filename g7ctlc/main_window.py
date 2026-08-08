@@ -48,6 +48,11 @@ _GEOMETRY_PATH = (
 # default starting directory for the Export/Import file dialogs, so existing
 # users land somewhere with their old profile JSONs still importable (same
 # schema, no migration needed).
+# Sentinel for the profile combo's Shift entry. Deliberately not 5: the
+# Shift layer is not a fifth profile, and anything that mistakes it for one
+# would send profile=5 somewhere that expects 1-4.
+SHIFT_VIEW = "shift"
+
 _LEGACY_PROFILES_DIR = (
     Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     / "g7ctl" / "profiles"
@@ -133,14 +138,25 @@ class MainWindow(QMainWindow):
         self.profile_combo = QComboBox()
         for slot in (1, 2, 3, 4):
             self.profile_combo.addItem(f"Profile {slot}", slot)
+        # The Shift layer sits here as a peer of the four profiles because
+        # that is what it is on the device: five config blobs, 0x01-0x05,
+        # which GameSir Nexus also reads as peers. It is NOT a fifth profile
+        # -- it is one layer shared by all four, so it gets its own entry
+        # rather than a column inside a per-profile screen, where it used to
+        # imply a per-profile scope it does not have.
+        self.profile_combo.addItem("Shift Layer (shared)", SHIFT_VIEW)
         self.profile_combo.setToolTip(
             "Which of the controller's 4 onboard profile slots to read from / "
-            "sync to. Every category (Buttons, Sticks, Triggers, Vibration, "
-            "Report Rate) is independently profile-scoped."
+            "sync to. Buttons, Sticks, Triggers, Vibration and Report Rate are "
+            "each independently profile-scoped.\n\n"
+            "\"Shift Layer (shared)\" is not a fifth profile: the controller "
+            "has ONE Shift layer, used by all four profiles. Editing it there "
+            "changes it everywhere."
         )
         self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
         top.addWidget(self.profile_combo)
-        top.addWidget(QLabel("Report Rate:"))
+        self.report_rate_label = QLabel("Report Rate:")
+        top.addWidget(self.report_rate_label)
         self.report_rate_combo = QComboBox()
         for hz in (250, 500, 1000):
             self.report_rate_combo.addItem(f"{hz} Hz", hz)
@@ -470,11 +486,15 @@ class MainWindow(QMainWindow):
         if not self._sync_allowed():
             return
         slot = self._state.get("controller_slot") or 1
-        if not self._confirm(
-            "Sync to controller?",
-            f"Push the current settings to Profile {slot} on the connected "
-            "controller? This overwrites that profile's stored settings.",
-        ):
+        if self.profile_combo.currentData() == SHIFT_VIEW:
+            message = ("Push the current settings to the connected controller? The Shift "
+                       f"layer is shared by all four profiles, so this changes it for every "
+                       f"profile — and anything else edited since the last sync still goes to "
+                       f"Profile {slot}.")
+        else:
+            message = (f"Push the current settings to Profile {slot} on the connected "
+                       "controller? This overwrites that profile's stored settings.")
+        if not self._confirm("Sync to controller?", message):
             return
         self._syncing = True
         self.sync_btn.setEnabled(False)
@@ -600,6 +620,11 @@ class MainWindow(QMainWindow):
         re-triggering _on_profile_changed (which would otherwise fire a
         redundant read/no-op write for a value that just came FROM state,
         not from the user picking a new one)."""
+        if self.profile_combo.currentData() == SHIFT_VIEW:
+            # A read finishing must not yank the user out of the Shift view
+            # back to whichever profile it happened to target. The Shift
+            # layer came back with that read anyway -- it is global.
+            return
         self._loading_profile_combo = True
         try:
             idx = self.profile_combo.findData(self._state.get("controller_slot") or 1)
@@ -610,10 +635,39 @@ class MainWindow(QMainWindow):
     def _on_profile_changed(self, _index: int) -> None:
         if self._loading_profile_combo:
             return
-        slot = self.profile_combo.currentData()
-        self._state["controller_slot"] = slot
+        selected = self.profile_combo.currentData()
+        self._apply_view(selected)
+        if selected == SHIFT_VIEW:
+            # The Shift layer is device-global and came back with whichever
+            # profile was last read, so there is nothing new to fetch and no
+            # profile to re-target. Switching to it must NOT touch
+            # controller_slot: the other categories still belong to a real
+            # profile, and a sync from this screen still targets that one.
+            return
+        self._state["controller_slot"] = selected
         if self._connection_state == "connected" and not self._syncing:
             self.request_read_from_device()
+
+    def _apply_view(self, selected) -> None:
+        """Show the Shift layer's single screen, or the full per-profile set.
+
+        The Shift blob carries stick/trigger/vibration bytes only because
+        every one of the five blobs shares a 480-byte layout -- their values
+        are plain factory defaults and Nexus never exposes them. More to the
+        point, nothing can write them: the Sticks/Triggers/Vibration/Report
+        Rate prefixes carry a plain profile number, and there is no profile
+        number that addresses the Shift blob. So those tabs are hidden here
+        rather than shown and quietly ignored.
+        """
+        shift_view = selected == SHIFT_VIEW
+        self.buttons_view.set_layer("shift" if shift_view else "default")
+        for index in range(self.tabs.count()):
+            if self.tabs.widget(index) is not self.buttons_view:
+                self.tabs.setTabVisible(index, not shift_view)
+        if shift_view:
+            self.tabs.setCurrentWidget(self.buttons_view)
+        self.report_rate_label.setVisible(not shift_view)
+        self.report_rate_combo.setVisible(not shift_view)
 
     def _sync_report_rate_combo(self) -> None:
         """Reflect self._state["report_rate_hz"] in the combo -- same

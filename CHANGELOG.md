@@ -6,6 +6,40 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The Shift layer is now its own entry in the profile selector**, sitting
+  after Profile 4 as "Shift Layer (shared)", and the per-profile Buttons tab
+  no longer has a Shift column. The controller has exactly **one** Shift
+  layer, shared by all four profiles — so a global column inside a
+  per-profile screen was the wrong shape, and 0.1.4 made it worse by
+  disabling that column everywhere except Profile 1. Selecting the Shift
+  entry shows Buttons only: the other tabs and Report Rate are profile-scoped
+  and cannot be written to the Shift layer at all.
+- **Shift bindings can be edited from any profile again.** 0.1.4 refused them
+  outside Profile 1, which was safe but wrong — the write was never
+  profile-specific in the first place.
+
+### Fixed
+
+- **A state file exported before 0.1.4 has its Shift section dropped on
+  load**, with a warning. Those files recorded Profile 1's *Default* layer as
+  the profile's Shift layer (the pre-0.1.4 read fell back to it). Harmless
+  while Shift writes were refused; now that they work, importing one would
+  push Profile 1's default bindings over the Shift layer every profile shares.
+
+### Documentation
+
+- 0.1.4's release note below says the controller "stores Shift-layer bindings
+  for Profile 1 only". That is **not correct** — it stores one Shift layer for
+  the whole device. The corruption 0.1.4 fixed was real and the fix was right;
+  only the explanation was wrong. PROTOCOL.md now carries the evidence,
+  including GameSir Nexus's own read pattern.
+- PROTOCOL.md also retracts the claim that the Shift layer has its own stick
+  curves, deadzones and vibration levels. It compared the Shift blob against
+  the one *configured* profile and read configured-versus-factory as
+  layer-scoping. The Shift layer is button bindings only.
+
 ## [0.1.4] - 2026-08-07
 
 **Update if you use more than one profile.** On 0.1.3 and earlier, editing
