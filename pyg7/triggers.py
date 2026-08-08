@@ -15,10 +15,10 @@ here).
 from .constants import CMD_WRITE, RIGHT_TRIGGER_OFFSET, prefix_triggers_vibration
 from .curves import (
     CURVE_PRESET_NAMES,
-    curve_point_payloads,
     curve_preset_payload,
     decode_curve_points,
     parse_points,
+    write_curve_points,
 )
 from .session import VendorSession
 from .values import SettingValue, side_offset
@@ -113,11 +113,8 @@ def set_value(session: VendorSession, side: str, setting: str, value: SettingVal
     elif setting == "curve":
         payload = prefix + curve_preset_payload(sid, value)
     elif setting == "curve_points":
-        # Three separate 2-byte writes -- see curves.curve_point_payloads().
-        pkt = b""
-        for point_payload in curve_point_payloads(sid, parse_points(value)):
-            pkt = session.send_raw(CMD_WRITE, prefix + point_payload)
-        return pkt
+        # Three writes, heartbeat-paced -- see curves.write_curve_points().
+        return write_curve_points(session, prefix, sid, parse_points(value))
     elif setting == "deadzone_initial":
         suffix = session.read_live_suffix(profile, sid + STORAGE_BASE, _DEADZONE_INITIAL_SUFFIX_LEN)
         payload = prefix + bytes([sid, _DEADZONE_INITIAL_MARKER, _percent(value)]) + suffix

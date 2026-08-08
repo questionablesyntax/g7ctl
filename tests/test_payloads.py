@@ -11,6 +11,7 @@ original live USB captures, rather than from what the code currently
 produces, so these tests can actually disagree with the implementation.
 """
 import unittest
+from unittest import mock
 
 from pyg7 import buttons, curves, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
 from pyg7.constants import CMD_WRITE, prefix_sticks, prefix_triggers_vibration
@@ -437,6 +438,7 @@ if __name__ == "__main__":
     unittest.main()
 
 
+@mock.patch.object(curves, "CURVE_POINT_WRITE_INTERVAL", 0)
 class CurvePointsTest(unittest.TestCase):
     """The three interior control points of a custom curve.
 
