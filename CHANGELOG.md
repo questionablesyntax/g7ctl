@@ -37,11 +37,25 @@ adheres to [semantic versioning](https://semver.org/).
   write includes the record's `01` marker byte and the compact one does not,
   which is the whole reason a compact write to an unconfigured button
   vanishes.
-- **Custom stick and trigger curves are decoded**: a ten-byte block holding
-  four `(x, y)` control points, at four known addresses, with per-point
-  addresses listed. Not implemented — and the interpolation drawn between
-  the points is explicitly *not* established, so anything rendering these
-  curves would be guessing.
+- **Custom stick and trigger curves are decoded**, and the "custom curve" is
+  not a separate feature at all — it is a second view onto the Deadzone and
+  Anti-Deadzone sliders. A curve is five handles: two endpoints, whose X
+  coordinates *are* the deadzone registers and whose Y coordinates *are* the
+  anti-deadzone registers, plus three interior points with addresses of
+  their own. Which also explains what Anti-Deadzone is geometrically: the Y
+  of the curve's endpoints. Confirmed on the left stick, right stick and
+  both triggers. Not implemented — and two things are flagged as unresolved
+  rather than assumed, because getting either wrong would write a curve
+  nobody asked for: the endpoints use a 0–100 scale while interior points
+  run past 200, and the interpolation drawn between points is unknown.
+- **Continuous Trigger** (Nexus's per-button rapid-fire) is byte 4 of each
+  button's 7-byte record — a plain boolean with no rate, present on every
+  button.
+- **The motion/gyro register block is located.** Nexus's Motion tab is
+  structurally a stick config, and stores itself in a stick-shaped record at
+  stick offset + `0x61`. This was the region previously catalogued as "a
+  block nothing ever writes" — nothing had ever captured the Motion tab.
+  Individual settings are not decoded.
 - **Corrected a claim about the shared Shift layer that was wrong in two
   different ways.** 0.1.5 retracted "the Shift layer has its own curves" in
   PROTOCOL.md but left the retracted claim standing in `pyg7/state.py`,

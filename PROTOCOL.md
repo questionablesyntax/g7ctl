@@ -334,6 +334,33 @@ button table** (`0x42 + n*7`), checked for all 20 slots.
 
 Not remappable: Xbox/Guide (center) button, M (hardware profile-switch).
 
+### Continuous Trigger (rapid-fire), byte 4 of a button's record
+
+Nexus's Buttons tab exposes a per-button "Continuous Trigger" toggle --
+rapid-fire. It is stored **inside the button's own 7-byte record**, at byte
+4, and written like any other single byte:
+
+```
+03 [PROFILE] 00 [record_offset + 4] 01 [00|01]
+```
+
+Confirmed 2026-08-08 (`test61`) on two buttons: `A`'s record is at `0x7A`
+and its toggle wrote `0x7E`; `Y`'s record is at `0x8F` and its toggle wrote
+`0x93`. Same `+4` offset within each record, different addresses -- so this
+is genuinely per-button, not one global flag.
+
+**It is a plain boolean; there is no rate setting** (confirmed in Nexus's
+own UI). So the value is `01`/`00` and nothing else.
+
+**Every button binding has one** -- Nexus shows the checkbox on every
+button, so byte 4 is a live field in all 20 records, not something only
+certain buttons carry. A GUI can treat it as one checkbox per button row.
+
+That leaves bytes 2, 3, 5 and 6 of each record still unknown. Byte 6 is
+definitely in use -- Profile 3 carries `0x0A` there on every slot, including
+unbound ones and the reserved Xbox slot -- and is **not** Continuous
+Trigger, which was the guess before this capture.
+
 ### Keycodes
 
 One flat byte-value space -- there's no separate "page" per tab; the
@@ -580,58 +607,127 @@ fixed per preset (see `pyg7/curves.py`), identical across Sticks and
 Triggers and across Left/Right -- only the `SETTING_ID` differs. Note `0A`
 is the length of what follows (index + 9 bytes = 10), not a format marker.
 
-### The 10-byte block is four control points
+### A curve is five handles: two endpoints plus three interior points
+
+The editor in Nexus shows five draggable dots. They are not five entries in
+one array -- the two endpoints live in the Deadzone/Anti-Deadzone registers
+and only the middle three live in the curve block:
 
 ```
-[preset_idx] [scale=0x64] [P0x P0y] [P1x P1y] [P2x P2y] [P3x P3y]
+0x13F  bottom endpoint X   (= deadzone_initial)     0-100
+0x140  top    endpoint X   (= deadzone_max)         0-100
+0x141  bottom endpoint Y   (= anti_deadzone_initial) 0-100
+0x142  top    endpoint Y   (= anti_deadzone_max)     0-100
+...
+0x144  preset index (3 = Custom)
+0x145  scale, always 0x64
+0x146  00 00   fixed origin corner -- never written by any drag
+0x148  P1 (x, y)   interior, draggable
+0x14A  P2 (x, y)   interior, draggable
+0x14C  P3 (x, y)   interior, draggable
+0x14E  ff ff   fixed max corner -- never written by any drag
 ```
 
-Coordinates are 0-255. `P0` is always `(0,0)`, and the final endpoint
-`(255,255)` appears to be implicit -- the stored `P3` falls short of it in
-every preset. Decoding the three presets gives coherent geometry:
+(Left stick shown; add `0x20` for the right stick. Triggers use the same
+layout from `0xDC`, `+0x1C` for the right side.)
 
-| Preset | Points | Shape |
+**The "Custom curve" is a second view onto controls that already existed.**
+The Deadzone slider's two handles are the endpoints' X coordinates and the
+Anti-Deadzone slider's two handles are their Y coordinates; the curve editor
+draws those as movable 2D points and adds the three interior ones. That is
+also what Anti-Deadzone *is*, geometrically: the Y of the curve's endpoints,
+which is why raising it lifts output near centre.
+
+Confirmed 2026-08-08 by dragging all five handles bottom-to-top and reading
+the writes (`test58`): the endpoints emitted long-form writes at `0x3F` and
+`0x40`, the interior three emitted 2-byte writes at `0x48`, `0x4A`, `0x4C`,
+and the resulting slider values (deadzone 20/97, anti-deadzone 0/86) matched
+the bytes exactly.
+
+**Two corrections this replaces.** `00 00` and `ff ff` were read as a
+control point and as an "unset fifth point" respectively; they are neither.
+They are fixed frame corners, and no drag has ever written them. The earlier
+claim that the `(255,255)` endpoint is "implicit" was also wrong -- the real
+endpoints are explicit, just stored elsewhere.
+
+#### Preset shape data
+
+The three presets' interior points, from their `0x44` payloads:
+
+| Preset | Interior points | Shape |
 |---|---|---|
-| Standard | (0,0) (40,41) (128,128) (215,214) | on the diagonal -> identity |
-| Concave | (0,0) (94,23) (176,79) (232,161) | below the diagonal throughout |
-| S-Curve | (0,0) (40,76) (128,128) (215,178) | above, then on, then below |
+| Standard | (40,41) (128,128) (215,214) | on the diagonal -> identity |
+| Concave | (94,23) (176,79) (232,161) | below the diagonal throughout |
+| S-Curve | (40,76) (128,128) (215,178) | above, then on, then below |
 
 **The interpolation type is not established.** Bézier and Catmull-Rom both
 reproduce "Standard is a straight line", and nothing in any capture
-distinguishes them. Anything that renders these curves is guessing.
+distinguishes them. Anything that *renders* these curves is guessing;
+writing them does not require knowing.
 
-Curve blocks live at `0x144` (left stick), `0x164` (right stick), `0x0DC`
-(left trigger) and `0x0F8` (right trigger). Each is followed by `ff ff` in
-every blob read back -- `0xFF` is this protocol's "unset" marker elsewhere
-(see Sticks' direction bindings), so a fifth control-point slot marked
-absent is the natural reading. Nothing has ever written those two bytes, so
-that is a reading and not a finding.
+#### Editing points
 
-### Editing a single control point (`0x4A` and friends)
-
-Dragging one point on a Custom curve writes just that point. The one such
-write in the entire capture corpus is:
-
-```
-03 01 01 4a 02 8e 6e      -> address 0x14A, 2 bytes: P2 = (142, 110)
-```
-
-`0x14A` is `P2`'s x-byte inside the block at `0x144`. So this is not a
-distinct "curve point" command; it is an ordinary 2-byte write at a point's
-address. Addresses follow from the block layout:
+A drag writes just the point moved -- 2 bytes for `(x, y)`, or 1 byte to
+change `x` alone (both forms observed). All six addresses below are
+capture-confirmed:
 
 | Point | Left stick | Right stick | Left trigger | Right trigger |
 |---|---|---|---|---|
-| P0 | `0x46` | `0x66` | `0xDE` | `0xFA` |
 | P1 | `0x48` | `0x68` | `0xE0` | `0xFC` |
-| P2 | `0x4A` (confirmed) | `0x6A` | `0xE2` | `0xFE` |
+| P2 | `0x4A` | `0x6A` | `0xE2` | `0xFE` |
 | P3 | `0x4C` | `0x6C` | `0xE4` | `0x100` |
 
-Only `0x4A` is capture-confirmed; the rest are predicted from the block
-layout and have not been observed. Writing a whole custom curve needs no
-per-point writes anyway -- all ten bytes go in one `[SETTING_ID] 0A ...`
-write, the same shape the presets use and the firmware already accepts.
+`0x48`/`0x4A`/`0x4C` confirmed in `test58`; `0x6A`, `0xE2` and `0xFE`
+confirmed in `test60`, along with their preset registers `0x64`, `0xDC` and
+`0xF8` -- so the `+0x20` (Sticks) and `+0x1C` (Triggers) side offsets hold
+for curves. `P1`/`P3` on the right stick and both triggers are predicted
+from those confirmations, not individually observed.
+
+#### Two things a curve writer must not get wrong
+
+1. **Endpoints and interior points use different units.** The endpoints are
+   0-100 percentages (they are the deadzone registers, and their sliders
+   read as percentages). Interior points are on a wider scale -- observed up
+   to 223. A linear `p * 255/100` conversion is the obvious guess and is
+   **not confirmed by any capture**.
+2. **Points are constrained monotonic by their neighbours.** Nexus refuses
+   to drag an interior point past the next one (confirmed: a point pushed
+   to the top-right clamped just under its upper neighbour). They are *not*
+   fenced by the endpoints, though -- an interior point was dragged to
+   `(3, 3)`, well below the bottom endpoint's X of 20.
+
 Not implemented in `pyg7/`.
+
+## Motion / gyro
+
+Located 2026-08-08 (`test61`), layout known, individual settings not
+decoded. Nothing in `pyg7/` touches it.
+
+Nexus's Motion tab is **structurally a stick config**: X-Axis Output Mode,
+Activate Method, Activate Button, Output, Deadzone, Anti-Deadzone, Curve
+Adjustment, X/Y Sensitivity Scale, and Invert toggles. It stores its
+settings the same way, in a record with the same shape as a stick's, at
+**stick offset + `0x61`**:
+
+| Setting | Stick | Motion |
+|---|---|---|
+| deadzone initial | `0x13F` | `0x1A0` |
+| anti-deadzone initial | `0x141` | `0x1A2` |
+| first invert | `0x151` | `0x1B2` |
+| sensitivity | `0x153` | `0x1B5` |
+
+Everything from the inverts onward shifts by one extra byte because motion
+has **three** invert toggles (Roll, Yaw, Y) where a stick has two (X, Y).
+
+Motion edits wrote `0x19C`-`0x1B7` (page 1, prefix `03 [PROFILE] 01`),
+which is exactly the region previously catalogued as "a stick-shaped block
+nothing ever writes". It is not unwritten; it is the motion config.
+
+**There are two such blocks**, at roughly `0x19D` and `0x1BF`, byte-identical
+to each other in a factory profile. Nexus's Motion tab has two sub-tabs,
+**Aim** and **Tilt**, so one block per sub-tab is the obvious reading --
+but only one was exercised in `test61`, so which block is which, and
+whether Tilt really owns the second, is **not confirmed**.
 
 ## Reading current config
 
@@ -738,14 +834,13 @@ software):
   payload" above for the block layout and per-point addresses; nothing in
   `pyg7/` writes them, and the interpolation used to render a curve between
   the points is not established.
-- Motion/gyro tab. Two stick-shaped configuration blocks that nothing in
-  any capture ever writes sit at roughly `0x19D` and `0x1BF` in every
-  profile blob, byte-identical across profiles. Gyro is a guess about what
-  they are, nothing more.
-- The 5 undecoded bytes in each button-table record (`01 [KEYCODE]` then 5
-  more). They are not always zero: one profile carries `0x0A` in byte 6 of
-  every slot, including unbound ones. Per-button turbo is the leading
-  guess -- Nexus does expose that feature -- but no capture of it exists.
+- Motion/gyro: the register block is located and its layout is known (see
+  "Motion / gyro" below), but the individual settings are not decoded and
+  nothing in `pyg7/` reads or writes them.
+- 4 of the 5 spare bytes in each button-table record. Byte 4 is Continuous
+  Trigger (see "Buttons"); bytes 2, 3, 5 and 6 remain unknown, and byte 6
+  is demonstrably in use -- one profile carries `0x0A` there on every slot,
+  including unbound ones and the reserved Xbox slot.
 - The `0xE6`/`0xE7` keycode region (found but not chased further -- see "New keycode region: `0xE6`/`0xE7`" above).
 - The native GameSir identity's own protocol (`3537:1022`, see "Device identities" above) -- found 2026-07-30, not reverse-engineered. Detected only well enough to explain it to a user, not to talk to it.
 - Bluetooth mode -- a genuinely separate identity/pairing path, not investigated at all on the Linux side yet.
