@@ -9,12 +9,23 @@ the entire declared state, never an incremental read-modify-write.
 read_state() exists alongside this for a different purpose -- inspecting
 real device state (e.g. detecting drift from the onboard on-the-fly remap
 shortcuts, or scripting write->read->compare tests) -- not for a
-read-modify-write workflow. It decodes Buttons (both layers) plus Sticks/
-Triggers/Vibration (Default layer's blob only -- those categories aren't
-layer-scoped, there's no Shift-layer variant of a deadzone or a vibration
-level) -- see PROTOCOL.md "Reading current config" for the wire format and
-"Sticks/Triggers/Vibration storage offsets" for where each value lives
+read-modify-write workflow. It decodes Buttons plus Sticks/Triggers/
+Vibration -- see PROTOCOL.md "Reading current config" for the wire format
+and "Sticks/Triggers/Vibration storage offsets" for where each value lives
 (offsets confirmed 2026-07-27 via live write+read-diff on every setting).
+
+Sticks/Triggers/Vibration are decoded from the **Default layer's blob
+only**. This used to be justified by claiming those categories aren't
+layer-scoped -- that there is no Shift-layer variant of a deadzone or a
+vibration level. That is false: the Shift blob carries its own stick
+deadzone, sensitivity, direction bindings, trigger deadzone and vibration
+levels, all differing from the Default layer's (measured 2026-08-07, see
+PROTOCOL.md "The Shift layer is not bindings-only"). Reading only the
+Default layer is now a known gap rather than a justified choice. It is not
+a corruption risk -- those categories' writes carry a plain profile number
+with no layer axis, so they act on the Default layer either way -- but the
+Shift layer's own curves are invisible here, and how to write them is not
+yet known.
 
 Every category targets `controller_slot` explicitly and deterministically,
 independent of whichever profile is physically active on the controller:
@@ -531,7 +542,8 @@ def _build_steps(state: dict, baseline: Optional[dict] = None) -> tuple[list[Ste
 
     # Write-enabled 2026-07-28 -- set_swap_stick_dpad()
     # reads its collateral 53-byte span live rather than trusting a captured
-    # constant, same reasoning as Sticks/Triggers deadzone (item 12).
+    # constant, same reasoning as Sticks/Triggers deadzone -- see
+    # PROTOCOL.md "Sticks".
     swap = state.get("swap_stick_dpad")
     baseline_swap = (baseline or {}).get("swap_stick_dpad")
     if swap is not None and baseline_swap != swap:

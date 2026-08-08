@@ -419,9 +419,9 @@ def _print_list() -> None:
 def _connect_session():
     """Find/handshake the controller and yield a settled, liveness-checked
     VendorSession -- the connect logic every device-touching action needs,
-    factored out of a single inline block in main() so batch mode (roadmap
-    item 20) can open exactly one session for many commands instead of
-    duplicating this per invocation."""
+    factored out of a single inline block in main() so batch mode can open
+    exactly one session for many commands instead of duplicating this per
+    invocation."""
     vdev, via_dongle = find_writable_device()
     if vdev is None:
         # Fall back to doing the handshake ourselves rather than telling
