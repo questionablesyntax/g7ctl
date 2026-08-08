@@ -58,9 +58,12 @@ switches, from the kernel log:
 Consequences worth knowing:
 
 - **The HID keyboard/mouse interfaces do not exist while it sits at
-  `109b`** (see the identity table above), and those are what emit
-  remapped key/mouse events. Keyboard and mouse bindings are therefore
-  dead for that window after every profile change.
+  `109b`** (see the identity table above), and those are the only path by
+  which a remapped key or mouse event reaches the host. Keyboard and mouse
+  bindings are therefore dead for that window after every profile change.
+  The gamepad half keeps working -- `Generic X-Box pad` and `js0` are
+  present at `109b` too -- so this presents as "the remaps broke", not "the
+  controller disconnected".
 - **Anything holding a vendor session loses it.** The session dies because
   the device re-enumerated, not the other way round.
 - **Software watching for gamepads sees a different device.** Steam, for
