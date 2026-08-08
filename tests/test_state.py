@@ -106,30 +106,18 @@ class ValidateStateTest(unittest.TestCase):
         with self.assertRaises(state_mod.StateError):
             state_mod.validate_state(self.state)
 
-    def test_rejects_shift_bindings_where_the_layer_cannot_be_addressed(self):
-        """Caught before any write, not partway through one.
-
-        A Shift write on Profiles 2-4 lands in Profile 1's Default layer
-        (see session.profile_layer_byte()). Letting profile_layer_byte()
-        raise mid-sync would leave every earlier step already applied to the
-        device, so the refusal belongs here.
-        """
-        for profile in (2, 3, 4):
+    def test_shift_bindings_are_valid_on_every_profile(self):
+        """The Shift layer is device-global, so declaring Shift bindings is
+        valid whichever profile the state targets -- they all address the
+        same layer. validate_state() used to refuse these for Profiles 2-4,
+        back when the write would have corrupted Profile 1."""
+        for profile in (1, 2, 3, 4):
             with self.subTest(profile=profile):
                 self.state["controller_slot"] = profile
                 self.state["buttons"]["shift"] = {"y": "f1"}
-                with self.assertRaises(state_mod.StateError) as ctx:
-                    state_mod.validate_state(self.state)
-                self.assertIn("Shift", str(ctx.exception))
-
-    def test_allows_shift_bindings_on_profile_1(self):
-        self.state["controller_slot"] = 1
-        self.state["buttons"]["shift"] = {"y": "f1"}
-        state_mod.validate_state(self.state)  # must not raise
+                state_mod.validate_state(self.state)  # must not raise
 
     def test_allows_empty_shift_layer_on_any_profile(self):
-        """read_state() returns {} for these profiles -- a fresh read must
-        still round-trip through validate_state()/write_state() cleanly."""
         for profile in (1, 2, 3, 4):
             with self.subTest(profile=profile):
                 self.state["controller_slot"] = profile

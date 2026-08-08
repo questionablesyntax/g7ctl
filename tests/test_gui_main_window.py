@@ -303,3 +303,79 @@ class HideShowReleaseTest(unittest.TestCase):
         window._connection_state = "paused"  # user clicked Release Device
         window.showEvent(QShowEvent())
         self.assertEqual(self.emitted, [])
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class ShiftViewSelectorTest(unittest.TestCase):
+    """The Shift layer is a selector entry, not a per-profile column.
+
+    The controller has one Shift layer shared by all four profiles. Sitting
+    it beside a per-profile column implied a scope it does not have -- and
+    before that, addressing it per profile corrupted Profile 1. It is now a
+    peer of the four profiles in the selector, which is how the device
+    stores it (five blobs, 0x01-0x05) and how Nexus reads it.
+    """
+
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+        return MainWindow()
+
+    def _select(self, window, data):
+        window.profile_combo.setCurrentIndex(window.profile_combo.findData(data))
+
+    def test_selector_offers_shift_after_the_four_profiles(self):
+        from g7ctlc.main_window import SHIFT_VIEW
+        window = self._window()
+        data = [window.profile_combo.itemData(i) for i in range(window.profile_combo.count())]
+        self.assertEqual(data, [1, 2, 3, 4, SHIFT_VIEW])
+
+    def test_selecting_shift_hides_the_profile_scoped_tabs(self):
+        from g7ctlc.main_window import SHIFT_VIEW
+        window = self._window()
+        self._select(window, SHIFT_VIEW)
+        for index in range(window.tabs.count()):
+            widget = window.tabs.widget(index)
+            expected = widget is window.buttons_view
+            self.assertEqual(window.tabs.isTabVisible(index), expected,
+                             f"tab {window.tabs.tabText(index)!r} visibility wrong on the Shift screen")
+        self.assertFalse(window.report_rate_combo.isVisibleTo(window))
+
+    def test_returning_to_a_profile_restores_every_tab(self):
+        from g7ctlc.main_window import SHIFT_VIEW
+        window = self._window()
+        self._select(window, SHIFT_VIEW)
+        self._select(window, 2)
+        for index in range(window.tabs.count()):
+            self.assertTrue(window.tabs.isTabVisible(index))
+        self.assertTrue(window.report_rate_combo.isVisibleTo(window))
+
+    def test_selecting_shift_does_not_retarget_the_profile(self):
+        """Sticks/Triggers/Vibration/Report Rate still belong to a real
+        profile, and nothing addresses the Shift blob with a profile number
+        -- so controller_slot must survive a trip to the Shift screen."""
+        from g7ctlc.main_window import SHIFT_VIEW
+        window = self._window()
+        self._select(window, 3)
+        self.assertEqual(window._state["controller_slot"], 3)
+        self._select(window, SHIFT_VIEW)
+        self.assertEqual(window._state["controller_slot"], 3)
+
+    def test_a_read_does_not_yank_the_user_off_the_shift_screen(self):
+        from g7ctlc.main_window import SHIFT_VIEW
+        window = self._window()
+        self._select(window, SHIFT_VIEW)
+        state = state_mod.default_state_dict("read")
+        state["controller_slot"] = 2
+        state["buttons"]["shift"] = {"a": "f11"}
+        window.set_read_finished(True, "read ok", state)
+        self.assertEqual(window.profile_combo.currentData(), SHIFT_VIEW,
+                         "a completed read pulled the user back to a profile screen")
+        # ...and the Shift bindings that read brought back are on screen.
+        self.assertEqual(window.buttons_view._combos[("a", "shift")].currentData(), "f11")
+

@@ -15,7 +15,7 @@ import unittest
 from pyg7 import buttons, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
 from pyg7.constants import CMD_WRITE, prefix_sticks, prefix_triggers_vibration
 from pyg7.curves import curve_preset_payload
-from pyg7.session import profile_layer_byte, shift_layer_addressable
+from pyg7.session import SHIFT_CATEGORY, profile_layer_byte
 
 from .fakes import FakeSession
 
@@ -33,25 +33,26 @@ class ProfileLayerByteTest(unittest.TestCase):
         self.assertEqual(profile_layer_byte(3, shift=False), 0x03)
         self.assertEqual(profile_layer_byte(4, shift=False), 0x04)
 
-    def test_shift_layer_rejected_where_it_cannot_be_addressed(self):
-        """0x06/0x07/0x08 must never reach the wire.
+    def test_shift_is_one_global_layer_for_every_profile(self):
+        """The Shift layer is device-global: 0x05 for all four profiles.
 
-        This test previously asserted the opposite -- that
-        profile_layer_byte(4, shift=True) == 0x08 -- which is what the
-        formula predicted and what the firmware does NOT implement. A write
-        to category 0x08 lands in Profile 1's Default layer instead
-        (hardware-confirmed 2026-08-07; see profile_layer_byte()'s
-        docstring), so the GUI's Shift column silently corrupted Profile 1
-        for anyone editing Profiles 2-4.
+        This assertion has now been wrong twice in opposite directions. It
+        first read `profile_layer_byte(4, shift=True) == 0x08`, which the
+        formula predicted and the firmware does not implement -- writing it
+        modified Profile 1's Default layer. It was then changed to expect a
+        refusal for Profiles 2-4, which was safe but still wrong: there is
+        one Shift layer, shared, and asking for any profile's gets it.
+        Confirmed on the device, in Nexus's own read pattern, and in Nexus's
+        UI (a Shift binding set on Profile 1's tab shows on Profile 2's).
         """
-        for profile in (2, 3, 4):
-            with self.assertRaises(ValueError):
-                profile_layer_byte(profile, shift=True)
+        for profile in (1, 2, 3, 4):
+            self.assertEqual(profile_layer_byte(profile, shift=True), SHIFT_CATEGORY)
+        self.assertEqual(SHIFT_CATEGORY, 0x05)
 
-    def test_shift_layer_addressable_only_for_profile_1(self):
-        self.assertTrue(shift_layer_addressable(1))
-        for profile in (2, 3, 4):
-            self.assertFalse(shift_layer_addressable(profile))
+    def test_default_layer_stays_profile_scoped(self):
+        """Only the Shift axis is global -- the Default layer is per profile."""
+        for profile in (1, 2, 3, 4):
+            self.assertEqual(profile_layer_byte(profile, shift=False), profile)
 
     def test_rejects_out_of_range(self):
         for bad in (0, 5, -1):
@@ -108,14 +109,13 @@ class ButtonWriteTest(unittest.TestCase):
         buttons.remap(sess, buttons.KNOWN_BUTTON_IDS["a"], 0x3E, profile=1, shift=True)
         self.assertEqual(sess.only_payload()[1], 0x05)  # profile 1 + shift
 
-    def test_remap_refuses_the_shift_layer_of_a_profile_without_one(self):
-        # This case used to assert the payload carried 0x06 (profile 2 +
-        # shift). The firmware has no such category and writes it into
-        # Profile 1's Default layer instead -- see profile_layer_byte().
-        sess = FakeSession()
-        with self.assertRaises(ValueError):
-            buttons.remap(sess, buttons.KNOWN_BUTTON_IDS["a"], 0x3E, profile=2, shift=True)
-        self.assertEqual(sess.sent, [], "nothing may reach the wire on a rejected write")
+    def test_remap_to_shift_uses_0x05_whatever_profile_is_asked_for(self):
+        # Used to assert 0x06 for profile 2 (a category that does not exist
+        # and corrupts Profile 1). One Shift layer, one category.
+        for profile in (1, 2, 3, 4):
+            sess = FakeSession()
+            buttons.remap(sess, buttons.KNOWN_BUTTON_IDS["a"], 0x3E, profile=profile, shift=True)
+            self.assertEqual(sess.only_payload()[1], 0x05)
 
     def test_unbind_payload_differs_from_remap(self):
         sess = FakeSession()

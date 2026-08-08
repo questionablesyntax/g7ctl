@@ -118,64 +118,39 @@ active." See "Profile scoping" below for how this was confirmed.
 `03 [PROFILE+LAYER] 00 [BUTTON_ID] 01 [KEYCODE]` (remap)
 `03 [PROFILE+LAYER] 00 [BUTTON_ID] 00` (unbind)
 
-**PROFILE+LAYER** -- one byte, both axes combined:
+**PROFILE+LAYER** -- one byte:
 ```
-byte = profile_number(1-4) + (4 if Shift Layer else 0)
+Default layer:  the profile number, 01-04
+Shift layer:    always 05
 ```
-**Only five values exist: `01`-`04` (Profiles 1-4, Default layer) and `05`,
-the single category that reaches a Shift layer.** The formula above
-generates `06`/`07`/`08` for Profiles 2-4's Shift layers; the firmware
-implements no such category and **falls back to Profile 1's Default-layer
-blob instead of failing** -- a read returns Profile 1's bindings, and a
-write *modifies Profile 1's Default layer*.
+**There is exactly one Shift layer, shared by all four profiles.** It is
+device-global -- the same relationship dock settings have to profiles.
+Five per-profile-ish config blobs exist in total: `01`-`04` and `05`.
 
-Confirmed 2026-08-07, wired, by reading all 256 possible category bytes:
-exactly six return distinct data -- `01`-`04`, `05`, and `20` (dock, a
-separate scheme; see "Dock settings"). The remaining 250 all return Profile
-1's Default-layer blob, byte-for-byte across the full 480. A write test
-pinned the write side: remapping Y on category `08` changed Profile 1's
-Default layer at offset `0x90` and nothing else on the device.
+Originally documented as `profile + (4 if Shift Layer else 0)`, which
+predicts `06`/`07`/`08` for Profiles 2-4's Shift layers. Those categories do
+not exist, and **the firmware does not reject them** -- it falls back to
+Profile 1's Default-layer blob. A Shift write aimed at Profile 4 therefore
+*modified Profile 1's Default layer*, and the matching read returned Profile
+1's data, so a write-then-read-back test confirmed the write "worked" while
+it was corrupting another profile.
 
-This document previously said the formula "predicts the rest", on the
-strength of three confirmed values -- `01`, `02` and `05`, which are exactly
-the three that work. Note that a write-then-read-back test cannot detect
-this, because the fallback redirects both halves of the round trip to the
-same blob: a Profile 2 Shift binding reads back exactly as written, from
-Profile 1.
+Evidence for the global reading, gathered 2026-08-07:
 
-**What `05`'s scope actually is remains open**, but one candidate is now
-ruled out. It is *not* established that Profiles 2-4 lack a Shift layer --
-only that no category byte reaches one, and `05` is a full parallel
-configuration rather than a bindings-only blob (see "The Shift layer is not
-bindings-only" below), which suggested `05` might be a window onto the
-**active** profile's Shift layer.
-
-It is not. Tested 2026-08-07: the controller was switched to Profile 2 with
-`M`+`B`, the switch verified behaviourally (Profile 1's `L4` -> Num Pad 1
-binding stopped producing a keystroke, and all buttons read as normal
-gamepad inputs in Steam Input and KDE's controller settings), and `05` read
-back **byte-identical to its Profile 1 reading, all 480 bytes**. Switching
-the active profile does not change what `05` returns.
-
-Note this also cost a vendor session: switching profiles on the controller
-drops config mode entirely. The kernel log shows the device disconnect and
-re-enumerate as `100a`, then back to `109b` on the next handshake. Any tool
-holding a session will lose it when the user switches profiles, so a
-sequence like this has to close the session, switch, and reconnect -- and
-sparingly, since rapid vendor-mode cycling is what wedges `CMD_READ` (see
-"Known firmware quirks").
-
-So this protocol reaches exactly one Shift layer, and nothing found so far
-varies it. That still does not prove the hardware stores only one. If the
-community reports of per-profile Shift bindings in Nexus are right, Nexus
-reaches them by something other than the category byte, the active profile,
-or an offset inside the profile blob -- all three now searched. The
-unexamined axis is `READ_SUBCOMMAND`, held constant by every read here.
-**Do not scan it blindly**: an unknown subcommand under `CMD_READ` need not
-be a read.
-
-This is the only category confirmed to carry a profile-targeting
-byte at all (see "Profile scoping" below).
+- Reading all 256 category bytes returns exactly six distinct blobs:
+  `01`-`04`, `05`, and `20` (dock). The other 250 return blob 1.
+- A write to category `08` changed Profile 1's Default layer at offset
+  `0x90` and nothing else on the device.
+- Switching the active profile on the controller does not change what `05`
+  returns -- byte-identical across a switch to Profile 2, the switch
+  verified behaviourally rather than assumed.
+- **Nexus reads the same six blobs and has never emitted `06`/`07`/`08`.**
+  In a capture of a view-only profile-tab switch it reads the profile's own
+  blob, then `05` in full, then dock -- fetching `05` while displaying
+  Profile 4, which is the shared-resource pattern dock follows.
+- Confirmed in Nexus's UI: a Shift binding set on Profile 1's tab appears on
+  Profile 2's tab. Nexus shows a Shift section under every profile tab,
+  which is why per-profile Shift layers are widely assumed.
 
 ### An empty slot means "factory default", not "unbound"
 
@@ -199,35 +174,20 @@ baseline). The device cannot represent "explicitly dead" as distinct from
 "never configured", so **unbind restores the factory function** rather than
 disabling the button.
 
-### The Shift layer is not bindings-only
+### The Shift layer is button bindings only
 
-Category `05`'s blob differs from `01`'s in 43 bytes, and only 11 of those
-are inside the button table. The rest decode, through the same
-`sticks.py`/`triggers.py`/`vibration.py` decoders used on the Default blob,
-as a full second set of settings. Measured on the development controller,
-2026-08-07:
+Blob `05` carries stick/trigger/vibration bytes, but only because all five
+blobs share one 480-byte layout. Their values are plain factory defaults,
+identical to an untouched profile's; Nexus never exposes them; and nothing
+can write them, since those categories' prefixes carry a plain profile
+number and no profile number addresses `05`.
 
-| Setting | Default (`01`) | Shift (`05`) |
-|---|---|---|
-| Stick deadzone, initial | 5 | 10 |
-| Stick overlap area | 50 | 0 |
-| Stick direction bindings | `w`/`a`/`s`/`d` + `shift` ring | all unbound |
-| Trigger deadzone, max | 100 | 95 |
-| Vibration, all four channels | 50 | 75 |
-
-So the Shift layer is a parallel *configuration*, not a second keymap --
-which is how the community's "separate ADS and hipfire curves" setup works:
-hipfire settings on the Default layer, ADS settings on the Shift layer,
-swapped by holding the Shift button.
-
-`read_state()` does not expose any of this: it decodes Sticks/Triggers/
-Vibration from the Default blob only, on the assumption that those
-categories are not layer-scoped. That assumption is wrong. Nothing here
-corrupts anything -- the writes for those categories carry a plain profile
-number with no layer axis (see "Category prefixes"), so they act on the
-Default layer -- but the Shift layer's own stick/trigger/vibration values
-are currently invisible to this tool and cannot be edited by it. How Nexus
-addresses them for a *write* is not yet known.
+An earlier revision of this document claimed the opposite -- that the Shift
+layer had its own curves, deadzones and vibration levels, "which is how
+separate ADS and hipfire curves are built". That was wrong. It compared
+`05` against Profile 1, the one *configured* profile, and read the
+difference as layer-scoping; Profiles 2, 3 and 4 show the same values as
+`05`. The difference was configured-versus-factory, not default-versus-shift.
 
 **BUTTON_ID -- always send the 2-byte allocate form**, `[allocate_id,
 0x02]`, never the compact 1-byte form. A button's "has this been

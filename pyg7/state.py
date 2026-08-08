@@ -49,7 +49,7 @@ from typing import Callable, Optional
 from . import buttons, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
 from .constants import DOCK_READ_CATEGORY, FULL_BLOB_LENGTH
 from .curves import CURVE_PRESETS as _CURVE_PRESETS
-from .session import SHIFT_ADDRESSABLE_PROFILES, VendorSession, profile_layer_byte, shift_layer_addressable
+from .session import VendorSession, profile_layer_byte
 
 log = logging.getLogger(__name__)
 
@@ -189,24 +189,9 @@ def validate_state(data: dict) -> None:
     if auto is not None and not isinstance(auto, bool):
         raise StateError(f"dock_auto_on_off must be a bool or null, got {auto!r}")
 
-    slot = data.get("controller_slot") or 1
     for layer_name, bindings in data["buttons"].items():
         if layer_name not in ("default", "shift"):
             raise StateError(f"unknown button layer {layer_name!r}, expected 'default' or 'shift'")
-        # Refuse Shift bindings for a profile with no Shift storage, here
-        # rather than at write time: writing one corrupts Profile 1's
-        # Default layer (see session.profile_layer_byte()), and failing
-        # mid-sync would leave the earlier steps already applied. A state
-        # read back by a version before this check carries Profile 1's
-        # Default bindings mislabelled as this profile's Shift layer, so
-        # refusing is also refusing to write back bogus data.
-        if layer_name == "shift" and bindings and not shift_layer_addressable(slot):
-            raise StateError(
-                f"profile {slot} declares {len(bindings)} Shift-layer binding(s), but the "
-                f"controller offers no address for it -- only profile(s) "
-                f"{', '.join(str(p) for p in SHIFT_ADDRESSABLE_PROFILES)}. Writing them would "
-                "overwrite Profile 1's Default layer. Clear the shift layer for this profile, "
-                "or re-read the profile from the device to get a correct state.")
         for btn, keycode_name in bindings.items():
             if btn.lower() not in buttons.KNOWN_BUTTON_IDS:
                 raise StateError(f"unknown button {btn!r}")
@@ -302,8 +287,43 @@ def _validate_trigger_settings(s: dict) -> None:
 def load_state(path: str) -> dict:
     with open(path) as f:
         data = json.load(f)
+    _drop_mislabelled_legacy_shift(data, path)
     validate_state(data)
     return data
+
+
+def _drop_mislabelled_legacy_shift(data: dict, source: str) -> None:
+    """Strip a Shift section that a pre-0.1.4 read got wrong.
+
+    Before 0.1.4, reading a profile other than 1 asked for category
+    0x06/0x07/0x08, which the firmware answers with Profile 1's *Default*
+    layer -- so an exported Profile 2/3/4 state recorded Profile 1's default
+    bindings in its "shift" section. Those bindings were never a Shift layer
+    at all.
+
+    That was harmless while Shift writes for those profiles were refused. It
+    is not harmless now: the Shift layer is device-global, so writing such a
+    file would push Profile 1's Default bindings over the real Shift layer
+    that every profile shares.
+
+    Detection is exact rather than heuristic. Only a pre-fix read could put
+    Shift bindings in a non-Profile-1 state, because that is the only code
+    that ever produced them; 0.1.4 wrote {} there, and anything later
+    reads the global layer correctly for every profile. So: schema 1 +
+    controller_slot != 1 + a populated shift section == mislabelled, always.
+    """
+    if data.get("schema_version") != SCHEMA_VERSION:
+        return
+    slot = data.get("controller_slot")
+    shift = (data.get("buttons") or {}).get("shift")
+    if slot in (2, 3, 4) and shift:
+        log.warning(
+            "%s: dropping %d Shift binding(s) recorded for Profile %s by a version before "
+            "0.1.4 -- they are Profile 1's Default layer, read through a category the "
+            "firmware falls back on, and writing them would overwrite the shared Shift "
+            "layer. Re-read the controller to get its real Shift bindings.",
+            source, len(shift), slot)
+        data["buttons"]["shift"] = {}
 
 
 def save_state(path: str, data: dict) -> None:
@@ -395,15 +415,12 @@ def read_state(session: VendorSession, slot: int = 1, interval: float = 0.05,
         "controller_slot": slot,
         "buttons": {
             "default": buttons.decode_button_table(default_blob),
-            # Only Profile 1 has a Shift layer the firmware can address. For
-            # the others this used to read category 0x06/0x07/0x08, which the
-            # device answers with Profile 1's Default-layer blob -- so the
-            # GUI showed Profile 1's bindings labelled as Profile 3's Shift
-            # layer. An empty dict is "this profile declares no Shift
-            # bindings", which write_state() correctly treats as nothing to
-            # write. See session.profile_layer_byte().
-            "shift": (buttons.read_button_bindings(session, profile=slot, shift=True, interval=interval)
-                      if shift_layer_addressable(slot) else {}),
+            # The Shift layer is device-global -- one layer shared by all
+            # four profiles, read from category 0x05 whatever `slot` says
+            # (see session.profile_layer_byte()). It is included in every
+            # profile's state for the same reason dock settings are: the
+            # user edits it from whichever profile they happen to be on.
+            "shift": buttons.read_button_bindings(session, profile=slot, shift=True, interval=interval),
         },
         "report_rate_hz": report_rate.decode_settings(default_blob)["report_rate_hz"],
         # Both D-pad options come out of a single decode -- calling it once
