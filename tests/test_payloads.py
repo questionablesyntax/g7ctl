@@ -12,12 +12,12 @@ produces, so these tests can actually disagree with the implementation.
 """
 import unittest
 
-from pyg7 import buttons, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
+from pyg7 import buttons, curves, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
 from pyg7.constants import CMD_WRITE, prefix_sticks, prefix_triggers_vibration
 from pyg7.curves import curve_preset_payload
 from pyg7.session import SHIFT_CATEGORY, profile_layer_byte
 
-from .fakes import FakeSession
+from .fakes import FakeSession, blob_with
 
 
 class ProfileLayerByteTest(unittest.TestCase):
@@ -435,3 +435,91 @@ class DockSettingsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CurvePointsTest(unittest.TestCase):
+    """The three interior control points of a custom curve.
+
+    Addresses are the curve SETTING_ID + 4/6/8, all six hardware-confirmed
+    2026-08-08 (left stick, right stick, both triggers), and the whole
+    sequence was verified end to end on Profile 4: write, read back, diff --
+    exactly the intended bytes changed and nothing else.
+    """
+
+    POINTS = [(0x30, 0x40), (0x80, 0x90), (0xC0, 0xD0)]
+
+    def test_parse_accepts_the_cli_string_and_the_json_shapes(self):
+        expected = [(1, 2), (3, 4), (5, 6)]
+        self.assertEqual(curves.parse_points("1,2,3,4,5,6"), expected)
+        self.assertEqual(curves.parse_points([[1, 2], [3, 4], [5, 6]]), expected)
+        self.assertEqual(curves.parse_points([1, 2, 3, 4, 5, 6]), expected)
+
+    def test_parse_rejects_wrong_count_and_out_of_range(self):
+        with self.assertRaises(ValueError):
+            curves.parse_points("1,2,3,4")
+        with self.assertRaises(ValueError):
+            curves.parse_points([[1, 2], [3, 4], [5, 6], [7, 8]])
+        # 0-255, NOT the 0-100 the deadzone endpoints use -- different units
+        # on the same axis, which is exactly the mistake worth catching.
+        with self.assertRaises(ValueError):
+            curves.parse_points("0,0,0,0,0,256")
+        curves.parse_points("0,0,0,0,255,255")  # 255 is fine
+
+    def test_left_stick_points_land_at_48_4a_4c(self):
+        sess = FakeSession()
+        sticks.set_value(sess, "left", "curve_points", self.POINTS, profile=1)
+        self.assertEqual([p.hex() for p in sess.payloads],
+                         ["03010148023040", "0301014a028090", "0301014c02c0d0"])
+
+    def test_right_stick_points_take_the_0x20_side_offset(self):
+        sess = FakeSession()
+        sticks.set_value(sess, "right", "curve_points", self.POINTS, profile=1)
+        self.assertEqual([p[3] for p in sess.payloads], [0x68, 0x6A, 0x6C])
+
+    def test_trigger_points_use_the_page_0_prefix_and_0x1c_offset(self):
+        left = FakeSession()
+        triggers.set_value(left, "left", "curve_points", self.POINTS, profile=1)
+        self.assertEqual([p[3] for p in left.payloads], [0xE0, 0xE2, 0xE4])
+        # triggers live on page 0 -- prefix 03 [profile] 00, not ...01
+        self.assertTrue(all(p[2] == 0x00 for p in left.payloads))
+
+    def test_right_trigger_third_point_is_refused_not_guessed(self):
+        """Its address is 0x100 -- past the one-byte SETTING_ID field.
+
+        Under the register-file model that is page 1 offset 0x00, needing a
+        different prefix mid-sequence. That encoding has never been
+        observed, and a wrong address here writes a byte into persistent
+        config without failing loudly, so it raises instead.
+        """
+        right = FakeSession()
+        with self.assertRaises(ValueError) as ctx:
+            triggers.set_value(right, "right", "curve_points", self.POINTS, profile=1)
+        self.assertIn("page boundary", str(ctx.exception))
+        self.assertEqual(right.payloads, [], "nothing should reach the device")
+
+    def test_profile_targeting_carries_through(self):
+        sess = FakeSession()
+        sticks.set_value(sess, "left", "curve_points", self.POINTS, profile=4)
+        self.assertTrue(all(p[1] == 4 for p in sess.payloads))
+
+    def test_each_point_is_a_two_byte_write(self):
+        sess = FakeSession()
+        sticks.set_value(sess, "left", "curve_points", self.POINTS, profile=1)
+        for payload in sess.payloads:
+            self.assertEqual(payload[4], 0x02, "LEN byte should be 2 (x, y)")
+            self.assertEqual(len(payload), 7)
+
+    def test_decode_reads_the_points_back_out_of_a_blob(self):
+        # left stick curve block at 0x144: [idx][scale][origin][P1][P2][P3]
+        blob = blob_with({
+            0x144: 0x03, 0x145: 0x64,
+            0x148: 0x30, 0x149: 0x40,
+            0x14A: 0x80, 0x14B: 0x90,
+            0x14C: 0xC0, 0x14D: 0xD0,
+        })
+        decoded = sticks.decode_settings(blob, "left")
+        self.assertEqual(decoded["curve"]["preset"], "custom")
+        self.assertEqual(decoded["curve"]["points"], [[0x30, 0x40], [0x80, 0x90], [0xC0, 0xD0]])
+
+    def test_decode_survives_a_blob_too_short_to_hold_them(self):
+        self.assertIsNone(curves.decode_curve_points(b"\x00" * 8, 0x144))
