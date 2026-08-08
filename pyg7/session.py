@@ -91,18 +91,29 @@ def profile_layer_byte(profile: int = 1, shift: bool = False) -> int:
     place, so a Profile 2 Shift write reads back exactly as written.
 
     **Do not read this as "Profiles 2-4 have no Shift layer."** All that is
-    established is that no category byte addresses one. Two things point the
-    other way: G7 Pro users report per-profile Shift bindings as normal
-    behaviour in GameSir Nexus, and blob 0x05 is not a bindings-only table --
-    it carries its own stick deadzone/sensitivity/direction bindings, trigger
-    deadzone and vibration levels, all differing from 0x01's (that is how
-    "separate ADS and hipfire curves" is built). A whole parallel
-    configuration, reachable at exactly one address, is more consistent with
-    0x05 being a *window onto the active profile's* Shift layer than with
-    only one Shift layer existing. Every observation behind this docstring
-    was taken with one profile active, which cannot tell those apart.
-    Settling it needs the active profile switched on the controller and 0x05
-    re-read; until then, treat the scope of 0x05 as unresolved.
+    established is that no category byte addresses one. Blob 0x05 is also
+    not a bindings-only table -- it carries its own stick deadzone/
+    sensitivity/direction bindings, trigger deadzone and vibration levels,
+    all differing from 0x01's (that is how "separate ADS and hipfire curves"
+    is built), so what sits at 0x05 is a whole parallel configuration.
+
+    One candidate explanation is now ruled out. A complete second config
+    reachable at exactly one address suggested 0x05 might be a window onto
+    the *active* profile's Shift layer. It is not: with the controller
+    switched to Profile 2 (verified behaviourally -- Profile 1's paddle
+    binding stopped typing), 0x05 read back byte-identical to its Profile 1
+    reading, all 480 bytes. Switching the active profile does not change
+    what 0x05 returns.
+
+    So this protocol reaches exactly one Shift layer, and no addressing we
+    have found varies it. That still does not prove the hardware stores only
+    one: G7 Pro users report per-profile Shift bindings as ordinary Nexus
+    behaviour, and if they are right, Nexus reaches them by something other
+    than the category byte, the active profile, or an offset inside the
+    profile blob -- all three of which have now been searched. The
+    unexamined axis is READ_SUBCOMMAND, which every read here holds constant.
+    Do not scan it blindly: an unknown subcommand under CMD_READ may not be
+    a read at all.
 
     Sticks/Triggers/Vibration/Report Rate do NOT use this combined byte --
     they carry a plain profile number (1-4) in their own prefix's middle

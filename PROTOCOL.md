@@ -143,20 +143,61 @@ this, because the fallback redirects both halves of the round trip to the
 same blob: a Profile 2 Shift binding reads back exactly as written, from
 Profile 1.
 
-**What `05`'s scope actually is remains open.** It is *not* established that
-Profiles 2-4 lack a Shift layer -- only that no category byte reaches one.
-Two things argue against the simple reading. G7 Pro users report
-per-profile Shift bindings as ordinary Nexus behaviour; and `05` is not a
-bindings-only blob, but a full parallel configuration (see "The Shift layer
-is not bindings-only" below). A complete second config reachable at exactly
-one address fits "`05` is a window onto the **active** profile's Shift
-layer" at least as well as it fits "only one Shift layer exists". Every
-observation here was taken with a single profile active, which cannot
-distinguish the two. The test that would: switch the active profile on the
-controller, re-read `05`, see whether its contents follow.
+**What `05`'s scope actually is remains open**, but one candidate is now
+ruled out. It is *not* established that Profiles 2-4 lack a Shift layer --
+only that no category byte reaches one, and `05` is a full parallel
+configuration rather than a bindings-only blob (see "The Shift layer is not
+bindings-only" below), which suggested `05` might be a window onto the
+**active** profile's Shift layer.
+
+It is not. Tested 2026-08-07: the controller was switched to Profile 2 with
+`M`+`B`, the switch verified behaviourally (Profile 1's `L4` -> Num Pad 1
+binding stopped producing a keystroke, and all buttons read as normal
+gamepad inputs in Steam Input and KDE's controller settings), and `05` read
+back **byte-identical to its Profile 1 reading, all 480 bytes**. Switching
+the active profile does not change what `05` returns.
+
+Note this also cost a vendor session: switching profiles on the controller
+drops config mode entirely. The kernel log shows the device disconnect and
+re-enumerate as `100a`, then back to `109b` on the next handshake. Any tool
+holding a session will lose it when the user switches profiles, so a
+sequence like this has to close the session, switch, and reconnect -- and
+sparingly, since rapid vendor-mode cycling is what wedges `CMD_READ` (see
+"Known firmware quirks").
+
+So this protocol reaches exactly one Shift layer, and nothing found so far
+varies it. That still does not prove the hardware stores only one. If the
+community reports of per-profile Shift bindings in Nexus are right, Nexus
+reaches them by something other than the category byte, the active profile,
+or an offset inside the profile blob -- all three now searched. The
+unexamined axis is `READ_SUBCOMMAND`, held constant by every read here.
+**Do not scan it blindly**: an unknown subcommand under `CMD_READ` need not
+be a read.
 
 This is the only category confirmed to carry a profile-targeting
 byte at all (see "Profile scoping" below).
+
+### An empty slot means "factory default", not "unbound"
+
+A button table slot whose record does not start with `01` -- and an LT/RT
+keycode byte of `00` -- means the button has never been explicitly
+configured, **not** that it does nothing. The firmware allocates a slot on
+first write (see BUTTON_ID below); until then the button performs its
+factory function.
+
+Confirmed 2026-08-07 on Profile 2, whose table has only `a` and the four
+paddles allocated and whose LT/RT bytes are `00`: every face button, D-pad
+direction, shoulder, stick click and trigger behaved as a normal gamepad
+input in Steam Input and KDE's controller settings. Nexus displays the
+factory function for these slots, which is why its display disagrees with
+a naive "no record = unbound" reading.
+
+Note the consequence for `unbind`: unbinding a button returns its slot to
+exactly the bytes of a never-configured slot (verified by writing a keycode
+to a scratch profile, unbinding it, and diffing back to a byte-identical
+baseline). The device cannot represent "explicitly dead" as distinct from
+"never configured", so **unbind restores the factory function** rather than
+disabling the button.
 
 ### The Shift layer is not bindings-only
 
