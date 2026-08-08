@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "g7ctl"
-version = "0.1.3"
+version = "0.1.4"
 description = "Configure a GameSir G7 Pro controller on Linux, without Windows or the Nexus app"
 readme = "README.md"
 requires-python = ">=3.9"
