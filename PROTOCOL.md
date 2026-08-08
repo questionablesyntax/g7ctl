@@ -36,6 +36,42 @@ as confirmed for the G7 Pro and unverified anywhere else.
 | Wireless dongle, vendor/config | `3537:109c` | The dongle's counterpart to `109b`, same physical unit and serial. **It is a mode, not the dongle's only identity** -- an idle dongle enumerates as `100a` with `xpad` bound, takes the same `"gamesirapp"` handshake, and re-enumerates here; it falls back to `100a` once heartbeats stop. So the dongle behaves exactly as the cable does, one PID apart. While a session is held the controller is **not playable**, same as `109b`: interface 0 shows `driver -> usbfs` in sysfs, `xpad` has nothing bound, and no `/dev/input/js*` node exists. Recovery is perceptibly (not measured) lazier over RF, consistent with the relaxed dongle timings in `pyg7/session.py`. See `pyg7/device.py:enter_vendor_mode()` and `find_writable_device()`. |
 | Native GameSir identity | `3537:1022` | "GameSir-G7 Pro" (no manufacturer string, unlike `109b`). Reached by holding **Menu+Share** on the controller (documented in GameSir's manual as an XInput/native-identity toggle -- the same combo that clears a rare `CMD_READ` wedge). Two plain HID-class interfaces (`0x82`/`0x02` and `0x84`/`0x04`, no vendor-specific class-255 interface at all) -- **not the same protocol as `109b`/`109c`**: neither interface answers the standard `CMD_HEARTBEAT` payload or streams anything unprompted. Not reverse-engineered. `pyg7/device.py:find_native_identity()` recognizes this PID so a user stuck here gets a "hold Menu+Share" message instead of a generic "device not found." |
 
+### A profile switch re-enumerates the controller, twice
+
+Pressing an on-device profile combo (`M`+`Y`/`B`/`A`/`X`) makes the
+controller drop off the USB bus and come back as **`109b`**, sit there for
+roughly 45 seconds, then drop again and return to `100a`. Two full
+disconnect/re-enumerate cycles per profile change, with no software
+involved.
+
+Measured 2026-08-08, wired, with nothing of this project running -- no
+vendor session, no `g7ctlc`, only passive sysfs polling. Two consecutive
+switches, from the kernel log:
+
+```
+00:22:15  disconnect
+00:22:16  100a -> 109b   "GameSir-G7 Pro"
+00:23:03  disconnect                        (~47s later, unprompted)
+00:23:04  109b -> 100a   "Xbox 360 Controller for Windows"
+```
+
+Consequences worth knowing:
+
+- **The HID keyboard/mouse interfaces do not exist while it sits at
+  `109b`** (see the identity table above), and those are what emit
+  remapped key/mouse events. Keyboard and mouse bindings are therefore
+  dead for that window after every profile change.
+- **Anything holding a vendor session loses it.** The session dies because
+  the device re-enumerated, not the other way round.
+- **Software watching for gamepads sees a different device.** Steam, for
+  one, shows the pad under a different name after a profile switch and
+  drops a user-assigned custom name, because the product string, the PID
+  and the interface set all change. This was originally reported as a Steam
+  quirk; it is the firmware.
+
+The ~45s dwell was consistent across both cycles measured, but two samples
+is not a timing characterisation and no mechanism for it is established.
+
 ## Switching out of `100a`: `109b` wired, `109c` over the dongle
 
 Send ASCII `"gamesirapp"` as 5 chunks of 2 characters, each an 8-byte OUT
