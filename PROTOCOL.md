@@ -582,6 +582,20 @@ Left/Right are already distinct `SETTING_ID`s below.
 | Left Trigger Force+Sync flags | `0x24` | `[id] 01 [bit0=Force, bit1=Sync]`, one byte, not two settings |
 | Right Trigger Force+Sync flags | `0x25` | same bit layout |
 
+**Nexus's own sliders offer 5 positions, not 101.** Every vibration-level
+write in the capture corpus carries `00`, `19`, `32`, `4B` or `64` --
+0/25/50/75/100 -- and nothing else. The wire encoding is still a plain
+percent byte (same arrangement as Dock LED Brightness), so this is a UI
+restriction rather than a protocol one.
+
+**Whether the firmware honours an off-grid value is untested.** `pyg7` and
+the GUI accept the full 0-100 range, so a user can ask for 37 -- a value
+Nexus can never produce. Nothing establishes whether the device stores 37,
+snaps it to a step, or discards the write, and no capture can answer it
+because Nexus never sends one. A write-then-read round trip would settle
+whether it is *stored*; whether the motor actually varies at that
+granularity is a separate question and not answerable from the wire at all.
+
 ## Report Rate
 
 Same prefix as Triggers/Vibration (`03 [PROFILE] 00`). No Left/Right (but
@@ -750,8 +764,12 @@ treat any category outside those five as unreadable rather than empty.
 `LENGTH` = `0x37` (55) per chunk, `0x28` (40) for a region's final chunk
 (480 bytes total per profile).
 
-Response, on a **different report ID, `0x10`** (also carries unrelated
-continuous analog telemetry -- match by content, not just report ID):
+Response, on a **different report ID, `0x10`**. That report also carries a
+continuous stream of controller input state -- **this is how Nexus lets you
+drive its own UI with the controller** (its footer shows "Direction Control
+/ A Confirm / B Back"). In vendor mode the HID gamepad interface does not
+exist, so the app needs its own path to read buttons and sticks, and this
+is it. Match responses by content, not just report ID:
 
 ```
 10 00 [SEQ] 3c [CMD_READ] [CATEGORY] [OFFSET_HI] [OFFSET_LO] [LENGTH] [...DATA...]
