@@ -11,6 +11,15 @@ Two things matter here:
 The fixtures under tests/fixtures/ are genuine read_state() output captured
 from the development controller, so the decoders are exercised against real
 device data and not only against hand-built blobs.
+
+One correction to that, 2026-08-07: `profile3_factory`'s "shift" section was
+captured back when read_state() read category 0x07 for it, which the firmware
+answers with Profile 1's *Default* layer -- so the fixture recorded Profile
+1's bindings as though they were Profile 3's Shift layer. It reads `{}` now,
+matching what read_state() reports when it has no address for a Shift
+layer. The rest of the
+fixture is untouched and still genuine. See pyg7/session.py's
+profile_layer_byte() for the hardware evidence.
 """
 import json
 import pathlib
@@ -22,10 +31,11 @@ FIXTURES = json.loads((pathlib.Path(__file__).parent / "fixtures" / "live_read.j
 
 
 class ReadStateIncludeDockTest(unittest.TestCase):
-    """Roadmap item 19: dock settings are device-global, so re-reading them
-    on every profile switch is pure waste -- read_state()'s `include_dock`
-    lets a caller (the GUI's DeviceWatcher) skip that ~10-chunk read once
-    it already has a known-good value from earlier in the same connection.
+    """Dock settings are device-global, not profile-scoped (see
+    pyg7/dock_settings.py), so re-reading them on every profile switch is
+    pure waste -- read_state()'s `include_dock` lets a caller (the GUI's
+    DeviceWatcher) skip that ~10-chunk read once it already has a
+    known-good value from earlier in the same connection.
     """
 
     def _session(self):
@@ -95,6 +105,36 @@ class ValidateStateTest(unittest.TestCase):
         self.state["buttons"]["turbo"] = {}
         with self.assertRaises(state_mod.StateError):
             state_mod.validate_state(self.state)
+
+    def test_rejects_shift_bindings_where_the_layer_cannot_be_addressed(self):
+        """Caught before any write, not partway through one.
+
+        A Shift write on Profiles 2-4 lands in Profile 1's Default layer
+        (see session.profile_layer_byte()). Letting profile_layer_byte()
+        raise mid-sync would leave every earlier step already applied to the
+        device, so the refusal belongs here.
+        """
+        for profile in (2, 3, 4):
+            with self.subTest(profile=profile):
+                self.state["controller_slot"] = profile
+                self.state["buttons"]["shift"] = {"y": "f1"}
+                with self.assertRaises(state_mod.StateError) as ctx:
+                    state_mod.validate_state(self.state)
+                self.assertIn("Shift", str(ctx.exception))
+
+    def test_allows_shift_bindings_on_profile_1(self):
+        self.state["controller_slot"] = 1
+        self.state["buttons"]["shift"] = {"y": "f1"}
+        state_mod.validate_state(self.state)  # must not raise
+
+    def test_allows_empty_shift_layer_on_any_profile(self):
+        """read_state() returns {} for these profiles -- a fresh read must
+        still round-trip through validate_state()/write_state() cleanly."""
+        for profile in (1, 2, 3, 4):
+            with self.subTest(profile=profile):
+                self.state["controller_slot"] = profile
+                self.state["buttons"]["shift"] = {}
+                state_mod.validate_state(self.state)
 
     def test_rejects_unknown_keycode_name(self):
         self.state["buttons"]["default"]["a"] = "hyperspace"
@@ -184,8 +224,9 @@ class LiveFixtureTest(unittest.TestCase):
         self.assertEqual(b["r5"], "native_r5")
 
     def test_unnamed_keycodes_survive_a_round_trip(self):
-        # Guards the roadmap-item-15 bug class in general (an unnamed
-        # keycode must not be dropped or turned into an unbind), independent
+        # Guards the bug class in general (a keycode with no name in
+        # KNOWN_KEYCODES must not be dropped or turned into an unbind on its
+        # way back out), independent
         # of any specific value -- l4/r4/l5/r5 no longer demonstrate this
         # (see the test above), so this uses a synthetic value guaranteed to
         # stay outside KNOWN_KEYCODES.
