@@ -132,10 +132,47 @@ real app).
 
 **Heartbeat** (`CMD=0x02`): payload `f2 00`, fixed.
 
+## Config writes are addressed writes into a register file
+
+Every `CMD=0x3c` payload in every capture we hold fits one shape:
+
+```
+03 [PROFILE] [PAGE] [OFFSET] [LEN] [LEN bytes of data]
+        -> write LEN bytes at address (PAGE << 8) + OFFSET
+```
+
+Verified against all 248 `CMD_WRITE` payloads across the capture corpus,
+zero contradictions. The check is one-sided and worth stating as such: a
+data field that legitimately ends in `0x00` cannot be distinguished from
+padding, so `LEN >= observed` is consistent and only `LEN < observed` would
+falsify. Nothing falsified.
+
+Three consequences, each of which this document previously described as a
+separate mechanism:
+
+- **The prefix's third byte is a 256-byte page selector**, not a category
+  tag. That is why Sticks' storage base and Dock's are both `0x100`: they
+  are the same page, not a coincidence.
+- **The byte after `SETTING_ID` is a length**, not a format/type marker.
+  Where this document says "marker" below, read "length". "Swap Left Stick
+  and D-pad" had this right first (`0x37` = 55 bytes following); the same
+  reading generalises to every other setting, including the deadzone
+  "long form" writes whose marker was observed varying with how much
+  trailing data came along -- that is a length changing, doing exactly what
+  a length does.
+- **`SETTING_ID` is a byte address.** A setting's storage offset is not
+  derived from its ID by a formula; it *is* its ID, plus the page.
+
+The `LEN` framing is what makes the "collateral write" hazards ordinary
+rather than mysterious: a write of length 14 at `0x13F` covers `0x13F..0x14C`
+because that is what it says, and the curve block at `0x144` happens to live
+there. See "Sticks" (the live-suffix note) and "Two collateral-write
+landmines" below.
+
 ## Category prefixes
 
 All config writes use `CMD=0x3c`. The first bytes of the payload identify
-the category:
+the category (in register-file terms: `[PROFILE]` and the page):
 
 | Category | Prefix | Notes |
 |---|---|---|
@@ -249,6 +286,27 @@ use compact form. `pyg7/buttons.py:_to_allocate_form()` does this
 conversion automatically; the table below lists compact-form values for
 reference (allocate = compact - 1) since that's what the original captures
 recorded.
+
+**Why, mechanically -- there are not two forms.** Under the register-file
+model above, `BUTTON_ID` is an address and `0x02`/`0x01` is a length. A
+button's record is `01 [KEYCODE] 00 00 00 00 00` at a fixed offset, so:
+
+```
+allocate:  [record_start]     LEN=02   01 [keycode]   <- writes the marker AND the keycode
+compact:   [record_start + 1] LEN=01      [keycode]   <- writes the keycode only
+```
+
+Compact form is "discarded" on an unconfigured button because it never
+writes the `01` marker, so the record still does not begin with `01` and
+every reader -- including the firmware -- still treats it as unconfigured.
+`allocate_id == compact_id - 1` because the marker byte sits one address
+before the keycode byte. Nothing is being allocated; there is no allocator,
+and the "reset to unconfigured at some point, cause unknown" note in
+`buttons.py` needs no special mechanism either -- anything that clears the
+marker byte produces it.
+
+**Every allocate ID in the table below is exactly its slot's offset in the
+button table** (`0x42 + n*7`), checked for all 20 slots.
 
 | Button | Compact | Allocate (what's actually sent) |
 |---|---|---|
@@ -511,7 +569,7 @@ Note: the real Nexus app disables native trigger vibration when this is
 set to 1000Hz (observed in the Nexus app's own UI, not independently
 verified at the protocol level) -- likely a genuine bandwidth constraint, not a bug.
 
-## Curve preset payload (shared: Sticks `0x44`, Triggers `0xDC`)
+## Curve payload (shared: Sticks `0x44`, Triggers `0xDC`)
 
 ```
 Custom (mode-select only):  [SETTING_ID] 01 03 00
@@ -519,9 +577,61 @@ Standard/Concave/S-Curve:   [SETTING_ID] 0A [preset_index] [9 bytes shape data]
 ```
 `preset_index`: Standard=`00`, Concave=`01`, S-Curve=`02`. Shape data is
 fixed per preset (see `pyg7/curves.py`), identical across Sticks and
-Triggers and across Left/Right -- only the `SETTING_ID` differs. Actual
-curve *point* editing (dragging points on Custom) uses an undecoded
-`SETTING_ID=0x4A` write -- out of scope, not implemented.
+Triggers and across Left/Right -- only the `SETTING_ID` differs. Note `0A`
+is the length of what follows (index + 9 bytes = 10), not a format marker.
+
+### The 10-byte block is four control points
+
+```
+[preset_idx] [scale=0x64] [P0x P0y] [P1x P1y] [P2x P2y] [P3x P3y]
+```
+
+Coordinates are 0-255. `P0` is always `(0,0)`, and the final endpoint
+`(255,255)` appears to be implicit -- the stored `P3` falls short of it in
+every preset. Decoding the three presets gives coherent geometry:
+
+| Preset | Points | Shape |
+|---|---|---|
+| Standard | (0,0) (40,41) (128,128) (215,214) | on the diagonal -> identity |
+| Concave | (0,0) (94,23) (176,79) (232,161) | below the diagonal throughout |
+| S-Curve | (0,0) (40,76) (128,128) (215,178) | above, then on, then below |
+
+**The interpolation type is not established.** Bézier and Catmull-Rom both
+reproduce "Standard is a straight line", and nothing in any capture
+distinguishes them. Anything that renders these curves is guessing.
+
+Curve blocks live at `0x144` (left stick), `0x164` (right stick), `0x0DC`
+(left trigger) and `0x0F8` (right trigger). Each is followed by `ff ff` in
+every blob read back -- `0xFF` is this protocol's "unset" marker elsewhere
+(see Sticks' direction bindings), so a fifth control-point slot marked
+absent is the natural reading. Nothing has ever written those two bytes, so
+that is a reading and not a finding.
+
+### Editing a single control point (`0x4A` and friends)
+
+Dragging one point on a Custom curve writes just that point. The one such
+write in the entire capture corpus is:
+
+```
+03 01 01 4a 02 8e 6e      -> address 0x14A, 2 bytes: P2 = (142, 110)
+```
+
+`0x14A` is `P2`'s x-byte inside the block at `0x144`. So this is not a
+distinct "curve point" command; it is an ordinary 2-byte write at a point's
+address. Addresses follow from the block layout:
+
+| Point | Left stick | Right stick | Left trigger | Right trigger |
+|---|---|---|---|---|
+| P0 | `0x46` | `0x66` | `0xDE` | `0xFA` |
+| P1 | `0x48` | `0x68` | `0xE0` | `0xFC` |
+| P2 | `0x4A` (confirmed) | `0x6A` | `0xE2` | `0xFE` |
+| P3 | `0x4C` | `0x6C` | `0xE4` | `0x100` |
+
+Only `0x4A` is capture-confirmed; the rest are predicted from the block
+layout and have not been observed. Writing a whole custom curve needs no
+per-point writes anyway -- all ten bytes go in one `[SETTING_ID] 0A ...`
+write, the same shape the presets use and the firmware already accepts.
+Not implemented in `pyg7/`.
 
 ## Reading current config
 
@@ -624,8 +734,18 @@ software):
 
 ## Not implemented / out of scope
 
-- Curve control-point editing (`0x4A`, undecoded).
-- Motion/gyro tab.
+- Curve control-point editing -- **decoded, not implemented.** See "Curve
+  payload" above for the block layout and per-point addresses; nothing in
+  `pyg7/` writes them, and the interpolation used to render a curve between
+  the points is not established.
+- Motion/gyro tab. Two stick-shaped configuration blocks that nothing in
+  any capture ever writes sit at roughly `0x19D` and `0x1BF` in every
+  profile blob, byte-identical across profiles. Gyro is a guess about what
+  they are, nothing more.
+- The 5 undecoded bytes in each button-table record (`01 [KEYCODE]` then 5
+  more). They are not always zero: one profile carries `0x0A` in byte 6 of
+  every slot, including unbound ones. Per-button turbo is the leading
+  guess -- Nexus does expose that feature -- but no capture of it exists.
 - The `0xE6`/`0xE7` keycode region (found but not chased further -- see "New keycode region: `0xE6`/`0xE7`" above).
 - The native GameSir identity's own protocol (`3537:1022`, see "Device identities" above) -- found 2026-07-30, not reverse-engineered. Detected only well enough to explain it to a user, not to talk to it.
 - Bluetooth mode -- a genuinely separate identity/pairing path, not investigated at all on the Linux side yet.

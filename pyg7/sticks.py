@@ -55,9 +55,13 @@ _OUTPUT_MODE_NAMES = {v: k for k, v in OUTPUT_MODES.items()}
 STORAGE_BASE = 0x100
 
 # Long-form Deadzone/Anti-Deadzone templates. The byte right after the
-# setting ID is a format/type marker whose exact value appears inconsequential
-# (value tracked cleanly across writes using 3 different marker bytes)
-# -- these use one confirmed-good marker per setting.
+# setting ID is a LENGTH -- how many bytes follow it -- not a format/type
+# marker. It was read as an inconsequential marker for a long time because
+# it was seen varying across writes for the same setting; what was actually
+# varying is how much trailing data Nexus batched in, which is a length
+# doing its job. See PROTOCOL.md "Config writes are addressed writes into a
+# register file". The constants below still pair one confirmed-good length
+# with a matching suffix length, so the pairing must stay consistent.
 #
 # The trailing suffix bytes are NOT sent verbatim: see
 # VendorSession.read_live_suffix(), which reads the live span instead. These

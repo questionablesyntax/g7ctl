@@ -295,7 +295,21 @@ def _to_allocate_form(button_id: bytes) -> bytes:
     rather than trying to guess which one a button currently needs. (A read
     mechanism does now exist -- see read_button_bindings() below -- but it
     reports keycodes per fixed slot, not this allocate/compact ID business,
-    so it doesn't actually help decide which write form to use here.)"""
+    so it doesn't actually help decide which write form to use here.)
+
+    There are not really two "forms", and knowing why makes the rule
+    obvious. A button ID is a blob ADDRESS and the byte after it is a
+    LENGTH (PROTOCOL.md "Config writes are addressed writes into a register
+    file"). A record is `01 [KEYCODE] 00 00 00 00 00`, so:
+
+        allocate: [record_start]     LEN=02 -> writes `01 [keycode]`
+        compact:  [record_start + 1] LEN=01 -> writes `[keycode]` only
+
+    Compact form is discarded on an unconfigured button because it never
+    writes the `01` marker, leaving a record that still doesn't begin with
+    `01`. `allocate_id == compact_id - 1` because the marker byte sits one
+    address before the keycode byte. Every allocate ID in KNOWN_BUTTON_IDS
+    equals its slot's BUTTON_TABLE_OFFSET + n*7 exactly, all 20 checked."""
     if len(button_id) == 2:
         return button_id
     if len(button_id) == 1:
