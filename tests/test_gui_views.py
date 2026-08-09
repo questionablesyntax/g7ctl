@@ -322,3 +322,156 @@ class CurvePointsInViewsTest(unittest.TestCase):
             for i, (x, y) in enumerate(ed.rows):
                 self.assertTrue(x.isEnabled(), f"{side} point {i+1} x")
                 self.assertTrue(y.isEnabled(), f"{side} point {i+1} y")
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class CurveEditorTest(unittest.TestCase):
+    """Coordinate mapping and handle constraints for the graphical editor.
+
+    The mapping is the part worth pinning: endpoints are 0-100 percentages
+    of the full axis while interior points are 0-255 positions *within the
+    span the endpoints define*. They are separate coordinate systems, and
+    conflating them was a mistake that took several captures to unwind --
+    see PROTOCOL.md "A curve is five handles".
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _editor(self, dz=(0, 100), adz=(0, 100), points=None):
+        from g7ctlc.curve_editor import CurveEditor
+        ed = CurveEditor()
+        ed.resize(300, 240)
+        ed.set_curve(dz[0], dz[1], adz[0], adz[1],
+                     points or [[40, 41], [128, 128], [215, 214]])
+        return ed
+
+    def test_interior_points_map_within_the_endpoint_span(self):
+        # dz 5..50 -> a point at 128/255 sits at 5 + 0.502*45 = 27.6%
+        ed = self._editor(dz=(5, 50), adz=(0, 100))
+        x_pct, y_pct = ed._point_to_pct(128, 128)
+        self.assertAlmostEqual(x_pct, 5 + (128 / 255) * 45, places=3)
+        self.assertAlmostEqual(y_pct, (128 / 255) * 100, places=3)
+
+    def test_mapping_round_trips(self):
+        ed = self._editor(dz=(5, 50), adz=(10, 90))
+        for px, py in ((0, 0), (128, 128), (255, 255), (40, 200)):
+            x, y = ed._point_to_pct(px, py)
+            self.assertEqual(ed._pct_to_point(x, y), (px, py))
+
+    def test_a_zero_width_span_does_not_divide_by_zero(self):
+        """Both endpoints on the same X is reachable by dragging, and every
+        interior point then maps to one place -- so the inverse is refused
+        rather than crashing."""
+        ed = self._editor(dz=(50, 50), adz=(0, 100))
+        self.assertEqual(ed._pct_to_point(50, 50)[0], None)
+
+    def test_endpoints_cannot_cross(self):
+        ed = self._editor(dz=(20, 60), adz=(10, 90))
+        ed._move_endpoint(0, 95, 99)      # shove the bottom endpoint past the top
+        self.assertLessEqual(ed._dz[0], ed._dz[1])
+        self.assertLessEqual(ed._adz[0], ed._adz[1])
+        ed._move_endpoint(1, 0, 0)        # and the top below the bottom
+        self.assertLessEqual(ed._dz[0], ed._dz[1])
+
+    def test_interior_points_cannot_cross_their_neighbours(self):
+        ed = self._editor(dz=(0, 100), adz=(0, 100))
+        ed._move_point(0, 100, 100)       # drag point 1 to the far corner
+        pts = ed.points()
+        self.assertLessEqual(pts[0][0], pts[1][0])
+        self.assertLessEqual(pts[0][1], pts[1][1])
+
+    def test_points_are_not_rescaled_when_an_endpoint_moves(self):
+        """Matches the device: halving deadzone_max in Nexus left the stored
+        interior points untouched (test64). They are relative to the span,
+        so they follow without being rewritten."""
+        ed = self._editor(dz=(5, 95), adz=(0, 100))
+        before = ed.points()
+        ed._move_endpoint(1, 50, 100)
+        self.assertEqual(ed.points(), before)
+
+    def test_dragging_only_emits_on_release(self):
+        """A signal per mouse-move would queue a device write per pixel."""
+        from PyQt6.QtCore import QPointF
+        ed = self._editor()
+        seen = []
+        ed.points_changed.connect(seen.append)
+        ed._drag = ("pt", 1)
+        ed._move_point(1, 60, 60)
+        self.assertEqual(seen, [], "must not emit mid-drag")
+        ed.mouseReleaseEvent(None)
+        self.assertEqual(len(seen), 1)
+        del QPointF
+
+    def test_interior_handles_are_not_grabbable_when_points_are_disabled(self):
+        """A non-Custom preset must not let the interior points be dragged,
+        since only the endpoints apply there."""
+        from PyQt6.QtCore import QPointF
+        ed = self._editor()
+        ed.set_points_editable(False)
+        target = ed._handle_positions()[2][2]      # an interior handle
+        self.assertIsNone(ed._hit(QPointF(target)))
+        ed.set_points_editable(True)
+        self.assertEqual(ed._hit(QPointF(target))[0], "pt")
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class UnconfiguredCurveTest(unittest.TestCase):
+    """A profile whose curve block was never written.
+
+    Profiles 3 and 4 on the development controller read `00 00 ...` across
+    the whole block, scale byte included. Decoding that as three points at
+    the origin put three handles on top of the bottom endpoint -- reported
+    as "profiles 3 and 4 don't have interior points on the graph" -- and
+    would have written a degenerate curve back on the next sync.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_an_unwritten_block_decodes_as_no_points(self):
+        from pyg7 import sticks
+        from tests.fakes import blob_with
+        # dz/adz present and valid, curve block untouched -- profile 3's shape
+        blob = blob_with({0x13F: 10, 0x140: 100, 0x142: 100})
+        s = sticks.decode_settings(blob, "left")
+        self.assertEqual(s["deadzone"], {"initial": 10, "max": 100})
+        self.assertIsNone(s["curve"]["points"],
+                          "an unwritten block must not decode as (0,0) x3")
+
+    def test_a_written_block_still_decodes(self):
+        from pyg7 import curves, sticks
+        from tests.fakes import blob_with
+        blob = blob_with({0x145: curves.CURVE_SCALE_CONFIGURED,
+                          0x148: 40, 0x149: 41, 0x14A: 128,
+                          0x14B: 128, 0x14C: 215, 0x14D: 214})
+        s = sticks.decode_settings(blob, "left")
+        self.assertEqual(s["curve"]["points"], [[40, 41], [128, 128], [215, 214]])
+
+    def test_the_editor_hides_interior_handles_when_unconfigured(self):
+        from g7ctlc.curve_editor import CurveEditor
+        ed = CurveEditor()
+        ed.resize(300, 240)
+        ed.set_curve(10, 100, 0, 100, None)
+        kinds = [k for k, _i, _p in ed._handle_positions()]
+        self.assertEqual(kinds, ["end", "end"],
+                         "only the two endpoints should be drawn")
+
+    def test_selecting_custom_seeds_points_from_the_preset_on_screen(self):
+        """Nexus keeps the shape on screen when you switch preset -> Custom;
+        starting from three points at the origin would be worse than useless."""
+        from g7ctlc.views.sticks_view import SticksView
+        state = state_mod.default_state_dict("t")
+        state["sticks"]["left"]["curve"] = {"preset": "concave", "points": None}
+        view = SticksView()
+        view.load_state(state)
+        side = view.sides["left"]
+        side.curve.setCurrentText("custom")
+        out = {}
+        side.save_into(out)
+        self.assertEqual(out["curve"]["points"], [[94, 23], [176, 79], [232, 161]],
+                         "should seed from Concave, the preset that was showing")

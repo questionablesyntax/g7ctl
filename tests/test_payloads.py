@@ -467,20 +467,28 @@ class CurvePointsTest(unittest.TestCase):
             curves.parse_points("0,0,0,0,0,256")
         curves.parse_points("0,0,0,0,255,255")  # 255 is fine
 
+    def _poke(self, sess, prefix, sid):
+        """The per-point form: three 2-byte writes. Not the default any more
+        (see the whole-block tests below), but it is what editing a single
+        point on an already-configured curve looks like on the wire, and it
+        is where the per-point addresses are pinned."""
+        return curves.write_curve_points(sess, prefix, sid, self.POINTS,
+                                         whole_block=False)
+
     def test_left_stick_points_land_at_48_4a_4c(self):
         sess = FakeSession()
-        sticks.set_value(sess, "left", "curve_points", self.POINTS, profile=1)
+        self._poke(sess, prefix_sticks(1), 0x44)
         self.assertEqual([p.hex() for p in sess.payloads],
                          ["03010148023040", "0301014a028090", "0301014c02c0d0"])
 
     def test_right_stick_points_take_the_0x20_side_offset(self):
         sess = FakeSession()
-        sticks.set_value(sess, "right", "curve_points", self.POINTS, profile=1)
+        self._poke(sess, prefix_sticks(1), 0x44 + 0x20)
         self.assertEqual([p[3] for p in sess.payloads], [0x68, 0x6A, 0x6C])
 
     def test_trigger_points_use_the_page_0_prefix_and_0x1c_offset(self):
         left = FakeSession()
-        triggers.set_value(left, "left", "curve_points", self.POINTS, profile=1)
+        self._poke(left, prefix_triggers_vibration(1), 0xDC)
         self.assertEqual([p[3] for p in left.payloads], [0xE0, 0xE2, 0xE4])
         # triggers live on page 0 -- prefix 03 [profile] 00, not ...01
         self.assertTrue(all(p[2] == 0x00 for p in left.payloads))
@@ -496,8 +504,8 @@ class CurvePointsTest(unittest.TestCase):
         than a category tag.
         """
         right = FakeSession()
-        triggers.set_value(right, "right", "curve_points",
-                           [(1, 2), (3, 4), (0xE4, 0x82)], profile=1)
+        curves.write_curve_points(right, prefix_triggers_vibration(1), 0xDC + 0x1C,
+                                  [(1, 2), (3, 4), (0xE4, 0x82)], whole_block=False)
         p1, p2, p3 = right.payloads
         # first two stay on page 0 at 0xFC / 0xFE
         self.assertEqual(p1[2], 0x00)
@@ -514,10 +522,39 @@ class CurvePointsTest(unittest.TestCase):
 
     def test_each_point_is_a_two_byte_write(self):
         sess = FakeSession()
-        sticks.set_value(sess, "left", "curve_points", self.POINTS, profile=1)
+        self._poke(sess, prefix_sticks(1), 0x44)
         for payload in sess.payloads:
             self.assertEqual(payload[4], 0x02, "LEN byte should be 2 (x, y)")
             self.assertEqual(len(payload), 7)
+
+    def test_set_value_writes_the_whole_block_including_scale(self):
+        """A points-only write leaves the block half-initialised.
+
+        The scale byte marks a block as written, and a profile whose curve
+        was never configured has it at 0x00 -- so points-only writes landed
+        correctly and then decoded as None, the tool writing a curve it
+        could not read back (confirmed on hardware, Profile 4). set_value
+        sends the whole 10-byte block, the same shape the presets use.
+        """
+        sess = FakeSession()
+        sticks.set_value(sess, "left", "curve_points", self.POINTS, profile=4)
+        payload = sess.only_payload()
+        self.assertEqual(payload.hex(), "030401440a03640000304080 90c0d0".replace(" ", ""))
+        self.assertEqual(payload[4], 0x0A, "LEN covers index+scale+origin+3 points")
+        self.assertEqual(payload[5], 0x03, "preset index -> Custom")
+        self.assertEqual(payload[6], 0x64, "scale marks the block as configured")
+
+    def test_the_written_block_reads_back_as_configured(self):
+        """The round trip the hardware test caught: what set_value writes
+        must decode to the points that went in, not to None."""
+        sess = FakeSession()
+        sticks.set_value(sess, "left", "curve_points", self.POINTS, profile=1)
+        payload = sess.only_payload()
+        blob = bytearray(512)
+        blob[0x144:0x144 + len(payload) - 5] = payload[5:]
+        decoded = sticks.decode_settings(bytes(blob), "left")["curve"]
+        self.assertEqual(decoded["preset"], "custom")
+        self.assertEqual(decoded["points"], [list(p) for p in self.POINTS])
 
     def test_decode_reads_the_points_back_out_of_a_blob(self):
         # left stick curve block at 0x144: [idx][scale][origin][P1][P2][P3]

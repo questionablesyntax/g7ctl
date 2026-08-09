@@ -15,6 +15,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from pyg7.curves import preset_points
+
+from ..curve_editor import CurveEditor
 from ..widgets import CURVE_OPTIONS, CategorySideWidget, CurvePointsEditor, percent_spin
 
 HAIR_TRIGGER_OPTIONS = [("off", "Off"), ("adaptive", "Adaptive"), ("fixed", "Fixed")]
@@ -63,9 +66,24 @@ class _TriggerSideWidget(CategorySideWidget):
         form.addRow("Curve preset", self.curve)
         self.curve_points = CurvePointsEditor()
         self.curve_points.changed.connect(self._emit_changed)
+        self.curve_points.changed.connect(self._sync_curve_editor)
         self.curve_points_box = QGroupBox("Custom curve points (0-255, not %)")
         _pts_layout = QVBoxLayout(self.curve_points_box)
         _pts_layout.setContentsMargins(10, 8, 10, 8)
+        self._last_preset = "standard"
+        self.curve_editor = CurveEditor()
+        self.curve_editor.setToolTip(
+            "Drag the five handles. The outer two are the Deadzone and "
+            "Anti-Deadzone values (0-100%); the inner three are the curve's "
+            "control points (0-255, positioned within the span the "
+            "endpoints define).\n\n"
+            "Straight segments between handles is what GameSir Nexus draws "
+            "for a Custom curve. How the controller itself shapes the "
+            "response between control points is not known."
+        )
+        self.curve_editor.points_changed.connect(self._on_editor_points)
+        self.curve_editor.endpoints_changed.connect(self._on_editor_endpoints)
+        _pts_layout.addWidget(self.curve_editor, 1)
         _pts_layout.addWidget(self.curve_points)
         form.addRow("Deadzone (initial)", self.dz_initial)
         form.addRow("Deadzone (max)", self.dz_max)
@@ -80,12 +98,51 @@ class _TriggerSideWidget(CategorySideWidget):
         self.curve.currentIndexChanged.connect(self._update_curve_points_enabled)
         for w in (self.dz_initial, self.dz_max, self.adz_initial, self.adz_max):
             w.valueChanged.connect(self._emit_changed)
+            w.valueChanged.connect(self._sync_curve_editor)
 
     def _update_curve_points_enabled(self) -> None:
-        self.curve_points.set_points_enabled(self.curve.currentText() == "custom")
+        custom = self.curve.currentText() == "custom"
+        if custom and not self.curve_points.is_configured():
+            # A profile whose curve block was never written has no points to
+            # edit. Seed from whichever preset is showing, which is what
+            # Nexus does -- switching preset -> Custom keeps the shape on
+            # screen rather than starting from three points at the origin.
+            seed = preset_points(self._last_preset) or preset_points("standard")
+            self.curve_points.load(seed)
+        if not custom:
+            self._last_preset = self.curve.currentText()
+        self.curve_points.set_points_enabled(custom)
+        self._sync_curve_editor()
+    # --- graphical curve editor ------------------------------------------
+    #
+    # The editor and the numeric fields are two views of the same four
+    # registers plus three points, so each has to update the other without
+    # looping. Both funnel through the existing _loading guard that load()
+    # already uses.
+
+    def _sync_curve_editor(self) -> None:
+        self.curve_editor.set_curve(
+            self.dz_initial.value(), self.dz_max.value(),
+            self.adz_initial.value(), self.adz_max.value(),
+            self.curve_points.points())
+        self.curve_editor.set_points_editable(self.curve.currentText() == "custom")
+
+    def _on_editor_points(self, points: list) -> None:
+        self.curve_points.load(points)
+        self._emit_changed()
+
+    def _on_editor_endpoints(self, dz_i: int, dz_m: int, adz_i: int, adz_m: int) -> None:
+        for widget, value in ((self.dz_initial, dz_i), (self.dz_max, dz_m),
+                              (self.adz_initial, adz_i), (self.adz_max, adz_m)):
+            widget.blockSignals(True)
+            widget.setValue(value)
+            widget.blockSignals(False)
+        self._emit_changed()
+
 
     def _after_load(self) -> None:
         self._update_curve_points_enabled()
+        self._sync_curve_editor()
 
     def _load_fields(self, side_data: dict) -> None:
         idx = self.hair_trigger_mode.findData(side_data.get("hair_trigger_mode") or "off")
