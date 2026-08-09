@@ -66,10 +66,11 @@ adheres to [semantic versioning](https://semver.org/).
   anti-deadzone registers, plus three interior points with addresses of
   their own. Which also explains what Anti-Deadzone is geometrically: the Y
   of the curve's endpoints. Confirmed on the left stick, right stick and
-  both triggers. Not implemented — and two things are flagged as unresolved
-  rather than assumed, because getting either wrong would write a curve
-  nobody asked for: the endpoints use a 0–100 scale while interior points
-  run past 200, and the interpolation drawn between points is unknown.
+  both triggers, and implemented — see Added above. Two things stay flagged
+  as unresolved rather than assumed: the endpoints use a 0–100 scale while
+  interior points run past 200 (the conversion between them is a guess), and
+  the interpolation drawn between points is unknown, which is why nothing
+  draws the curve.
 - **Continuous Trigger** (Nexus's per-button rapid-fire) is byte 4 of each
   button's 7-byte record — a plain boolean with no rate, present on every
   button.
