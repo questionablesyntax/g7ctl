@@ -26,17 +26,22 @@ adheres to [semantic versioning](https://semver.org/).
   Triggers tabs gain a "Custom curve points" group, editable when the curve
   preset is Custom.
 
-  Numeric fields rather than a draggable graph, deliberately: the
-  interpolation the firmware draws between the control points is not
-  known, so a rendered curve would be a guess presented as fact. The points
-  themselves are exact.
+  **A draggable curve editor** sits alongside the numeric fields: five
+  handles, the outer two being the Deadzone/Anti-Deadzone endpoints and the
+  inner three the curve's control points. Drag the graph or type in the
+  fields; they stay in step. Handles cannot cross, matching Nexus.
 
-  Two things are deliberately refused rather than guessed. The Right
-  Trigger's third point sits at an address that crosses a protocol page
-  boundary in a way no capture has ever shown, so it is disabled in the GUI
-  and raises in the library. And a non-Custom preset declares no points at
-  all, since whether the firmware honours a point edit under a named preset
-  is untested.
+  The curve is drawn as straight segments between handles, which is what
+  Nexus draws for a Custom curve. That is a statement about Nexus's
+  rendering — how the controller itself shapes the response between control
+  points is not known, and the tooltip says so rather than implying the
+  picture is authoritative.
+
+  A profile whose curve was never configured (Profiles 3 and 4 ship this
+  way) says so on the graph instead of drawing three handles stacked at the
+  origin, and selecting Custom seeds the points from whichever preset was
+  showing. A non-Custom preset declares no points at all, since whether the
+  firmware honours a point edit under a named preset is untested.
 
 ### Changed
 
