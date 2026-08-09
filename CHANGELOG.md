@@ -16,6 +16,28 @@ adheres to [semantic versioning](https://semver.org/).
   a scope it does not have — which is exactly what moving Shift into the
   profile selector was meant to stop showing.
 
+### Added
+
+- **Custom curve control points.** A stick or trigger curve has five
+  handles: the two endpoints are the Deadzone and Anti-Deadzone sliders you
+  already had (their X and Y coordinates respectively), and the three
+  interior points are new. `pyg7` reads and writes them, `g7ctl read-state`
+  reports them, and they round-trip through Export/Import. The Sticks and
+  Triggers tabs gain a "Custom curve points" group, editable when the curve
+  preset is Custom.
+
+  Numeric fields rather than a draggable graph, deliberately: the
+  interpolation the firmware draws between the control points is not
+  known, so a rendered curve would be a guess presented as fact. The points
+  themselves are exact.
+
+  Two things are deliberately refused rather than guessed. The Right
+  Trigger's third point sits at an address that crosses a protocol page
+  boundary in a way no capture has ever shown, so it is disabled in the GUI
+  and raises in the library. And a non-Custom preset declares no points at
+  all, since whether the firmware honours a point edit under a named preset
+  is untested.
+
 ### Changed
 
 - **The "Swap Left Stick and D-pad" tooltip no longer understates what is

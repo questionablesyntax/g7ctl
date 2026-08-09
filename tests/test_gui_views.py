@@ -39,7 +39,7 @@ class SticksViewRoundTripTest(unittest.TestCase):
         # default would be caught rather than accidentally matching.
         return {
             "trajectory": "raw",
-            "curve": {"preset": "concave"},
+            "curve": {"preset": "concave", "points": None},
             "deadzone": {"initial": 12, "max": 88},
             "anti_deadzone": {"initial": 7, "max": 91},
             "resolution_bits": 10,
@@ -133,7 +133,7 @@ class TriggersViewRoundTripTest(unittest.TestCase):
     def _distinctive_side():
         return {
             "hair_trigger_mode": "adaptive",
-            "curve": {"preset": "s_curve"},
+            "curve": {"preset": "s_curve", "points": None},
             "deadzone": {"initial": 15, "max": 80},
             "anti_deadzone": {"initial": 9, "max": 95},
         }
@@ -202,3 +202,121 @@ class SettingsViewRoundTripTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class CurvePointsEditorTest(unittest.TestCase):
+    """The three interior control points of a Custom curve.
+
+    Numeric rather than graphical on purpose: the interpolation between the
+    handles is not established, so a drawn curve would misrepresent what the
+    controller does. See g7ctlc/widgets.py:CurvePointsEditor.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _editor(self):
+        from g7ctlc.widgets import CurvePointsEditor
+        return CurvePointsEditor()
+
+    def test_points_round_trip(self):
+        ed = self._editor()
+        ed.load([[10, 20], [100, 110], [200, 210]])
+        self.assertEqual(ed.points(), [[10, 20], [100, 110], [200, 210]])
+
+    def test_load_none_gives_zeros(self):
+        ed = self._editor()
+        ed.load(None)
+        self.assertEqual(ed.points(), [[0, 0], [0, 0], [0, 0]])
+
+    def test_reloading_a_higher_curve_is_not_rejected_by_stale_clamps(self):
+        """Bounds are narrowed to enforce ordering, so a load has to widen
+        them first -- otherwise the previous curve's clamps silently reject
+        the new values and the view shows something the device never had."""
+        ed = self._editor()
+        ed.load([[1, 1], [2, 2], [3, 3]])
+        ed.load([[200, 200], [220, 220], [240, 240]])
+        self.assertEqual(ed.points(), [[200, 200], [220, 220], [240, 240]])
+
+    def test_ordering_is_enforced_against_the_upper_neighbour(self):
+        """Matches Nexus, which clamps a dragged point to its neighbours.
+        The firmware does NOT require this -- P1=(0,0) with P3=(255,255) was
+        accepted on hardware -- so it is a UI choice, not a protocol rule."""
+        ed = self._editor()
+        ed.load([[10, 10], [100, 100], [200, 200]])
+        ed.rows[0][0].setValue(255)          # shove point 1's x past point 2's
+        self.assertLessEqual(ed.points()[0][0], ed.points()[1][0])
+
+    def test_ordering_is_enforced_against_the_lower_neighbour(self):
+        ed = self._editor()
+        ed.load([[10, 10], [100, 100], [200, 200]])
+        ed.rows[2][1].setValue(0)            # shove point 3's y below point 2's
+        self.assertGreaterEqual(ed.points()[2][1], ed.points()[1][1])
+
+    def test_points_are_disabled_unless_the_preset_is_custom(self):
+        ed = self._editor()
+        ed.set_points_enabled(False)
+        self.assertFalse(ed.rows[0][0].isEnabled())
+        ed.set_points_enabled(True)
+        self.assertTrue(ed.rows[0][0].isEnabled())
+
+    def test_an_unwritable_last_point_stays_disabled_even_when_enabled(self):
+        """Right Trigger's third point crosses a page boundary and pyg7
+        refuses it, so the field must never become editable -- otherwise the
+        refusal surfaces as a sync that dies halfway through."""
+        ed = self._editor()
+        ed.set_last_point_writable(False, "unverified encoding")
+        ed.set_points_enabled(True)
+        self.assertTrue(ed.rows[0][0].isEnabled(), "first point should still work")
+        self.assertFalse(ed.rows[2][0].isEnabled())
+        self.assertFalse(ed.rows[2][1].isEnabled())
+        self.assertIn("unverified", ed.rows[2][0].toolTip())
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class CurvePointsInViewsTest(unittest.TestCase):
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_a_custom_curve_round_trips_through_the_sticks_view(self):
+        from g7ctlc.views.sticks_view import SticksView
+        state = state_mod.default_state_dict("t")
+        state["sticks"]["left"]["curve"] = {"preset": "custom",
+                                            "points": [[20, 30], [100, 110], [200, 210]]}
+        view = SticksView()
+        view.load_state(state)
+        out = {}
+        view.sides["left"].save_into(out)
+        self.assertEqual(out["curve"]["preset"], "custom")
+        self.assertEqual(out["curve"]["points"], [[20, 30], [100, 110], [200, 210]])
+
+    def test_a_non_custom_preset_reports_no_points(self):
+        """Nexus exposes point editing only under Custom, and whether the
+        firmware honours a point write under a named preset is untested --
+        so a named preset declares no points rather than writing some."""
+        from g7ctlc.views.sticks_view import SticksView
+        state = state_mod.default_state_dict("t")
+        state["sticks"]["left"]["curve"] = {"preset": "concave",
+                                            "points": [[20, 30], [100, 110], [200, 210]]}
+        view = SticksView()
+        view.load_state(state)
+        out = {}
+        view.sides["left"].save_into(out)
+        self.assertIsNone(out["curve"]["points"])
+
+    def test_the_right_trigger_third_point_is_disabled(self):
+        from g7ctlc.views.triggers_view import TriggersView
+        view = TriggersView()
+        right = view.sides["right"].curve_points
+        left = view.sides["left"].curve_points
+        right.set_points_enabled(True)
+        left.set_points_enabled(True)
+        self.assertFalse(right.rows[2][0].isEnabled())
+        self.assertTrue(left.rows[2][0].isEnabled(),
+                        "only the RIGHT trigger's third point is unwritable")

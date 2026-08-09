@@ -2,7 +2,14 @@
 from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QComboBox, QSpinBox, QWidget
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QSpinBox,
+    QWidget,
+)
 
 from pyg7.buttons import KNOWN_KEYCODES
 from pyg7.curves import CURVE_PRESET_INDEX
@@ -221,3 +228,126 @@ def select_by_data(combo: QComboBox, value: Optional[str]) -> None:
         combo.addItem(f"Raw: {value}", value)
         idx = combo.count() - 1
     combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+
+class CurvePointsEditor(QWidget):
+    """The three interior control points of a Custom curve.
+
+    Numeric only, deliberately. The five handles Nexus draws cannot be
+    rendered honestly yet: the interpolation between them is not
+    established (Bezier and Catmull-Rom both reproduce the presets), so a
+    drawn curve would be a guess about what the controller actually does.
+    A graphical editor is the goal -- see the GUI roadmap -- but it needs
+    that answered first.
+
+    The units are the trap here and the labels say so out loud. These
+    points are 0-255. The Deadzone and Anti-Deadzone fields sitting a few
+    rows above are 0-100, and they are the *same curve's* two endpoints
+    (their X and Y coordinates respectively -- see PROTOCOL.md "A curve is
+    five handles"). Two scales, one axis, adjacent on screen.
+    """
+    changed = pyqtSignal()
+
+    POINT_COUNT = 3
+    LABELS = ("Point 1 (lower)", "Point 2 (middle)", "Point 3 (upper)")
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._loading = False
+        self._last_writable = True
+
+        layout = QFormLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setVerticalSpacing(8)
+        layout.setHorizontalSpacing(14)
+
+        self.rows: list[tuple[QSpinBox, QSpinBox]] = []
+        for i in range(self.POINT_COUNT):
+            x, y = QSpinBox(), QSpinBox()
+            for sb in (x, y):
+                sb.setRange(0, 255)
+                sb.valueChanged.connect(self._on_value_changed)
+            pair = QWidget()
+            hbox = QHBoxLayout(pair)
+            hbox.setContentsMargins(0, 0, 0, 0)
+            hbox.setSpacing(6)
+            hbox.addWidget(QLabel("x"))
+            hbox.addWidget(x)
+            hbox.addWidget(QLabel("y"))
+            hbox.addWidget(y)
+            hbox.addStretch(1)
+            layout.addRow(self.LABELS[i], pair)
+            self.rows.append((x, y))
+        self._row_widgets = [layout.itemAt(i, QFormLayout.ItemRole.LabelRole).widget()
+                             for i in range(self.POINT_COUNT)]
+
+    # --- monotonic ordering -------------------------------------------------
+    #
+    # Nexus clamps a dragged point to its neighbours, and this matches that.
+    # The firmware does NOT enforce it -- P1=(0,0) with P3=(255,255) was
+    # accepted on hardware -- so this is a deliberate UI choice to keep a
+    # curve sensible, not a protocol requirement. Implemented by moving the
+    # spinbox bounds rather than snapping values after the fact, so the user
+    # simply cannot drag past a neighbour.
+
+    def _reclamp(self) -> None:
+        for axis in (0, 1):
+            boxes = [row[axis] for row in self.rows]
+            for i, sb in enumerate(boxes):
+                lower = boxes[i - 1].value() if i > 0 else 0
+                upper = boxes[i + 1].value() if i < len(boxes) - 1 else 255
+                sb.blockSignals(True)
+                sb.setRange(lower, upper)
+                sb.blockSignals(False)
+
+    def _on_value_changed(self, *_: object) -> None:
+        self._reclamp()
+        if not self._loading:
+            self.changed.emit()
+
+    # --- state --------------------------------------------------------------
+
+    def load(self, points: Optional[list]) -> None:
+        """`points` is [[x, y], ...] from a device read, or None."""
+        self._loading = True
+        try:
+            for i, (x, y) in enumerate(self.rows):
+                for sb in (x, y):
+                    sb.blockSignals(True)
+                    sb.setRange(0, 255)      # widen first, or a stale clamp rejects the value
+                if points and i < len(points):
+                    x.setValue(int(points[i][0]))
+                    y.setValue(int(points[i][1]))
+                else:
+                    x.setValue(0)
+                    y.setValue(0)
+                for sb in (x, y):
+                    sb.blockSignals(False)
+            self._reclamp()
+        finally:
+            self._loading = False
+
+    def points(self) -> list[list[int]]:
+        return [[x.value(), y.value()] for x, y in self.rows]
+
+    def set_points_enabled(self, enabled: bool) -> None:
+        """Points are only editable on a Custom curve -- Nexus exposes them
+        nowhere else, and whether the firmware honours a point edit under a
+        named preset is untested."""
+        for i, (x, y) in enumerate(self.rows):
+            last = i == len(self.rows) - 1
+            on = enabled and (self._last_writable or not last)
+            x.setEnabled(on)
+            y.setEnabled(on)
+            self._row_widgets[i].setEnabled(on)
+
+    def set_last_point_writable(self, writable: bool, reason: str = "") -> None:
+        """Right Trigger's third point cannot be written -- its address
+        (0x100) crosses the one-byte SETTING_ID field and the encoding is
+        unverified, so pyg7 refuses it. Disabling the field here keeps that
+        refusal from surfacing as a failed sync halfway through a write."""
+        self._last_writable = writable
+        x, y = self.rows[-1]
+        for sb in (x, y):
+            sb.setToolTip(reason)
+        self._row_widgets[-1].setToolTip(reason)

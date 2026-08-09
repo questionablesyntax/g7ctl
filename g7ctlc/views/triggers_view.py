@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..widgets import CURVE_OPTIONS, CategorySideWidget, percent_spin
+from ..widgets import CURVE_OPTIONS, CategorySideWidget, CurvePointsEditor, percent_spin
 
 HAIR_TRIGGER_OPTIONS = [("off", "Off"), ("adaptive", "Adaptive"), ("fixed", "Fixed")]
 
@@ -61,23 +61,39 @@ class _TriggerSideWidget(CategorySideWidget):
 
         form.addRow("Hair Trigger Mode", self.hair_trigger_mode)
         form.addRow("Curve preset", self.curve)
+        self.curve_points = CurvePointsEditor()
+        self.curve_points.changed.connect(self._emit_changed)
+        self.curve_points_box = QGroupBox("Custom curve points (0-255, not %)")
+        _pts_layout = QVBoxLayout(self.curve_points_box)
+        _pts_layout.setContentsMargins(10, 8, 10, 8)
+        _pts_layout.addWidget(self.curve_points)
         form.addRow("Deadzone (initial)", self.dz_initial)
         form.addRow("Deadzone (max)", self.dz_max)
         form.addRow("Anti-Deadzone (initial)", self.adz_initial)
         form.addRow("Anti-Deadzone (max)", self.adz_max)
         outer.addWidget(box)
+        outer.addWidget(self.curve_points_box)
         outer.addStretch(1)
 
         self.hair_trigger_mode.currentIndexChanged.connect(self._emit_changed)
         self.curve.currentIndexChanged.connect(self._emit_changed)
+        self.curve.currentIndexChanged.connect(self._update_curve_points_enabled)
         for w in (self.dz_initial, self.dz_max, self.adz_initial, self.adz_max):
             w.valueChanged.connect(self._emit_changed)
+
+    def _update_curve_points_enabled(self) -> None:
+        self.curve_points.set_points_enabled(self.curve.currentText() == "custom")
+
+    def _after_load(self) -> None:
+        self._update_curve_points_enabled()
 
     def _load_fields(self, side_data: dict) -> None:
         idx = self.hair_trigger_mode.findData(side_data.get("hair_trigger_mode") or "off")
         # Index 0 is "off" -- the confirmed factory default.
         self.hair_trigger_mode.setCurrentIndex(idx if idx >= 0 else 0)
-        self.curve.setCurrentText((side_data.get("curve") or {}).get("preset") or "standard")
+        curve = side_data.get("curve") or {}
+        self.curve.setCurrentText(curve.get("preset") or "standard")
+        self.curve_points.load(curve.get("points"))
         dz = side_data.get("deadzone") or {}
         self.dz_initial.setValue(dz.get("initial") if dz.get("initial") is not None else 0)
         self.dz_max.setValue(dz.get("max") if dz.get("max") is not None else 100)
@@ -87,7 +103,10 @@ class _TriggerSideWidget(CategorySideWidget):
 
     def save_into(self, side_data: dict) -> None:
         side_data["hair_trigger_mode"] = self.hair_trigger_mode.currentData()
-        side_data["curve"] = {"preset": self.curve.currentText()}
+        # Merge, don't replace -- see sticks_view for why.
+        curve = side_data.setdefault("curve", {})
+        curve["preset"] = self.curve.currentText()
+        curve["points"] = self.curve_points.points() if self.curve.currentText() == "custom" else None
         side_data["deadzone"] = {"initial": self.dz_initial.value(), "max": self.dz_max.value()}
         side_data["anti_deadzone"] = {"initial": self.adz_initial.value(), "max": self.adz_max.value()}
 
@@ -101,6 +120,17 @@ class TriggersView(QWidget):
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
         self.sides = {"left": _TriggerSideWidget(), "right": _TriggerSideWidget()}
+        # The Right Trigger's third curve point sits at address 0x100, past
+        # the end of the one-byte SETTING_ID field. pyg7 refuses to write it
+        # because the page-crossing encoding has never been observed, so the
+        # field is disabled here rather than letting a sync fail halfway
+        # through -- see pyg7/curves.py:curve_point_payloads().
+        self.sides["right"].curve_points.set_last_point_writable(
+            False,
+            "Not writable: this point's address crosses a page boundary in "
+            "the protocol and the encoding is unverified, so g7ctl refuses "
+            "to guess it. The other two points work normally.",
+        )
         for side, widget in self.sides.items():
             widget.changed.connect(self._on_edit)
             self.tabs.addTab(widget, f"{side.capitalize()} Trigger")

@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 from ..widgets import (
     CURVE_OPTIONS,
     CategorySideWidget,
+    CurvePointsEditor,
     make_keycode_combo,
     percent_spin,
     select_by_data,
@@ -84,12 +85,21 @@ class _StickSideWidget(CategorySideWidget):
         )
         form.addRow("Trajectory", self.trajectory)
         form.addRow("Curve preset", self.curve)
+        self.curve_points = CurvePointsEditor()
+        self.curve_points.changed.connect(self._emit_changed)
+        # Own group: these are 0-255 while every field around them is a
+        # percentage, and they only apply to a Custom curve.
+        self.curve_points_box = QGroupBox("Custom curve points (0-255, not %)")
+        _pts_layout = QVBoxLayout(self.curve_points_box)
+        _pts_layout.setContentsMargins(10, 8, 10, 8)
+        _pts_layout.addWidget(self.curve_points)
         form.addRow("Deadzone (initial)", self.dz_initial)
         form.addRow("Deadzone (max)", self.dz_max)
         form.addRow("Anti-Deadzone (initial)", self.adz_initial)
         form.addRow("Anti-Deadzone (max)", self.adz_max)
         form.addRow("Resolution (bits)", self.resolution_bits)
         outer.addWidget(basic_box)
+        outer.addWidget(self.curve_points_box)
 
         adv_box = QGroupBox("Advanced Mapping")
         self.adv_form = QFormLayout(adv_box)
@@ -142,6 +152,7 @@ class _StickSideWidget(CategorySideWidget):
 
         for w in (self.trajectory, self.curve):
             w.currentIndexChanged.connect(self._emit_changed)
+        self.curve.currentIndexChanged.connect(self._update_curve_points_enabled)
         for w in (self.dz_initial, self.dz_max, self.adz_initial, self.adz_max,
                   self.resolution_bits, self.sensitivity, self.overlap_area, self.dpi):
             w.valueChanged.connect(self._emit_changed)
@@ -150,7 +161,11 @@ class _StickSideWidget(CategorySideWidget):
         self.output_mode.currentIndexChanged.connect(self._update_visibility)
         self.output_mode.currentIndexChanged.connect(self._emit_changed)
 
+    def _update_curve_points_enabled(self) -> None:
+        self.curve_points.set_points_enabled(self.curve.currentText() == "custom")
+
     def _update_visibility(self) -> None:
+        self._update_curve_points_enabled()
         mode = self.output_mode.currentData()
         _set_row_visible(self.adv_form, self.sensitivity, mode in ("left_stick", "right_stick", "mouse"))
         _set_row_visible(self.adv_form, self.overlap_area, mode == "directional")
@@ -159,7 +174,9 @@ class _StickSideWidget(CategorySideWidget):
 
     def _load_fields(self, side_data: dict) -> None:
         self.trajectory.setCurrentText(side_data.get("trajectory") or "circle")
-        self.curve.setCurrentText((side_data.get("curve") or {}).get("preset") or "standard")
+        curve = side_data.get("curve") or {}
+        self.curve.setCurrentText(curve.get("preset") or "standard")
+        self.curve_points.load(curve.get("points"))
         dz = side_data.get("deadzone") or {}
         self.dz_initial.setValue(dz.get("initial") if dz.get("initial") is not None else 0)
         self.dz_max.setValue(dz.get("max") if dz.get("max") is not None else 100)
@@ -186,7 +203,12 @@ class _StickSideWidget(CategorySideWidget):
 
     def save_into(self, side_data: dict) -> None:
         side_data["trajectory"] = self.trajectory.currentText()
-        side_data["curve"] = {"preset": self.curve.currentText()}
+        # Merge rather than replace: a plain assignment here dropped the
+        # "points" a device read had brought back, so any unrelated edit
+        # silently discarded them.
+        curve = side_data.setdefault("curve", {})
+        curve["preset"] = self.curve.currentText()
+        curve["points"] = self.curve_points.points() if self.curve.currentText() == "custom" else None
         side_data["deadzone"] = {"initial": self.dz_initial.value(), "max": self.dz_max.value()}
         side_data["anti_deadzone"] = {"initial": self.adz_initial.value(), "max": self.adz_max.value()}
         side_data["resolution_bits"] = self.resolution_bits.value()
