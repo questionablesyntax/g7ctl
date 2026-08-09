@@ -872,6 +872,40 @@ to each other in a factory profile. Nexus's Motion tab has two sub-tabs,
 but only one was exercised in `test61`, so which block is which, and
 whether Tilt really owns the second, is **not confirmed**.
 
+## The `CMD_READ` wedge, and what it costs
+
+A known firmware fault: `CMD_READ` can stop answering entirely -- reads time
+out with no response while heartbeats and writes keep working normally.
+Triggered by rapid, repeated vendor-mode cycling. No software recovery
+works: not a host reboot, not `dev.reset()`, not a cable replug. **Holding
+Share+Menu on the controller clears it**, which is also the combo that
+toggles the native identity.
+
+**A wedge forces part of the button table back to defaults.** Reproduced
+three times (twice deliberately, 2026-08-09): after a wedge, the last five
+records in the table -- `Share`, `L4`, `L5`, `R4`, `R5` -- come back
+never-configured, while every other slot keeps its binding. Those five are
+contiguous, `0xAB`-`0xCD`, ending exactly on the table's `0xCE` boundary.
+
+Worth being precise about the damage without underselling it. Those slots
+revert to the never-configured state, so per "An empty slot means factory
+default" above the buttons still *function* -- they fall back to their
+factory behaviour rather than going dead. But what is lost is exactly what
+the user configured them for: on the development controller, `Share` was
+bound to `F11` and came back `(Default)` both times. A paddle reverting to
+its native function and a keyboard remap disappearing are the same event,
+and the second one is what a user notices.
+
+The mechanism is not established. A read fault clearing a write region is
+not self-explanatory, and nothing rules out the wedge and the reset sharing
+an upstream cause rather than one causing the other. Whether regions
+outside the button table are affected has not been checked.
+
+Practical consequence for anything built on this protocol: **pace
+vendor-mode transitions** (5-10s between sessions, one long session rather
+than several short ones), and treat an export/snapshot before heavy write
+work as cheap insurance.
+
 ## Resetting a page to factory defaults
 
 Nexus's reset button (top-right of its toolbar) is **page-scoped**, not
