@@ -255,6 +255,7 @@ class CurvePointsEditor(QWidget):
         super().__init__(parent)
         self._loading = False
         self._last_writable = True
+        self._configured = True
 
         layout = QFormLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -307,8 +308,15 @@ class CurvePointsEditor(QWidget):
 
     # --- state --------------------------------------------------------------
 
+    def is_configured(self) -> bool:
+        """False when the last load() carried None -- the curve block has
+        never been written on this profile."""
+        return self._configured
+
     def load(self, points: Optional[list]) -> None:
-        """`points` is [[x, y], ...] from a device read, or None."""
+        """`points` is [[x, y], ...] from a device read, or None when the
+        profile's curve block has never been written."""
+        self._configured = points is not None
         self._loading = True
         try:
             for i, (x, y) in enumerate(self.rows):

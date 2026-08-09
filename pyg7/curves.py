@@ -81,6 +81,23 @@ CURVE_POINT_COUNT = len(CURVE_POINT_OFFSETS)
 # [index][scale][origin x2][P1 x2][P2 x2][P3 x2]
 CURVE_POINTS_BLOCK_OFFSET = 4
 
+# The scale byte (block offset 1) is 0x64 on every configured curve and 0x00
+# where the block has never been written -- Profiles 3 and 4 on the
+# development controller read `00 00 00 00 ...` across the whole block.
+#
+# So it doubles as a "configured" marker, and decoding an unwritten block
+# yields three points at (0,0) rather than None unless something checks it.
+# That matters twice over: three handles stacked on the origin look like a
+# rendering bug, and writing them back would store a degenerate curve where
+# the firmware previously had nothing. Same convention this protocol uses
+# for unconfigured button slots and LT/RT keycodes -- an empty record means
+# "never configured", not "configured to zero".
+CURVE_SCALE_CONFIGURED = 0x64
+
+# Preset index meaning "not one of the named presets". Selecting it is what
+# makes a curve's own control points the active shape.
+CURVE_CUSTOM_INDEX = 0x03
+
 
 def parse_points(value: Union[str, Sequence]) -> list[tuple[int, int]]:
     """Coerce a curve-points value to [(x, y), (x, y), (x, y)].
@@ -146,10 +163,40 @@ def curve_point_payloads(setting_id: int, points: Iterable[tuple[int, int]],
 CURVE_POINT_WRITE_INTERVAL = 0.3
 
 
+def curve_block_payload(setting_id: int, points: Iterable[tuple[int, int]],
+                         preset_index: int = CURVE_CUSTOM_INDEX) -> bytes:
+    """The whole 10-byte curve block in one write:
+
+        [SETTING_ID] 0A [index] [scale] [origin x2] [P1] [P2] [P3]
+
+    Same shape the presets use (`curve_preset_payload()` with a named
+    preset), which is why the firmware is known to accept it.
+
+    This exists because writing only the points leaves the block
+    half-initialised. The scale byte marks a block as written (see
+    CURVE_SCALE_CONFIGURED) and a points-only write never sets it, so on a
+    profile whose curve was never configured the points land correctly and
+    then decode as None -- the tool writing a curve it cannot read back.
+    Confirmed on hardware 2026-08-08, Profile 4: index and all three points
+    stored, scale still 0x00, `decode_settings()` reporting points=None.
+    """
+    flat = []
+    for x, y in points:
+        flat += [x, y]
+    return bytes([setting_id, 0x0A, preset_index, CURVE_SCALE_CONFIGURED, 0x00, 0x00]) + bytes(flat)
+
+
 def write_curve_points(session, prefix: bytes, setting_id: int,
                        points: Iterable[tuple[int, int]],
-                       interval: Optional[float] = None) -> bytes:
-    """Send the three interior-point writes, heartbeat-paced.
+                       interval: Optional[float] = None,
+                       whole_block: bool = True) -> bytes:
+    """Write a curve's three interior points, heartbeat-paced.
+
+    `whole_block` (the default) sends one 10-byte write that also sets the
+    preset index, scale and origin -- necessary on a profile whose curve
+    block has never been written, and harmless on one that has. Pass False
+    to send three 2-byte pokes instead, which is what editing a single
+    point on an already-configured curve looks like on the wire.
 
     Shared by sticks.py and triggers.py so the pacing cannot drift between
     them. Returns the last packet sent, matching set_value()'s contract.
@@ -160,6 +207,13 @@ def write_curve_points(session, prefix: bytes, setting_id: int,
     # for its read timeouts.
     if interval is None:
         interval = CURVE_POINT_WRITE_INTERVAL
+
+    points = list(points)
+    if whole_block:
+        # One write, so there is nothing to pace and no page to carry into:
+        # the block starts at the curve's own SETTING_ID and is 10 bytes,
+        # which cannot cross a page for any curve we address.
+        return session.send_raw(CMD_WRITE, prefix + curve_block_payload(setting_id, points))
 
     base_page = prefix[2]
     pkt = b""
@@ -183,8 +237,25 @@ def decode_curve_points(blob: bytes, storage_offset: int) -> "list[list[int]] | 
     end = start + CURVE_POINT_COUNT * 2
     if end > len(blob):
         return None
+    if blob[storage_offset + 1] != CURVE_SCALE_CONFIGURED:
+        return None          # block never written -- see CURVE_SCALE_CONFIGURED
     chunk = blob[start:end]
     return [[chunk[i], chunk[i + 1]] for i in range(0, len(chunk), 2)]
+
+
+def preset_points(preset: str) -> list:
+    """The three interior points a named preset carries, as [[x, y], ...].
+
+    Lets a UI seed a fresh Custom curve from whatever preset is showing,
+    which is what Nexus does -- switching preset -> Custom keeps the points
+    on screen rather than starting from nothing.
+    """
+    idx = CURVE_PRESET_INDEX.get(preset.lower())
+    if idx is None:
+        return None
+    shape = _CURVE_SHAPE_DATA[idx]
+    pts = shape[3:9]         # [scale][origin x2] then the three (x, y) pairs
+    return [[pts[i], pts[i + 1]] for i in range(0, len(pts), 2)]
 
 
 def curve_preset_payload(setting_id: int, preset: str) -> bytes:

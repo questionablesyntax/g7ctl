@@ -691,11 +691,28 @@ For a tool that edits Custom curves the distinction does not matter: the
 control points written are exact either way, and a polyline matches what
 Nexus shows in the same mode.
 
+#### An unwritten block: the scale byte is the marker
+
+A curve block that has never been written reads as all zeros -- **scale
+`0x00` rather than `0x64`** -- and its three points as `(0,0)`. That is
+"never configured", not "a curve at the origin", the same convention this
+protocol uses for unconfigured button slots and LT/RT keycodes. Profiles 3
+and 4 on the development controller are in this state while still carrying
+valid deadzone values.
+
+**Anything establishing a curve must write the whole 10-byte block**, not
+just the points: `[SETTING_ID] 0A [index] [scale] [origin x2] [P1][P2][P3]`,
+the same shape the presets use. A points-only write leaves scale at `0x00`,
+so the points land correctly on the device and then read back as
+unconfigured -- confirmed on hardware 2026-08-08 (Profile 4: index and all
+three points stored, scale `0x00`, the decoder reporting no points).
+Writing the full block sets scale and the round trip closes.
+
 #### Editing points
 
-A drag writes just the point moved -- 2 bytes for `(x, y)`, or 1 byte to
-change `x` alone (both forms observed). All six addresses below are
-capture-confirmed:
+Once a block is configured, a drag writes just the point moved -- 2 bytes
+for `(x, y)`, or 1 byte to change `x` alone (both forms observed). All six
+addresses below are capture-confirmed:
 
 | Point | Left stick | Right stick | Left trigger | Right trigger |
 |---|---|---|---|---|
