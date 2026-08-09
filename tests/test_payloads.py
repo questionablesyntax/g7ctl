@@ -485,19 +485,27 @@ class CurvePointsTest(unittest.TestCase):
         # triggers live on page 0 -- prefix 03 [profile] 00, not ...01
         self.assertTrue(all(p[2] == 0x00 for p in left.payloads))
 
-    def test_right_trigger_third_point_is_refused_not_guessed(self):
-        """Its address is 0x100 -- past the one-byte SETTING_ID field.
+    def test_right_trigger_third_point_carries_into_the_next_page(self):
+        """Its address is 0x100 -- past the one-byte SETTING_ID field -- so
+        the prefix's page byte increments and the offset wraps to 0x00.
 
-        Under the register-file model that is page 1 offset 0x00, needing a
-        different prefix mid-sequence. That encoding has never been
-        observed, and a wrong address here writes a byte into persistent
-        config without failing loudly, so it raises instead.
+        Confirmed on the wire 2026-08-08 (test62): dragging that point in
+        Nexus emitted `03 01 01 00 02 e4 82`. Note a *trigger* write then
+        carries the same prefix bytes a *stick* write uses, which is the
+        clearest evidence that the third prefix byte is a page number rather
+        than a category tag.
         """
         right = FakeSession()
-        with self.assertRaises(ValueError) as ctx:
-            triggers.set_value(right, "right", "curve_points", self.POINTS, profile=1)
-        self.assertIn("page boundary", str(ctx.exception))
-        self.assertEqual(right.payloads, [], "nothing should reach the device")
+        triggers.set_value(right, "right", "curve_points",
+                           [(1, 2), (3, 4), (0xE4, 0x82)], profile=1)
+        p1, p2, p3 = right.payloads
+        # first two stay on page 0 at 0xFC / 0xFE
+        self.assertEqual(p1[2], 0x00)
+        self.assertEqual((p1[3], p2[3]), (0xFC, 0xFE))
+        # the third flips the page byte and wraps the offset
+        self.assertEqual(p3[2], 0x01, "page byte should increment")
+        self.assertEqual(p3[3], 0x00, "offset should wrap to 0x00")
+        self.assertEqual(p3.hex(), "0301010002e482", "the exact captured bytes")
 
     def test_profile_targeting_carries_through(self):
         sess = FakeSession()

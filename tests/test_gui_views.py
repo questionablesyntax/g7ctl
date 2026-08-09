@@ -310,13 +310,15 @@ class CurvePointsInViewsTest(unittest.TestCase):
         view.sides["left"].save_into(out)
         self.assertIsNone(out["curve"]["points"])
 
-    def test_the_right_trigger_third_point_is_disabled(self):
+    def test_every_trigger_curve_point_is_editable(self):
+        """The Right Trigger's third point was disabled while its
+        page-crossing address was unverified. test62 captured the real
+        encoding, so it is writable now and nothing should be greyed out."""
         from g7ctlc.views.triggers_view import TriggersView
         view = TriggersView()
-        right = view.sides["right"].curve_points
-        left = view.sides["left"].curve_points
-        right.set_points_enabled(True)
-        left.set_points_enabled(True)
-        self.assertFalse(right.rows[2][0].isEnabled())
-        self.assertTrue(left.rows[2][0].isEnabled(),
-                        "only the RIGHT trigger's third point is unwritable")
+        for side in ("left", "right"):
+            ed = view.sides[side].curve_points
+            ed.set_points_enabled(True)
+            for i, (x, y) in enumerate(ed.rows):
+                self.assertTrue(x.isEnabled(), f"{side} point {i+1} x")
+                self.assertTrue(y.isEnabled(), f"{side} point {i+1} y")

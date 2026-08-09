@@ -689,13 +689,31 @@ capture-confirmed:
 |---|---|---|---|---|
 | P1 | `0x48` | `0x68` | `0xE0` | `0xFC` |
 | P2 | `0x4A` | `0x6A` | `0xE2` | `0xFE` |
-| P3 | `0x4C` | `0x6C` | `0xE4` | `0x100` |
+| P3 | `0x4C` | `0x6C` | `0xE4` | `0x100` (see below) |
 
 `0x48`/`0x4A`/`0x4C` confirmed in `test58`; `0x6A`, `0xE2` and `0xFE`
 confirmed in `test60`, along with their preset registers `0x64`, `0xDC` and
 `0xF8` -- so the `+0x20` (Sticks) and `+0x1C` (Triggers) side offsets hold
-for curves. `P1`/`P3` on the right stick and both triggers are predicted
-from those confirmations, not individually observed.
+for curves. `P1`/`P3` on the right stick and left trigger are predicted from
+those confirmations, not individually observed.
+
+**The Right Trigger's third point crosses a page boundary**, and this is the
+clearest demonstration in the whole protocol that the prefix's third byte is
+a *page number* rather than a category tag. Its address is `0xF8 + 8 =
+0x100`, past the end of the one-byte `SETTING_ID` field, so the page byte
+increments and the offset wraps:
+
+```
+03 01 01 00 02 e4 82        confirmed on the wire, test62
+   ^^ ^^ ^^
+   |  |  +-- offset 0x00
+   |  +----- page 1  (Triggers otherwise write page 0)
+   +-------- profile
+```
+
+A *trigger* write therefore carries the same three prefix bytes a *stick*
+write does. Under a "category prefix" reading that is inexplicable; under
+the register-file model it is just an address that happened to carry.
 
 #### Two things a curve writer must not get wrong
 

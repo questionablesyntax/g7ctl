@@ -109,8 +109,9 @@ def parse_points(value: Union[str, Sequence]) -> list[tuple[int, int]]:
     return [(flat[i], flat[i + 1]) for i in range(0, len(flat), 2)]
 
 
-def curve_point_payloads(setting_id: int, points: Iterable[tuple[int, int]]) -> list[bytes]:
-    """One payload per interior point: [addr] 02 [x] [y].
+def curve_point_payloads(setting_id: int, points: Iterable[tuple[int, int]],
+                          page: int = 0) -> list[tuple[int, bytes]]:
+    """One (page, payload) per interior point: [addr] 02 [x] [y].
 
     Deliberately three separate 2-byte writes rather than one 10-byte write
     of the whole block. Both forms exist on the wire, but this is the one
@@ -119,28 +120,19 @@ def curve_point_payloads(setting_id: int, points: Iterable[tuple[int, int]]) -> 
     what the presets use, and rewriting the whole block would also clobber
     the scale and origin bytes for no benefit.
     """
-    payloads = []
+    out = []
     for off, (x, y) in zip(CURVE_POINT_OFFSETS, points):
-        addr = setting_id + off
-        if addr > 0xFF:
-            # Right Trigger's third point lands at 0x100 -- past the end of
-            # the one-byte SETTING_ID field. Under the register-file model
-            # that is page 1, offset 0x00, so it would need a *different
-            # prefix* mid-sequence (03 [profile] 01 instead of ...00).
-            #
-            # That encoding is inferred, never observed: test60 confirmed
-            # the Right Trigger's curve preset (0xF8) and second point
-            # (0xFE), but nothing has ever written its third. Refusing is
-            # deliberate -- guessing an address wrong here does not fail
-            # loudly, it writes a byte into someone's persistent config.
-            # One capture of dragging that point in Nexus closes it.
-            raise ValueError(
-                f"curve point address {addr:#05x} crosses the page boundary "
-                "(Right Trigger's third point). The encoding for this is "
-                "inferred but unverified, so it is refused rather than "
-                "guessed -- see PROTOCOL.md 'Editing points'.")
-        payloads.append(bytes([addr, 0x02, x, y]))
-    return payloads
+        addr = (page << 8) + setting_id + off
+        # Right Trigger's third point lands at absolute 0x100 -- past the end
+        # of the one-byte SETTING_ID field, so it carries into the next page
+        # and the prefix changes mid-sequence. Confirmed on the wire
+        # 2026-08-08 (test62): dragging it emitted `03 01 01 00 02 e4 82`,
+        # i.e. page 1 offset 0x00, exactly as the register-file model
+        # predicted. Note a *trigger* write then uses the same prefix bytes
+        # as a *stick* write, which is the clearest demonstration that the
+        # "category prefix" is a page number and not a category.
+        out.append(((addr >> 8) & 0xFF, bytes([addr & 0xFF, 0x02, x, y])))
+    return out
 
 
 # Pacing between the three point writes. Every other setting in this
@@ -169,9 +161,14 @@ def write_curve_points(session, prefix: bytes, setting_id: int,
     if interval is None:
         interval = CURVE_POINT_WRITE_INTERVAL
 
+    base_page = prefix[2]
     pkt = b""
-    for payload in curve_point_payloads(setting_id, points):
-        pkt = session.send_raw(CMD_WRITE, prefix + payload)
+    for page, payload in curve_point_payloads(setting_id, points, page=base_page):
+        # The page lives in the prefix's third byte, so a point that carries
+        # into the next page needs its own prefix -- see
+        # curve_point_payloads().
+        this_prefix = prefix[:2] + bytes([page])
+        pkt = session.send_raw(CMD_WRITE, this_prefix + payload)
         time.sleep(interval)
         session.heartbeat()
         time.sleep(interval)

@@ -120,17 +120,6 @@ class TriggersView(QWidget):
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
         self.sides = {"left": _TriggerSideWidget(), "right": _TriggerSideWidget()}
-        # The Right Trigger's third curve point sits at address 0x100, past
-        # the end of the one-byte SETTING_ID field. pyg7 refuses to write it
-        # because the page-crossing encoding has never been observed, so the
-        # field is disabled here rather than letting a sync fail halfway
-        # through -- see pyg7/curves.py:curve_point_payloads().
-        self.sides["right"].curve_points.set_last_point_writable(
-            False,
-            "Not writable: this point's address crosses a page boundary in "
-            "the protocol and the encoding is unverified, so g7ctl refuses "
-            "to guess it. The other two points work normally.",
-        )
         for side, widget in self.sides.items():
             widget.changed.connect(self._on_edit)
             self.tabs.addTab(widget, f"{side.capitalize()} Trigger")
