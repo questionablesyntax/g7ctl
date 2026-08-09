@@ -6,6 +6,19 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-08-08
+
+**Custom stick and trigger curves, with a graphical editor.** The last
+settings area GameSir Nexus exposed that this tool did not. A curve turns
+out to be five handles, and two of them were controls you already had: the
+Deadzone and Anti-Deadzone sliders are the curve's endpoints. The three
+interior control points are new, and now readable, writable, editable by
+dragging, and round-tripped through Export/Import.
+
+Underneath, the config protocol turned out to be a single mechanism rather
+than a dozen category-specific ones -- see the Documentation notes below.
+That reframing is what made the rest of this release findable.
+
 ### Fixed
 
 - **The Buttons tab showed both the Default and Shift columns on every fresh
@@ -432,7 +445,8 @@ and motion/gyro is unimplemented by choice.
 - The PKGBUILD is structurally validated but has not been build-tested
   against a real release tarball.
 
-[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.2...v0.1.3
