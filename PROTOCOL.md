@@ -715,13 +715,30 @@ A *trigger* write therefore carries the same three prefix bytes a *stick*
 write does. Under a "category prefix" reading that is inexplicable; under
 the register-file model it is just an address that happened to carry.
 
-#### Two things a curve writer must not get wrong
+#### The two scales are different coordinate systems, not two units
 
-1. **Endpoints and interior points use different units.** The endpoints are
-   0-100 percentages (they are the deadzone registers, and their sliders
-   read as percentages). Interior points are on a wider scale -- observed up
-   to 223. A linear `p * 255/100` conversion is the obvious guess and is
-   **not confirmed by any capture**.
+**There is no conversion factor between them.** Endpoints are a percentage
+of the *full input axis*; interior points are a position *within the span
+the endpoints define*, as a fraction of 255. Established 2026-08-08
+(`test64` plus a screenshot):
+
+- Halving `deadzone_max` from 95 to 50 left the interior points untouched
+  -- (40,41) (128,128) (215,214) before and after. They are not rescaled
+  when an endpoint moves.
+- With deadzone 5/50 and anti-deadzone 0/100, Nexus draws the curve's slope
+  from ~5% to ~50% of the graph width and over the *full* height. Absolute
+  positioning would have put `P3` (215/255 = 84%) well past where the line
+  actually ends.
+
+To place a control point on a graph:
+
+```
+x_pct = dz_init  + (px / 255) * (dz_max  - dz_init)
+y_pct = adz_init + (py / 255) * (adz_max - adz_init)
+```
+
+1. **Do not convert between the scales.** Four captures were spent looking
+   for a `p * 255/100` factor that does not exist.
 2. **Points are constrained monotonic by their neighbours.** Nexus refuses
    to drag an interior point past the next one (confirmed: a point pushed
    to the top-right clamped just under its upper neighbour). They are *not*
@@ -825,6 +842,42 @@ to each other in a factory profile. Nexus's Motion tab has two sub-tabs,
 **Aim** and **Tilt**, so one block per sub-tab is the obvious reading --
 but only one was exercised in `test61`, so which block is which, and
 whether Tilt really owns the second, is **not confirmed**.
+
+## Resetting a page to factory defaults
+
+Nexus's reset button (top-right of its toolbar) is **page-scoped**, not
+device-wide -- pressing it on the Triggers tab reset both triggers and
+nothing else. Captured 2026-08-08 (`test64`), it is a **single 51-byte
+write** covering `0xCF`-`0x101`, i.e. the whole Triggers region for both
+sides at once:
+
+```
+03 01 00 cf 33
+  05 5f 00 64 01 13 00 00 00 00 0a 5a 01 00 64 00 00 39 40 80 80 c6 bf
+  ff ff 00 00 01
+  05 5f 00 64 01 14 00 00 00 00 0a 5a 01 00 64 00 00 39 40 80 80 c6 bf
+  ^-- left trigger --^                 ^-- right, identical but for the
+                                           keycode byte 0x13 -> 0x14
+```
+
+So the **application holds the defaults**, not the firmware -- a reset is an
+ordinary bulk write of known bytes, with no dedicated opcode. That makes
+"restore factory settings" reproducible offline. Trigger factory values,
+read straight out of that payload:
+
+| Setting | Default |
+|---|---|
+| Deadzone initial / max | 5 / 95 |
+| Anti-Deadzone initial / max | 0 / 100 |
+| Curve preset | Standard (`0x00`), scale `0x64` |
+| Curve interior points | (57,64) (128,128) (198,191) |
+
+Note those interior points are **not** the Standard preset's own
+((40,41) (128,128) (215,214)) -- the factory trigger curve and the
+Standard preset are different curves that both read as preset index `0x00`.
+
+Only the Triggers page has been captured this way; whether other pages
+behave identically is untested.
 
 ## Reading current config
 
