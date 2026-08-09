@@ -881,25 +881,71 @@ works: not a host reboot, not `dev.reset()`, not a cable replug. **Holding
 Share+Menu on the controller clears it**, which is also the combo that
 toggles the native identity.
 
-**A wedge forces part of the button table back to defaults.** Reproduced
-three times (twice deliberately, 2026-08-09): after a wedge, the last five
-records in the table -- `Share`, `L4`, `L5`, `R4`, `R5` -- come back
-never-configured, while every other slot keeps its binding. Those five are
-contiguous, `0xAB`-`0xCD`, ending exactly on the table's `0xCE` boundary.
+### The Menu+Share identity flip clears remaps
 
-Worth being precise about the damage without underselling it. Those slots
-revert to the never-configured state, so per "An empty slot means factory
-default" above the buttons still *function* -- they fall back to their
-factory behaviour rather than going dead. But what is lost is exactly what
-the user configured them for: on the development controller, `Share` was
-bound to `F11` and came back `(Default)` both times. A paddle reverting to
-its native function and a keyboard remap disappearing are the same event,
-and the second one is what a user notices.
+**Holding Menu+Share clears every non-native button binding in the active
+profile and in the shared Shift layer.** Measured 2026-08-09 with every
+field on the device set to a distinctive non-default value first, so a
+reset could not hide as "defaults written over defaults":
 
-The mechanism is not established. A read fault clearing a write region is
-not self-explanatory, and nothing rules out the wedge and the reset sharing
-an upstream cause rather than one causing the other. Whether regions
-outside the button table are affected has not been checked.
+| Category | Bytes changed |
+|---|---|
+| Active profile | 12 -- `A` (F12), `Share` (F10), all four paddles |
+| Shift layer | 6 -- `A`, `Y`, `Share` |
+| The other three profiles | **0** |
+| Dock (device-wide) | **0** |
+| Sticks / triggers / vibration / curves | **0**, even in the active profile |
+
+The discriminator is clean: in the same profile, `A` bound to `F12` was
+cleared while `Y` bound to `native_y` survived. **Native passthrough
+bindings are untouched; anything mapping to a keyboard or mouse key is
+wiped.** That fits what the two share -- non-native bindings only exist via
+the HID keyboard/mouse interfaces, which the identity toggle reinitialises.
+
+Confirmed as the *active* profile rather than Profile 1 specifically by
+switching the active profile with `M`+`B` and repeating: the damage moved
+to Profile 2 and Profile 1 was untouched.
+
+This matters because **Menu+Share is also the only reliable way to clear a
+wedge**. Anyone recovering from one pays for it in remaps.
+
+### What a wedge itself does to config is unmeasured
+
+Every wedge observation is confounded: reading config after a wedge
+requires clearing the wedge, and the only reliable clear is the identity
+flip. The pinhole reset would have isolated it, but it does not clear
+wedges (below). So "the wedge resets bindings" is **not** established --
+what is established is that the recovery does.
+
+Weak evidence either way: a wedge followed by Menu+Share changed exactly
+the same 18 bytes as Menu+Share alone. That is consistent with the wedge
+doing nothing, and equally consistent with both triggering one shared
+mechanism.
+
+### At least three distinct failure states
+
+The project treated "the wedge" as one phenomenon. Deliberately inducing it
+several times on 2026-08-09 produced three:
+
+| State | Vibration | USB | Cleared by |
+|---|---|---|---|
+| Read wedge | one long pulse | stuck at `109b`, claimable, heartbeats fine | Menu+Share |
+| Hard lock | none | off the bus entirely, LED lit, power button dead | pinhole reset |
+| Silent wedge | none | at `109b`, claimable | Menu+Share |
+
+The **vibration pulse is not a general wedge indicator** -- it accompanied
+four of six failures, all of them the rapid-cycling kind. Its absence does
+not mean the device is healthy.
+
+**The pinhole reset does not clear a read wedge.** The manual documents it
+for "unable to power on or off properly", and it does fix the hard lock,
+but a wedge survived a forced power-off, a transport change and a replug
+onto a different USB port.
+
+One recovery sequence worth knowing, from the hard lock: the controller
+came back up in 2.4GHz mode despite being cabled, refused to acknowledge
+the wired connection at all, and only accepted wired again after being
+allowed to connect through the dongle first.
 
 Practical consequence for anything built on this protocol: **pace
 vendor-mode transitions** (5-10s between sessions, one long session rather
