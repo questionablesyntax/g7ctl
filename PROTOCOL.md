@@ -674,10 +674,22 @@ The three presets' interior points, from their `0x44` payloads:
 | Concave | (94,23) (176,79) (232,161) | below the diagonal throughout |
 | S-Curve | (40,76) (128,128) (215,178) | above, then on, then below |
 
-**The interpolation type is not established.** Bézier and Catmull-Rom both
-reproduce "Standard is a straight line", and nothing in any capture
-distinguishes them. Anything that *renders* these curves is guessing;
-writing them does not require knowing.
+**How Nexus draws a Custom curve: straight segments through the points.**
+Observed 2026-08-08 by setting Concave (strongly non-collinear points) and
+switching to Custom so the handles render. The line passes *through* every
+control point with a visible kink at each -- not a spline pulled toward
+them. Notably the same points shown under the *preset* are drawn smooth, so
+Nexus renders presets and Custom differently.
+
+That is a fact about **Nexus's rendering**, not about the firmware. Whether
+the controller itself interpolates linearly between control points cannot
+be answered from any capture -- the wire carries the points and nothing
+about the shape between them. Settling it would mean feeding a known input
+ramp and measuring the output, which no test here has done.
+
+For a tool that edits Custom curves the distinction does not matter: the
+control points written are exact either way, and a polyline matches what
+Nexus shows in the same mode.
 
 #### Editing points
 
