@@ -189,5 +189,88 @@ class ProbeControllerLiveTest(unittest.TestCase):
             sess.probe_controller_live(timeout=0.05)
 
 
+def _input_frame(percent: int, flag: int = 1, sticks: bytes = b"\x80\x80\x80\x80") -> bytes:
+    """An input-stream frame carrying `percent` at BATTERY_OFFSET.
+
+    Mirrors the real framing: report 0x10, marker at byte 3, and byte 4 set
+    to INPUT_FRAME_MARKER rather than a CMD_READ echo -- that byte is the
+    only thing distinguishing this from a read response on the same pipe.
+    """
+    from pyg7.constants import (
+        BATTERY_FLAG_OFFSET,
+        BATTERY_OFFSET,
+        INPUT_FRAME_MARKER,
+        READ_RESPONSE_MARKER,
+        REPORT_ID_READ_RESPONSE,
+    )
+    pkt = bytearray(64)
+    pkt[0] = REPORT_ID_READ_RESPONSE
+    pkt[3] = READ_RESPONSE_MARKER
+    pkt[4] = INPUT_FRAME_MARKER
+    pkt[5:9] = sticks
+    pkt[BATTERY_FLAG_OFFSET] = flag
+    pkt[BATTERY_OFFSET] = percent
+    return bytes(pkt)
+
+
+class BatteryTest(unittest.TestCase):
+    """Battery rides in the input stream (PROTOCOL.md "Battery level").
+
+    The percentages here are the ones the corpus actually pins: captures
+    test55/56 were taken while Nexus displayed 98%, and test57 -- the
+    capture that falsified the *previous* battery theory -- displayed 99%.
+    """
+
+    def test_reads_percentage_from_the_input_stream(self):
+        dev = _FakeReadDevice([_input_frame(99)])
+        status = VendorSession(dev).read_battery(timeout=0.5)
+        self.assertEqual(status.percent, 99)
+
+    def test_sends_nothing_at_all(self):
+        # The point of this decode: no query exists and none is issued. That
+        # is what makes battery safe to poll -- it never emits CMD_READ, the
+        # command implicated in the firmware wedge.
+        dev = _FakeReadDevice([_input_frame(98)])
+        VendorSession(dev).read_battery(timeout=0.5)
+        self.assertEqual(dev.written, [])
+
+    def test_skips_read_responses_sharing_the_pipe(self):
+        # A read response and an input frame arrive on the same report ID,
+        # distinguished only by byte 4. Returning the wrong one would decode
+        # config bytes as a charge level.
+        dev = _FakeReadDevice([
+            _read_response_report(1, 0, 1, b"\x00"),
+            _input_frame(98),
+        ])
+        self.assertEqual(VendorSession(dev).read_battery(timeout=0.5).percent, 98)
+
+    def test_battery_is_independent_of_stick_position(self):
+        # Verified against the corpus: test64's 29,602 frames all have the
+        # sticks off-centre and byte 33 is constant throughout. The original
+        # capture filter matched only centred sticks, which would have hidden
+        # a positional dependency had one existed.
+        dev = _FakeReadDevice([_input_frame(97, sticks=b"\x00\xff\x12\xee")])
+        self.assertEqual(VendorSession(dev).read_battery(timeout=0.5).percent, 97)
+
+    def test_at_full_flag(self):
+        self.assertTrue(VendorSession(_FakeReadDevice([_input_frame(100, flag=0)]))
+                        .read_battery(timeout=0.5).at_full)
+        self.assertFalse(VendorSession(_FakeReadDevice([_input_frame(98, flag=1)]))
+                         .read_battery(timeout=0.5).at_full)
+
+    def test_rejects_an_impossible_percentage(self):
+        # Byte 33 never exceeded 0x64 across 212,917 corpus frames. If it
+        # ever does, the layout changed -- fail loudly rather than report a
+        # plausible-looking wrong charge.
+        dev = _FakeReadDevice([_input_frame(101)])
+        with self.assertRaises(ValueError):
+            VendorSession(dev).read_battery(timeout=0.5)
+
+    def test_times_out_when_no_input_frame_arrives(self):
+        dev = _FakeReadDevice([])
+        with self.assertRaises(TimeoutError):
+            VendorSession(dev).read_battery(timeout=0.05)
+
+
 if __name__ == "__main__":
     unittest.main()

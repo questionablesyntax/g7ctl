@@ -1,17 +1,21 @@
 """The vendor-mode USB session: claim/release, heartbeat, raw packet send."""
 import logging
 import time
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 import usb.core
 import usb.util
 
 from .constants import (
+    BATTERY_FLAG_OFFSET,
+    BATTERY_MAX,
+    BATTERY_OFFSET,
     CMD_HEARTBEAT,
     CMD_READ,
     EP_IN,
     EP_OUT,
     IFACE,
+    INPUT_FRAME_MARKER,
     READ_CHUNK_LENGTH,
     READ_RESPONSE_MARKER,
     READ_SUBCOMMAND,
@@ -19,6 +23,19 @@ from .constants import (
 )
 
 log = logging.getLogger(__name__)
+
+
+class BatteryStatus(NamedTuple):
+    """Charge as reported in the input stream.
+
+    `at_full` is named for exactly what the evidence supports. The flag byte
+    reads 0 at 100% and 1 below it, which fits "charging" just as well --
+    but every sub-100 capture in the corpus was taken plugged in, so the two
+    cannot be told apart yet. Calling it `charging` would be a guess wearing
+    an API's authority.
+    """
+    percent: int
+    at_full: bool
 
 
 # Warmup pacing for a freshly-claimed session -- see VendorSession.settle().
@@ -290,6 +307,57 @@ class VendorSession:
                     and report[3] == READ_RESPONSE_MARKER
                     and report[4:4 + len(echo)] == echo):
                 return report[4 + len(echo):4 + len(echo) + length]
+
+    def read_input_frame(self, timeout: Optional[float] = None) -> bytes:
+        """Return one frame of the device's own input stream.
+
+        While a vendor session is open the device pushes these unprompted on
+        REPORT_ID_READ_RESPONSE, sharing that report ID with CMD_READ's
+        answers and distinguished by byte 4 (see PROTOCOL.md "The input
+        stream on report `0x10`"). Nothing is sent to obtain one -- this only
+        reads, so unlike read_chunk() it issues no command at all.
+
+        Raises TimeoutError if no input frame arrives in `timeout`.
+        """
+        if timeout is None:
+            timeout = READ_CHUNK_TIMEOUT_DONGLE if self.via_dongle else READ_CHUNK_TIMEOUT
+        deadline = time.time() + timeout
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise TimeoutError(f"no input frame within {timeout}s")
+            try:
+                report = bytes(self.dev.read(EP_IN, 64, timeout=max(1, int(remaining * 1000))))
+            except usb.core.USBError as e:
+                if getattr(e, "errno", None) in (110, None) or "timeout" in str(e).lower():
+                    continue
+                raise
+            if (len(report) > BATTERY_OFFSET
+                    and report[0] == REPORT_ID_READ_RESPONSE
+                    and report[3] == READ_RESPONSE_MARKER
+                    and report[4] == INPUT_FRAME_MARKER):
+                return report
+
+    def read_battery(self, timeout: Optional[float] = None) -> "BatteryStatus":
+        """Current charge, read straight off the input stream.
+
+        No query exists for this and none is sent -- the value simply rides
+        in the frames the device is already pushing (PROTOCOL.md "Battery
+        level"). That makes this the cheapest read in the library: no bus
+        traffic beyond the heartbeats already holding the session open, and
+        no CMD_READ, which is the command implicated in the firmware wedge.
+
+        Raises TimeoutError if no input frame arrives, and ValueError if one
+        does but carries an out-of-range percentage -- better to fail loudly
+        than to report a plausible-looking wrong charge.
+        """
+        frame = self.read_input_frame(timeout=timeout)
+        percent = frame[BATTERY_OFFSET]
+        if percent > BATTERY_MAX:
+            raise ValueError(
+                f"battery byte out of range: {percent} > {BATTERY_MAX}. "
+                "Either the input frame layout changed or this is not an input frame.")
+        return BatteryStatus(percent=percent, at_full=frame[BATTERY_FLAG_OFFSET] == 0)
 
     def probe_controller_live(self, timeout: Optional[float] = None) -> bool:
         """Is there an actual controller answering on the other end, not just

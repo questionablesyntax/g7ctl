@@ -56,6 +56,22 @@ REPORT_ID_READ_RESPONSE = 0x10
 # byte value as CMD_WRITE but a coincidence -- this is not a write ack).
 READ_RESPONSE_MARKER = 0x3c
 
+# Report 0x10 carries two different things, told apart by byte 4: read
+# responses (READ_SUBCOMMAND) and the device's own unprompted input stream
+# (INPUT_FRAME_MARKER). See PROTOCOL.md "The input stream on report 0x10".
+INPUT_FRAME_MARKER = 0xE0
+
+# Battery lives in the input stream, not behind any query -- the device
+# pushes it for as long as a vendor session is open. See PROTOCOL.md
+# "Battery level".
+BATTERY_OFFSET = 33       # percentage, 0-100
+BATTERY_FLAG_OFFSET = 32  # 1 below full, 0 at exactly full -- deliberately
+                          # NOT called "charging": every sub-100 capture in
+                          # the corpus was taken plugged in, so a charging
+                          # flag and a plain "not full" flag are
+                          # indistinguishable from the evidence we have.
+BATTERY_MAX = 100
+
 # Chunk size used by every observed real request except a region's final
 # (shorter) chunk. Confirmed via live capture: a profile's full config blob
 # is exactly 480 bytes (8 chunks of 0x37 + one 0x28 remainder), and the
