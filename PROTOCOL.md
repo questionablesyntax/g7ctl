@@ -1120,6 +1120,17 @@ the actual state. Whatever that byte encodes, it is not a straightforward
 battery percentage, and no other field in the exchange decoded as one
 either.
 
-So: the transport is understood, the semantics are not. Anyone picking this
-up should treat the candidate byte as unidentified rather than as a
-percentage that needs scaling. Nothing in `pyg7/` reads or exposes it.
+**This section previously said "the transport is understood, the semantics
+are not." That was overclaimed** and is worth correcting, because it would
+send the next person looking in the wrong place with false confidence.
+
+What is actually established: Nexus performs a periodic request/response
+exchange, the device answers it, and none of its bytes decode as a charge
+percentage. That the exchange has anything to do with battery is an
+*assumption* -- made because Nexus displays a battery level and also does
+this periodically. Nobody has shown the two are connected.
+
+So the honest state is: **we may be reading the wrong exchange entirely.**
+Anyone picking this up should treat "where is the battery level reported?"
+as open, not as "we know where it is and cannot decode it". Nothing in
+`pyg7/` reads or exposes any of it.
