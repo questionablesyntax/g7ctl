@@ -820,6 +820,8 @@ read-only over one held session):
 | 12, 13 | triggers, 0 at rest, `0xFF` at full |
 | **17-22** | **gyroscope** x, y, z -- int16 little-endian signed |
 | **23-28** | **accelerometer** x, y, z -- int16 little-endian signed |
+| 32 | flag, 0 or 1 -- see "Battery level" below |
+| **33** | **battery percentage**, 0-100 -- see "Battery level" below |
 | 51-54 | stick axes, **raw** -- rest at 134/126/133/132, i.e. uncalibrated |
 | 55-60 | buttons and triggers again, raw group |
 
@@ -1134,24 +1136,27 @@ software):
 
 ### Battery level -- solved
 
-The device reports charge in **byte 33 of the status response to the
-heartbeat**, as a plain percentage, 0-100.
-
-The heartbeat (`OUT 0x0f`, CMD `0x02`) is answered on `IN 0x10` with a
-64-byte frame beginning `10 00 [SEQ] 3c e0 80 80 80 80 0f`:
+The device reports charge in **byte 33 of the input stream** (report `0x10`,
+byte 4 = `0xE0`), as a plain percentage, 0-100. It is two more mapped
+offsets in the table under "The input stream on report `0x10`" above -- the
+same frames that carry the sticks, buttons and IMU:
 
 ```
 offset 32   flag, 0 or 1  (see caveat below)
 offset 33   battery percentage, 0x00-0x64  (0-100 decimal)
 ```
 
-No separate query is needed. This is the response to a command the host
-already sends continuously to hold vendor mode, which is why Nexus can show
-a charge level immediately -- before it has read any configuration.
+**There is no battery query.** Nothing has to be asked for. The device
+pushes these frames unprompted for as long as a vendor session is open,
+which is why Nexus can show a charge level immediately, before it has read
+any configuration. Reading battery costs no bus traffic beyond the
+heartbeats already needed to hold the session.
 
-**Evidence.** Across 183,133 status frames spanning the whole capture
-corpus, byte 33 never exceeds `0x64` (100). Three captures were taken with
-the percentage Nexus was displaying recorded independently at capture time:
+**Evidence.** Across 212,917 input frames spanning the whole capture corpus,
+byte 33 never exceeds `0x64` (100). It is independent of stick position --
+`test64`'s 29,602 frames all have the sticks off-centre and byte 33 is
+constant throughout. Three captures were taken with the percentage Nexus was
+displaying recorded independently at capture time:
 
 | capture | Nexus displayed | byte 33 |
 |---|---|---|
@@ -1165,10 +1170,11 @@ The third is the important one: it is the capture that falsified the
 **Why this was missed for so long.** The earlier investigation studied a
 different periodic request/response exchange, on the assumption that a
 dedicated battery query must exist because Nexus displays a battery level.
-That assumption was wrong -- the value rides along in the heartbeat reply
-that was being treated as pure keepalive noise. The prior version of this
-section concluded "we may be reading the wrong exchange entirely," and that
-was correct.
+That assumption was wrong twice over: there is no battery query, and the
+value was already arriving in a stream that had been decoded for sticks and
+IMU without anyone looking past offset 28. The prior version of this section
+concluded "we may be reading the wrong exchange entirely," and that was
+correct.
 
 **Caveat, byte 32.** It reads 1 in every capture where charge is below 100
 and 0 in every capture at exactly 100. That is consistent with a charging

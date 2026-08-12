@@ -244,6 +244,12 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
     p_write.add_argument("--interval", type=float, default=state_mod.WRITE_HEARTBEAT_INTERVAL,
                           help=f"Seconds between heartbeats (default {state_mod.WRITE_HEARTBEAT_INTERVAL})")
 
+    sub.add_parser(
+        "battery",
+        help="Show the controller's charge level (device must already be in vendor mode). "
+             "Read-only: this issues no command at all, since the value arrives unprompted "
+             "in the device's input stream.")
+
     p_read = sub.add_parser("read-state", help="Read a profile's current button bindings back from the device (device must already be in vendor mode).")
     p_read.add_argument("--profile", type=int, default=1, choices=[1, 2, 3, 4], help="Profile slot to read (default 1)")
     p_read.add_argument("--save", metavar="PATH", help="Also save the result as a state JSON file")
@@ -368,6 +374,14 @@ def _handle_state_command(sess: VendorSession, args: argparse.Namespace) -> bool
         if args.save:
             state_mod.save_state(args.save, state)
             print(f"Saved to {args.save}")
+        return True
+
+    if args.action == "battery":
+        status = sess.read_battery()
+        # "at full" rather than "charging" -- see BatteryStatus's docstring;
+        # the flag's meaning isn't pinned down yet and the CLI shouldn't
+        # invent one.
+        print(f"  Battery: {status.percent}%" + ("  (at full)" if status.at_full else ""))
         return True
 
     return False

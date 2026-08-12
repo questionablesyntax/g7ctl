@@ -69,3 +69,10 @@ ignore = [
 # The category modules deliberately re-export shared helpers under private
 # aliases (percent as _percent) to keep call sites unchanged.
 "pyg7/*.py" = ["F401"]
+
+[tool.pytest.ini_options]
+# Collect only the real test tree. `makepkg` unpacks a full copy of the
+# source under packaging/src/, which is gitignored -- so CI never sees it,
+# but a local run after building a release would otherwise collect every
+# test twice and fail on the duplicate module names.
+testpaths = ["tests"]
