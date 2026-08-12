@@ -6,6 +6,18 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Battery level.** `g7ctl battery` reports the controller's charge and
+  whether it is charging. This costs nothing on the wire: the controller
+  broadcasts its charge continuously while connected, so reading it sends no
+  command at all — in particular no config read, the operation implicated in
+  the firmware wedge. Available as `VendorSession.read_battery()`.
+- `VendorSession.read_input_frame()`, returning one frame of the
+  controller's live input stream (sticks, buttons, triggers, gyroscope,
+  accelerometer, battery). Groundwork for driving the GUI from the
+  controller itself.
+
 ## [0.1.7] - 2026-08-11
 
 **Protecting the controller from itself.** Switching in and out of config
