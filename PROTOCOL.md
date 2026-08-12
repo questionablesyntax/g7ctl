@@ -380,6 +380,19 @@ own UI). So the value is `01`/`00` and nothing else.
 button, so byte 4 is a live field in all 20 records, not something only
 certain buttons carry. A GUI can treat it as one checkbox per button row.
 
+Implemented as `buttons.set_continuous_trigger()` /
+`decode_continuous_triggers()`, exposed as `g7ctl continuous-trigger` and a
+per-button checkbox on the GUI's Buttons tab. Hardware write->read->compare
+on Profile 4 changed **only** the targeted slot, and restoring returned the
+profile byte-identical to before.
+
+**LT/RT have no Continuous Trigger byte that can be derived.** They have no
+record in the uniform table at all (their keycode is a lone byte inside the
+Triggers category's data -- see "Reading current config"), so there is no
+"+4 within the record" for them. Whether the triggers support rapid-fire
+some other way is unknown, and `continuous_trigger_offset()` raises rather
+than guessing an address that would land in Triggers data.
+
 That leaves bytes 2, 3, 5 and 6 of each record still unknown. Byte 6 is
 definitely in use -- Profile 3 carries `0x0A` there on every slot, including
 unbound ones and the reserved Xbox slot -- and is **not** Continuous

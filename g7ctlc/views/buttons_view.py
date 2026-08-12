@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from pyg7.buttons import KNOWN_BUTTON_IDS
+from pyg7.buttons import BUTTON_TABLE_SLOTS, KNOWN_BUTTON_IDS
 
 from ..widgets import make_keycode_combo, select_by_data
 
@@ -45,6 +45,26 @@ _BUTTON_GROUPS = [
 ]
 
 _NAME_COL_WIDTH = 140
+_CONTINUOUS_COL_WIDTH = 90
+
+_CONTINUOUS_TOOLTIP = (
+    "Continuous Trigger (rapid-fire): the button repeats while held.\n\n"
+    "Independent of the binding -- it doesn't change what the button sends.\n"
+    "There is no rate setting; the controller has one fixed rate.\n\n"
+    "Profile-scoped, and stored inside the button's own record, so it "
+    "applies to the Default layer only."
+)
+
+# LT/RT are the exception: they have no record in the button table (their
+# keycode is a lone byte inside the Triggers category's data), so there is
+# no rapid-fire byte to derive for them -- see
+# pyg7.buttons.continuous_trigger_offset(). They get a blank spacer instead
+# of a checkbox, rather than a checkbox that silently does nothing.
+_CONTINUOUS_UNSUPPORTED_TOOLTIP = (
+    "The triggers have no rapid-fire setting -- they're stored differently "
+    "from the other buttons, and whether the hardware supports it for them "
+    "at all is unknown."
+)
 
 
 log = logging.getLogger(__name__)
@@ -71,6 +91,8 @@ class ButtonsView(QWidget):
         self._state = None
         self._layer = "default"
         self._combos = {}  # (button_id, layer) -> QComboBox
+        self._continuous = {}  # button_id -> QCheckBox (Default layer only)
+        self._continuous_spacers = []
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -95,6 +117,10 @@ class ButtonsView(QWidget):
         # the profile selector, not beside a per-profile column.
         self.column_header = self._muted_label("Default Layer")
         header.addWidget(self.column_header, 1)
+        self.continuous_header = self._muted_label("Rapid-fire")
+        self.continuous_header.setFixedWidth(_CONTINUOUS_COL_WIDTH)
+        self.continuous_header.setToolTip(_CONTINUOUS_TOOLTIP)
+        header.addWidget(self.continuous_header)
         rows.addLayout(header)
 
         # Defensive check: a button present in KNOWN_BUTTON_IDS but missing
@@ -125,6 +151,20 @@ class ButtonsView(QWidget):
                     combo.currentIndexChanged.connect(self._on_edit)
                     row.addWidget(combo, 1)
                     self._combos[(button_id, layer)] = combo
+
+                if button_id in BUTTON_TABLE_SLOTS:
+                    check = QCheckBox()
+                    check.setToolTip(_CONTINUOUS_TOOLTIP)
+                    check.toggled.connect(self._on_edit)
+                    check.setFixedWidth(_CONTINUOUS_COL_WIDTH)
+                    row.addWidget(check)
+                    self._continuous[button_id] = check
+                else:
+                    spacer = QLabel()
+                    spacer.setFixedWidth(_CONTINUOUS_COL_WIDTH)
+                    spacer.setToolTip(_CONTINUOUS_UNSUPPORTED_TOOLTIP)
+                    row.addWidget(spacer)
+                    self._continuous_spacers.append(spacer)
 
                 rows.addWidget(row_widget)
 
@@ -178,6 +218,14 @@ class ButtonsView(QWidget):
         self.swap_stick_dpad.setVisible(not shift)
         self.dpad_diagonal_lock.setVisible(not shift)
         self.options_separator.setVisible(not shift)
+        # Rapid-fire lives in the per-profile button record, so it has no
+        # meaning on the device-global Shift screen -- and no way to be
+        # written there either, same as the D-pad options above.
+        self.continuous_header.setVisible(not shift)
+        for check in self._continuous.values():
+            check.setVisible(not shift)
+        for spacer in self._continuous_spacers:
+            spacer.setVisible(not shift)
 
     def load_state(self, state: dict) -> None:
         self._state = state
@@ -188,6 +236,11 @@ class ButtonsView(QWidget):
             combo.blockSignals(False)
             if layer == "shift":
                 combo.setToolTip(_SHARED_SHIFT_TOOLTIP)
+        continuous = state.get("continuous_trigger") or {}
+        for button_id, check in self._continuous.items():
+            check.blockSignals(True)
+            check.setChecked(bool(continuous.get(button_id)))
+            check.blockSignals(False)
         self.swap_stick_dpad.blockSignals(True)
         self.swap_stick_dpad.setChecked(bool(state.get("swap_stick_dpad")))
         self.swap_stick_dpad.blockSignals(False)
@@ -205,6 +258,9 @@ class ButtonsView(QWidget):
                 layer_dict.pop(button_id, None)
             else:
                 layer_dict[button_id] = value
+        continuous = self._state.setdefault("continuous_trigger", {})
+        for button_id, check in self._continuous.items():
+            continuous[button_id] = check.isChecked()
         self._state["dpad_diagonal_lock"] = self.dpad_diagonal_lock.isChecked()
         self._state["swap_stick_dpad"] = self.swap_stick_dpad.isChecked()
         self.changed.emit()
