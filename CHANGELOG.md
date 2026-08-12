@@ -6,6 +6,13 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-08-12
+
+**Two settings the controller had all along.** Rapid-fire was decoded four
+days ago and never wired up; battery turned out to be broadcast continuously
+on a stream this project had been reading — and discarding — since the input
+stream was first decoded. Neither needed new protocol work, only noticing.
+
 ### Added
 
 - **Per-button rapid-fire (Continuous Trigger).** The controller can repeat
@@ -500,7 +507,8 @@ and motion/gyro is unimplemented by choice.
 - The PKGBUILD is structurally validated but has not been build-tested
   against a real release tarball.
 
-[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.4...v0.1.5
