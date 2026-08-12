@@ -120,9 +120,33 @@ byte 0:   0x0f      fixed report ID
 byte 1:   0x00      fixed
 byte 2:   SEQ       increments per command, shared counter (heartbeat + writes)
 byte 3:   CMD       0x02 = heartbeat, 0x3c = config write,
-                    0x05 = config read (see "Reading current config")
+                    0x05 = config read (see "Reading current config"),
+                    0x01 = device info query (see below)
 bytes 4+: payload, zero-padded to 64 bytes
 ```
+
+**A census of every command byte the corpus contains, with the emitting USB
+device resolved, yields exactly these four.** `usbmon` captures a whole bus,
+so any such census that does not pin `usb.device_address` will report other
+hardware's traffic as controller commands -- an earlier one here did. The G7
+uses four report IDs in total: `0x03` and `0x0f` OUT, `0x10` and `0x20` IN.
+
+**Device info** (`CMD=0x01`): byte 4 selects *which* field is returned; the
+answer arrives on `IN 0x10` as `3c [LEN] [...]`, the same length-prefixed
+shape config reads use. Only two selectors appear in the corpus, because
+these are the only two Nexus asks for:
+
+| selector | response | reading |
+|---|---|---|
+| `0x09` | `3c 0a 30 00 32 00 30 00 39 00` | length 10, UTF-16LE `"0209"` -- a version string |
+| `0x0b` | `3c 0c 01` | length 12, value `01` |
+
+The selector space is unexplored -- 253 other values have never been tried.
+This is the most promising known lead for a **model/variant identifier**:
+Nexus renders the correct one of the five G7 Pro colourways, and nothing in
+the USB descriptors distinguishes them (`product` is `"GameSir-G7 Pro"` for
+all of them, and `bcdDevice` is a firmware revision), so it must be asking
+the device something. Sweeping `CMD=0x01` selectors is cheap and read-only.
 
 **Every write needs an active heartbeat session.** An isolated write with
 no heartbeat before/after is silently discarded and the device reverts to
@@ -1108,29 +1132,49 @@ software):
 - The native GameSir identity's own protocol (`3537:1022`, see "Device identities" above) -- found 2026-07-30, not reverse-engineered. Detected only well enough to explain it to a user, not to talk to it.
 - Bluetooth mode -- a genuinely separate identity/pairing path, not investigated at all on the Linux side yet.
 
-### Battery level -- investigated, not solved
+### Battery level -- solved
 
-Worth stating explicitly, since it's an obvious thing to want. There *is* a
-real periodic request/response exchange that the Nexus app performs and that
-the device answers, and a byte in that response was initially a promising
-candidate for charge level. It doesn't hold up: across readings taken at
-known-different charge states, the value did not track the charge the app
-itself was displaying, and at one point moved in the direction opposite to
-the actual state. Whatever that byte encodes, it is not a straightforward
-battery percentage, and no other field in the exchange decoded as one
-either.
+The device reports charge in **byte 33 of the status response to the
+heartbeat**, as a plain percentage, 0-100.
 
-**This section previously said "the transport is understood, the semantics
-are not." That was overclaimed** and is worth correcting, because it would
-send the next person looking in the wrong place with false confidence.
+The heartbeat (`OUT 0x0f`, CMD `0x02`) is answered on `IN 0x10` with a
+64-byte frame beginning `10 00 [SEQ] 3c e0 80 80 80 80 0f`:
 
-What is actually established: Nexus performs a periodic request/response
-exchange, the device answers it, and none of its bytes decode as a charge
-percentage. That the exchange has anything to do with battery is an
-*assumption* -- made because Nexus displays a battery level and also does
-this periodically. Nobody has shown the two are connected.
+```
+offset 32   flag, 0 or 1  (see caveat below)
+offset 33   battery percentage, 0x00-0x64  (0-100 decimal)
+```
 
-So the honest state is: **we may be reading the wrong exchange entirely.**
-Anyone picking this up should treat "where is the battery level reported?"
-as open, not as "we know where it is and cannot decode it". Nothing in
-`pyg7/` reads or exposes any of it.
+No separate query is needed. This is the response to a command the host
+already sends continuously to hold vendor mode, which is why Nexus can show
+a charge level immediately -- before it has read any configuration.
+
+**Evidence.** Across 183,133 status frames spanning the whole capture
+corpus, byte 33 never exceeds `0x64` (100). Three captures were taken with
+the percentage Nexus was displaying recorded independently at capture time:
+
+| capture | Nexus displayed | byte 33 |
+|---|---|---|
+| `test55_battery_status_98pct` | 98% | 98 |
+| `test56_battery_status_98pct_confirm` | 98% | 98, drifting to 97 |
+| `test57_battery_status_99pct_contradicts` | 99% | 99 |
+
+The third is the important one: it is the capture that falsified the
+*previous* battery theory. The decode above matches it exactly.
+
+**Why this was missed for so long.** The earlier investigation studied a
+different periodic request/response exchange, on the assumption that a
+dedicated battery query must exist because Nexus displays a battery level.
+That assumption was wrong -- the value rides along in the heartbeat reply
+that was being treated as pure keepalive noise. The prior version of this
+section concluded "we may be reading the wrong exchange entirely," and that
+was correct.
+
+**Caveat, byte 32.** It reads 1 in every capture where charge is below 100
+and 0 in every capture at exactly 100. That is consistent with a charging
+flag *and* with a simple "not full" flag -- every sub-100 capture in the
+corpus was taken while plugged in, so the two cannot be told apart from
+existing data. Distinguishing them needs one capture on battery power while
+discharging. Do not label it "charging" until that exists.
+
+Nothing in `pyg7/` reads or exposes this yet.
