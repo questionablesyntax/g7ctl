@@ -570,3 +570,72 @@ class CurvePointsTest(unittest.TestCase):
 
     def test_decode_survives_a_blob_too_short_to_hold_them(self):
         self.assertIsNone(curves.decode_curve_points(b"\x00" * 8, 0x144))
+
+
+class ContinuousTriggerTest(unittest.TestCase):
+    """Per-button rapid-fire -- byte 4 of the button's 7-byte record.
+
+    See PROTOCOL.md "Continuous Trigger (rapid-fire)". The two addresses
+    pinned here are the two `test61` actually captured; everything else is
+    generated from the same table the binding writes already use, which is
+    exactly why those two matter.
+    """
+
+    def setUp(self):
+        self.sess = FakeSession()
+
+    def test_captured_addresses_for_a_and_y(self):
+        # test61: A's record is 0x7A and its toggle wrote 0x7E; Y's record is
+        # 0x8F and its toggle wrote 0x93. If the slot table ever shifts, this
+        # is the test that should fail.
+        self.assertEqual(buttons.continuous_trigger_offset("a"), 0x7E)
+        self.assertEqual(buttons.continuous_trigger_offset("y"), 0x93)
+
+    def test_every_slot_lands_at_record_plus_four(self):
+        for idx, slot in enumerate(buttons.BUTTON_TABLE_SLOTS):
+            if slot is None:
+                continue
+            record = buttons.BUTTON_TABLE_OFFSET + idx * buttons.BUTTON_TABLE_SLOT_SIZE
+            self.assertEqual(buttons.continuous_trigger_offset(slot), record + 4)
+
+    def test_payload_shape(self):
+        buttons.set_continuous_trigger(self.sess, "a", True, profile=1)
+        self.assertEqual(self.sess.sent[-1][1].hex(), "030100" "7e" "01" "01")
+
+    def test_off_writes_zero(self):
+        buttons.set_continuous_trigger(self.sess, "a", False, profile=1)
+        self.assertEqual(self.sess.sent[-1][1].hex(), "030100" "7e" "01" "00")
+
+    def test_profile_is_targeted(self):
+        buttons.set_continuous_trigger(self.sess, "y", True, profile=3)
+        self.assertEqual(self.sess.sent[-1][1].hex(), "030300" "93" "01" "01")
+
+    def test_triggers_are_rejected_not_guessed(self):
+        # LT/RT have no button-table record at all, so there is no "+4 within
+        # the record" to compute. Silently inventing an address would write
+        # into the Triggers category's own data.
+        for slot in ("lt", "rt"):
+            with self.assertRaises(ValueError):
+                buttons.continuous_trigger_offset(slot)
+
+    def test_reserved_xbox_slot_is_rejected(self):
+        with self.assertRaises(ValueError):
+            buttons.continuous_trigger_offset(None)
+
+    def test_unknown_slot_is_rejected(self):
+        with self.assertRaises(ValueError):
+            buttons.continuous_trigger_offset("nope")
+
+    def test_decode_round_trips_against_the_write_address(self):
+        blob = bytearray(0x100)
+        blob[buttons.continuous_trigger_offset("b")] = 0x01
+        decoded = buttons.decode_continuous_triggers(bytes(blob))
+        self.assertTrue(decoded["b"])
+        self.assertFalse(decoded["a"])
+
+    def test_decode_includes_unbound_slots(self):
+        # Nexus shows the checkbox on every button, so byte 4 is live in all
+        # 20 records -- a slot being unbound must not drop it from the decode.
+        decoded = buttons.decode_continuous_triggers(bytes(0x100))
+        named = [s for s in buttons.BUTTON_TABLE_SLOTS if s]
+        self.assertEqual(sorted(decoded), sorted(named))

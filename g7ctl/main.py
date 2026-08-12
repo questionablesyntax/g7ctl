@@ -220,6 +220,17 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
     p_dpad.add_argument("--profile", type=int, default=1, choices=[1, 2, 3, 4], help="Target profile 1-4 (default 1)")
     _add_heartbeat_args(p_dpad)
 
+    p_ct = sub.add_parser(
+        "continuous-trigger",
+        help="Turn per-button rapid-fire on or off (device must already be in vendor mode). "
+             "Independent of the button's binding -- this doesn't change what the button sends.")
+    p_ct.add_argument("button", choices=[s for s in buttons.BUTTON_TABLE_SLOTS if s],
+                       help="Button slot. LT/RT are absent: they have no button-table record, "
+                            "so no rapid-fire byte can be derived for them.")
+    p_ct.add_argument("value", choices=["on", "off"])
+    p_ct.add_argument("--profile", type=int, default=1, choices=[1, 2, 3, 4], help="Target profile 1-4 (default 1)")
+    _add_heartbeat_args(p_ct)
+
     p_dock = sub.add_parser("dock-set", help="Set a Dock setting (global, not per-profile; device must already be in vendor mode).")
     p_dock.add_argument("setting", choices=sorted(dock_settings.SETTINGS))
     p_dock.add_argument("value", help="0-100 for brightness, on/off for auto_on_off")
@@ -343,6 +354,8 @@ def _handle_setting_write(sess: VendorSession, args: argparse.Namespace) -> bool
         "report-rate-set": lambda s: report_rate.set_value(s, args.hz, profile=args.profile),
         "dpad-set": lambda s: dpad_options.set_value(
             s, args.setting, args.value, profile=args.profile),
+        "continuous-trigger": lambda s: buttons.set_continuous_trigger(
+            s, args.button, args.value == "on", profile=args.profile),
         # Dock settings take no profile= -- they're genuinely global, see
         # dock_settings.py.
         "dock-set": lambda s: dock_settings.set_value(s, args.setting, args.value),
@@ -400,10 +413,16 @@ def _print_state(state: dict, slot: int) -> None:
     coverage landed, and a `read-state` that hides two thirds of what it just
     fetched makes write->read->compare testing harder than it needs to be.
     """
+    # Rapid-fire is a property of the Default layer's records, so it's shown
+    # inline there rather than as a separate block -- but only as a marker on
+    # the buttons that have it, so an all-off profile reads exactly as it did
+    # before this field existed.
+    ct = state.get("continuous_trigger") or {}
     for layer in ("default", "shift"):
         print(f"Profile {slot} -- {layer.capitalize()} layer:")
         for btn, kc in state["buttons"][layer].items():
-            print(f"  {btn:8s} {kc}")
+            marker = "  [continuous]" if layer == "default" and ct.get(btn) else ""
+            print(f"  {btn:8s} {kc}{marker}")
 
     print(f"Profile {slot} -- per-profile settings:")
     print(f"  report rate       {state['report_rate_hz']} Hz")
