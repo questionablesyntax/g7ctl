@@ -53,7 +53,7 @@ import usb.core
 
 from pyg7 import buttons, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
 from pyg7 import state as state_mod
-from pyg7.device import enter_vendor_mode, find_writable_device
+from pyg7.device import HANDSHAKE_MIN_INTERVAL, enter_vendor_mode, find_writable_device
 from pyg7.session import VendorSession
 
 from . import __version__
@@ -159,6 +159,13 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
     # turns the terminating actions into a per-line error instead of ending
     # the session.
     ap.add_argument("--version", action="version", version=_version_string())
+    ap.add_argument(
+        "--unsafe-no-wait", action="store_true",
+        help=f"Skip the {HANDSHAKE_MIN_INTERVAL:.0f}s pause before re-entering vendor mode. "
+             "That pause exists because rapid re-enumeration wedges the controller's "
+             "read path, and the only fix (holding Share+Menu) erases the active "
+             "profile's remaps. For running many commands, prefer 'batch' -- it uses "
+             "one session and never hits the pause. This switch is for testing.")
     sub = ap.add_subparsers(dest="action", required=True)
 
     sub.add_parser("enter-vendor", help="Switch the controller from XInput mode into vendor/config mode.")
@@ -261,6 +268,15 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
                           help=f"Seconds between the batch loop's own heartbeats (default {BATCH_HEARTBEAT_INTERVAL})")
 
     return ap
+
+
+def _min_interval(args: argparse.Namespace) -> float:
+    """0 when --unsafe-no-wait was given, otherwise the library default.
+
+    getattr because batch/REPL lines are parsed by a second parser instance
+    and never carry the top-level flag -- inside a batch there is only one
+    handshake anyway, so the floor is already satisfied."""
+    return 0.0 if getattr(args, "unsafe_no_wait", False) else HANDSHAKE_MIN_INTERVAL
 
 
 def _explain_usb_error(exc: usb.core.USBError) -> str:
@@ -420,12 +436,18 @@ def _print_list() -> None:
 
 
 @contextlib.contextmanager
-def _connect_session():
+def _connect_session(min_interval: float = HANDSHAKE_MIN_INTERVAL):
     """Find/handshake the controller and yield a settled, liveness-checked
     VendorSession -- the connect logic every device-touching action needs,
     factored out of a single inline block in main() so batch mode can open
     exactly one session for many commands instead of duplicating this per
-    invocation."""
+    invocation.
+
+    `min_interval` is forwarded to enter_vendor_mode()'s pacing floor; the
+    CLI drops it to 0 for --unsafe-no-wait. Note the pause only applies when
+    a handshake is actually needed -- a controller already in vendor mode is
+    reclaimed without re-enumerating, so back-to-back commands that catch it
+    still switched pay nothing."""
     vdev, via_dongle = find_writable_device()
     if vdev is None:
         # Fall back to doing the handshake ourselves rather than telling
@@ -439,7 +461,7 @@ def _connect_session():
         # The handshake reports which identity it landed on: wired
         # (PID_VENDOR) or dongle (PID_DONGLE). Both are reachable this way --
         # an idle dongle sits in XInput mode like the wired controller does.
-        vdev, via_dongle = enter_vendor_mode()
+        vdev, via_dongle = enter_vendor_mode(min_interval=min_interval)
         if vdev is None:
             print("Could not reach the controller. Plug it in (or connect the "
                   "wireless dongle) and try again.", file=sys.stderr)
@@ -605,7 +627,7 @@ def _handle_batch(args: argparse.Namespace) -> None:
         return
 
     interactive = args.path is None and sys.stdin.isatty()
-    with _connect_session() as sess:
+    with _connect_session(_min_interval(args)) as sess:
         if interactive:
             _run_batch_repl(sess, line_parser, args.interval)
         else:
@@ -643,14 +665,14 @@ def main() -> None:
     # denied) for a new user of this tool.
     try:
         if args.action == "enter-vendor":
-            enter_vendor_mode()
+            enter_vendor_mode(min_interval=_min_interval(args))
             return
 
         if args.action == "batch":
             _handle_batch(args)
             return
 
-        with _connect_session() as sess:
+        with _connect_session(_min_interval(args)) as sess:
             _dispatch(sess, args)
     except usb.core.USBError as exc:
         print(_explain_usb_error(exc), file=sys.stderr)
