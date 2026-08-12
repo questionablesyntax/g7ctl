@@ -6,6 +6,32 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The tool now waits before re-entering the controller's config mode.**
+  Switching in and out of config mode too quickly can wedge the controller:
+  it stops answering reads while still accepting everything else, and the
+  only way out is holding Share+Menu — which erases every keyboard/mouse
+  remap on the profile you are using plus the Shift layer. So `g7ctl` will
+  now pause up to 5 seconds before switching modes if the controller only
+  just reconnected.
+
+  In practice most people will never see it. The GUI already takes longer
+  than that to read a profile on connect, so it was never able to go fast
+  enough to matter, and it is unchanged. The pause shows up if you run
+  several `g7ctl` commands back to back in a shell loop — and for that,
+  **`g7ctl batch` is the better answer**: one connection for many commands,
+  no pause at all.
+
+  Worth knowing regardless of this tool: **holding Share+Menu costs you the
+  active profile's remaps**, and it is also the documented fix for a wedged
+  controller. See PROTOCOL.md.
+
+### Added
+
+- **`--unsafe-no-wait`** skips that pause. Intended for testing; the name is
+  a warning.
+
 ## [0.1.6] - 2026-08-08
 
 **Custom stick and trigger curves, with a graphical editor.** The last
