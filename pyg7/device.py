@@ -7,7 +7,9 @@ invisible to the user and impossible for an embedding application to
 capture or silence. cli.py attaches a plain message-only handler so
 command-line output is unchanged.
 """
+import glob
 import logging
+import os
 import time
 from typing import Optional
 
@@ -28,9 +30,112 @@ from .constants import (
 
 log = logging.getLogger(__name__)
 
+# Where the kernel publishes per-device USB state. A module constant rather
+# than a literal so tests can point it at a fixture directory.
+SYSFS_USB_ROOT = "/sys/bus/usb/devices"
+
+# Minimum seconds between re-enumerations before we add another one.
+#
+# Rapid re-enumeration is what wedges this firmware's read path: reads stop
+# answering entirely while heartbeats and writes carry on, and nothing in
+# software clears it -- not a host reboot, not dev.reset(), not a cable
+# replug, not even the manual's own pinhole reset. Only holding Share+Menu
+# on the controller, which itself costs the user every non-native binding on
+# the active profile and the Shift layer.
+#
+# The hardware paces itself everywhere a *person* can trigger a mode change:
+# Menu+Share and the M+button profile combos all need a multi-second hold,
+# so thumbs cannot cycle quickly. The "gamesirapp" handshake has no such
+# gate -- five 8-byte writes and the device re-enumerates as fast as USB
+# allows. So this floor is not a workaround for a mystery; it is software
+# honouring a limit the firmware assumes the hardware enforces.
+#
+# 5s is a judgment call. Deliberate induction took 7-12 rapid cycles, and
+# the GUI has never wedged in normal use because its read-on-connect already
+# takes seconds -- so this is roughly "be no faster than the app that is
+# known to be safe."
+HANDSHAKE_MIN_INTERVAL = 5.0
+
 
 def find_device(pid: int) -> Optional[usb.core.Device]:
     return usb.core.find(idVendor=VID, idProduct=pid)
+
+
+def _sysfs_node(dev: usb.core.Device) -> Optional[str]:
+    """The sysfs directory for a pyusb device, matched on bus + device
+    number (`devnum` is the same value pyusb calls `address`)."""
+    for path in glob.glob(os.path.join(SYSFS_USB_ROOT, "*") + os.sep):
+        try:
+            with open(os.path.join(path, "busnum")) as fh:
+                busnum = int(fh.read())
+            with open(os.path.join(path, "devnum")) as fh:
+                devnum = int(fh.read())
+        except (OSError, ValueError):
+            continue          # not a USB device node, or vanished mid-scan
+        if busnum == dev.bus and devnum == dev.address:
+            return path
+    return None
+
+
+def seconds_since_enumeration(dev: usb.core.Device) -> Optional[float]:
+    """How long ago `dev` appeared on the bus, or None if unknowable.
+
+    Asks the kernel rather than remembering ourselves. That matters for
+    more than tidiness: our own record would only cover handshakes *we*
+    performed, and would be blind to a re-enumeration caused by GameSir
+    Nexus, an on-device profile switch (which re-enumerates twice), or the
+    user replugging the cable -- which are exactly the events worth pacing
+    against. It is also cross-process for free, since it was never our
+    state to begin with.
+
+    `power/connected_duration` resets on every re-enumeration, confirmed on
+    hardware 2026-08-11: 17268ms before a handshake, 3394ms after, with
+    `devnum` incrementing and the directory's ctime moving to match. It
+    depends on CONFIG_PM, so the directory's own ctime is the fallback --
+    both agreed to within a second in testing.
+    """
+    node = _sysfs_node(dev)
+    if node is None:
+        return None
+    try:
+        with open(os.path.join(node, "power", "connected_duration")) as fh:
+            return int(fh.read()) / 1000.0
+    except (OSError, ValueError):
+        pass
+    try:
+        return max(0.0, time.time() - os.stat(node).st_ctime)
+    except OSError:
+        return None
+
+
+def _pace_handshake(dev: usb.core.Device, min_interval: float) -> None:
+    """Sleep until `dev` has been enumerated for at least `min_interval`.
+
+    Deliberately a sleep rather than a refusal: a command that mysteriously
+    fails is worse than one that is briefly slow, and the caller usually
+    has no useful alternative. Anyone hitting this repeatedly wants
+    `g7ctl batch`, which holds one session for many commands -- so the log
+    line says so.
+    """
+    if min_interval <= 0:
+        return
+    age = seconds_since_enumeration(dev)
+    if age is None:
+        # No sysfs (unusual kernel, container, non-Linux). Degrade to no
+        # pacing rather than failing -- a safety aid must never be the
+        # reason a command cannot run.
+        log.debug("could not determine enumeration age; skipping handshake pacing")
+        return
+    if age >= min_interval:
+        return
+    wait = min_interval - age
+    log.info(
+        "Device re-enumerated %.1fs ago; pausing %.1fs before handshaking. "
+        "Rapid re-enumeration wedges this controller's read path, and only "
+        "holding Share+Menu clears it (which erases the active profile's "
+        "remaps). Running several commands? Use `g7ctl batch` -- one session, "
+        "one handshake.", age, wait)
+    time.sleep(wait)
 
 
 def find_native_identity() -> Optional[usb.core.Device]:
@@ -74,7 +179,8 @@ def make_handshake_packets() -> list[bytes]:
     return packets
 
 
-def enter_vendor_mode(timeout_s: float = 10.0) -> tuple[Optional[usb.core.Device], bool]:
+def enter_vendor_mode(timeout_s: float = 10.0,
+                       min_interval: float = HANDSHAKE_MIN_INTERVAL) -> tuple[Optional[usb.core.Device], bool]:
     """Handshake the controller out of XInput mode and into a vendor identity.
 
     Returns `(device, via_dongle)`, the same shape `find_writable_device()`
@@ -104,6 +210,9 @@ def enter_vendor_mode(timeout_s: float = 10.0) -> tuple[Optional[usb.core.Device
         return None, False
 
     log.info("Found XInput-mode device (bus=%s addr=%s).", dev.bus, dev.address)
+    # Before adding another re-enumeration, make sure the last one has had
+    # time to settle -- see HANDSHAKE_MIN_INTERVAL.
+    _pace_handshake(dev, min_interval)
     detached = False
     if dev.is_kernel_driver_active(IFACE):
         dev.detach_kernel_driver(IFACE)
