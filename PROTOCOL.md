@@ -1176,11 +1176,24 @@ IMU without anyone looking past offset 28. The prior version of this section
 concluded "we may be reading the wrong exchange entirely," and that was
 correct.
 
-**Caveat, byte 32.** It reads 1 in every capture where charge is below 100
-and 0 in every capture at exactly 100. That is consistent with a charging
-flag *and* with a simple "not full" flag -- every sub-100 capture in the
-corpus was taken while plugged in, so the two cannot be told apart from
-existing data. Distinguishing them needs one capture on battery power while
-discharging. Do not label it "charging" until that exists.
+**Byte 32 is a charging flag** -- 1 while charging, 0 otherwise.
 
-Nothing in `pyg7/` reads or exposes this yet.
+This took one live read to settle, and is worth recording as a method note.
+From captures alone the flag was ambiguous: it read 1 in every sub-100
+capture and 0 at exactly 100, which fits "charging" and "not full" equally
+well, because every sub-100 capture in the corpus happened to be taken while
+plugged in. The corpus could not distinguish them *at all*, and this section
+originally said so and declined to name the byte.
+
+The first read from live hardware resolved it immediately -- **46% over the
+wireless dongle, on battery, flag 0**. "Not full" predicts 1 there and is
+dead. Charging predicts 0, and holds for all three cases:
+
+| state | charge | flag |
+|---|---|---|
+| plugged in, below full | 86-99 | 1 |
+| plugged in, charge complete | 100 | 0 |
+| on battery (dongle) | 46 | 0 |
+
+Implemented as `VendorSession.read_battery()`, returning
+`BatteryStatus(percent, charging)`; `g7ctl battery` prints it.

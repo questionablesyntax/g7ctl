@@ -197,7 +197,7 @@ def _input_frame(percent: int, flag: int = 1, sticks: bytes = b"\x80\x80\x80\x80
     only thing distinguishing this from a read response on the same pipe.
     """
     from pyg7.constants import (
-        BATTERY_FLAG_OFFSET,
+        BATTERY_CHARGING_OFFSET,
         BATTERY_OFFSET,
         INPUT_FRAME_MARKER,
         READ_RESPONSE_MARKER,
@@ -208,7 +208,7 @@ def _input_frame(percent: int, flag: int = 1, sticks: bytes = b"\x80\x80\x80\x80
     pkt[3] = READ_RESPONSE_MARKER
     pkt[4] = INPUT_FRAME_MARKER
     pkt[5:9] = sticks
-    pkt[BATTERY_FLAG_OFFSET] = flag
+    pkt[BATTERY_CHARGING_OFFSET] = flag
     pkt[BATTERY_OFFSET] = percent
     return bytes(pkt)
 
@@ -252,11 +252,14 @@ class BatteryTest(unittest.TestCase):
         dev = _FakeReadDevice([_input_frame(97, sticks=b"\x00\xff\x12\xee")])
         self.assertEqual(VendorSession(dev).read_battery(timeout=0.5).percent, 97)
 
-    def test_at_full_flag(self):
-        self.assertTrue(VendorSession(_FakeReadDevice([_input_frame(100, flag=0)]))
-                        .read_battery(timeout=0.5).at_full)
-        self.assertFalse(VendorSession(_FakeReadDevice([_input_frame(98, flag=1)]))
-                         .read_battery(timeout=0.5).at_full)
+    def test_charging_flag(self):
+        # Live hardware, 2026-08-12: 46% over the wireless dongle with the
+        # flag at 0. That one reading killed the "not full" reading this
+        # shipped with for an hour -- not full predicts 1 at 46%.
+        self.assertTrue(VendorSession(_FakeReadDevice([_input_frame(98, flag=1)]))
+                        .read_battery(timeout=0.5).charging)
+        self.assertFalse(VendorSession(_FakeReadDevice([_input_frame(46, flag=0)]))
+                         .read_battery(timeout=0.5).charging)
 
     def test_rejects_an_impossible_percentage(self):
         # Byte 33 never exceeded 0x64 across 212,917 corpus frames. If it
