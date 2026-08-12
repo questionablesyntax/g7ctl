@@ -64,12 +64,8 @@ INPUT_FRAME_MARKER = 0xE0
 # Battery lives in the input stream, not behind any query -- the device
 # pushes it for as long as a vendor session is open. See PROTOCOL.md
 # "Battery level".
-BATTERY_OFFSET = 33       # percentage, 0-100
-BATTERY_FLAG_OFFSET = 32  # 1 below full, 0 at exactly full -- deliberately
-                          # NOT called "charging": every sub-100 capture in
-                          # the corpus was taken plugged in, so a charging
-                          # flag and a plain "not full" flag are
-                          # indistinguishable from the evidence we have.
+BATTERY_OFFSET = 33          # percentage, 0-100
+BATTERY_CHARGING_OFFSET = 32  # 1 while charging, 0 otherwise
 BATTERY_MAX = 100
 
 # Chunk size used by every observed real request except a region's final

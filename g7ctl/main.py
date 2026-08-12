@@ -378,10 +378,7 @@ def _handle_state_command(sess: VendorSession, args: argparse.Namespace) -> bool
 
     if args.action == "battery":
         status = sess.read_battery()
-        # "at full" rather than "charging" -- see BatteryStatus's docstring;
-        # the flag's meaning isn't pinned down yet and the CLI shouldn't
-        # invent one.
-        print(f"  Battery: {status.percent}%" + ("  (at full)" if status.at_full else ""))
+        print(f"  Battery: {status.percent}%" + ("  (charging)" if status.charging else ""))
         return True
 
     return False

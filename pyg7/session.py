@@ -7,7 +7,7 @@ import usb.core
 import usb.util
 
 from .constants import (
-    BATTERY_FLAG_OFFSET,
+    BATTERY_CHARGING_OFFSET,
     BATTERY_MAX,
     BATTERY_OFFSET,
     CMD_HEARTBEAT,
@@ -28,14 +28,16 @@ log = logging.getLogger(__name__)
 class BatteryStatus(NamedTuple):
     """Charge as reported in the input stream.
 
-    `at_full` is named for exactly what the evidence supports. The flag byte
-    reads 0 at 100% and 1 below it, which fits "charging" just as well --
-    but every sub-100 capture in the corpus was taken plugged in, so the two
-    cannot be told apart yet. Calling it `charging` would be a guess wearing
-    an API's authority.
+    `charging` was briefly shipped as `at_full`, on capture evidence alone:
+    the flag read 1 in every sub-100 capture and 0 at exactly 100, which fits
+    "not full" and "charging" equally well, because every sub-100 capture in
+    the corpus happened to be taken plugged in. The first live read settled
+    it in one shot -- 46% over the wireless dongle, on battery, flag 0. "Not
+    full" predicts 1 there and is dead; charging predicts 0 and holds for all
+    three cases, including a plugged-in 100% reading 0 once charge completes.
     """
     percent: int
-    at_full: bool
+    charging: bool
 
 
 # Warmup pacing for a freshly-claimed session -- see VendorSession.settle().
@@ -357,7 +359,7 @@ class VendorSession:
             raise ValueError(
                 f"battery byte out of range: {percent} > {BATTERY_MAX}. "
                 "Either the input frame layout changed or this is not an input frame.")
-        return BatteryStatus(percent=percent, at_full=frame[BATTERY_FLAG_OFFSET] == 0)
+        return BatteryStatus(percent=percent, charging=frame[BATTERY_CHARGING_OFFSET] == 1)
 
     def probe_controller_live(self, timeout: Optional[float] = None) -> bool:
         """Is there an actual controller answering on the other end, not just
