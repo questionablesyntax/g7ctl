@@ -6,6 +6,15 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-08-11
+
+**Protecting the controller from itself.** Switching in and out of config
+mode too quickly can wedge a G7 Pro -- it stops answering reads while still
+accepting everything else, and the only recovery erases your remaps on the
+profile you are using. This release stops the tool from being able to do
+that, and documents the hazard so it is avoidable regardless of which
+software you use.
+
 ### Changed
 
 - **The tool now waits before re-entering the controller's config mode.**
@@ -471,7 +480,8 @@ and motion/gyro is unimplemented by choice.
 - The PKGBUILD is structurally validated but has not been build-tested
   against a real release tarball.
 
-[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.3...v0.1.4
