@@ -454,6 +454,82 @@ def decode_button_table(blob: bytes) -> dict:
     return result
 
 
+# --- Continuous Trigger (rapid-fire) ---------------------------------------
+#
+# Nexus's per-button "Continuous Trigger" checkbox. It lives at byte 4 of the
+# button's own 7-byte record, so its address is just the record's address
+# plus 4 -- see PROTOCOL.md "Continuous Trigger (rapid-fire)".
+#
+# Confirmed 2026-08-08 (test61) at two independent addresses, both of which
+# fall exactly where this arithmetic predicts: A is slot 8, record 0x7A,
+# toggle wrote 0x7E; Y is slot 11, record 0x8F, toggle wrote 0x93. That the
+# two agree with the table already derived from binding writes is what makes
+# it safe to generate the other 18 addresses without capturing each one.
+#
+# It is a plain boolean -- there is no rate setting, confirmed in Nexus's own
+# UI. So the written value is 0x01/0x00 and nothing else.
+CONTINUOUS_TRIGGER_RECORD_OFFSET = 4
+
+
+def continuous_trigger_offset(slot: str) -> int:
+    """Blob address of `slot`'s Continuous Trigger byte.
+
+    LT/RT are rejected rather than silently mishandled: they have no record
+    in the uniform table at all (see TRIGGER_BUTTON_OFFSETS -- their keycode
+    is a lone byte inside the Triggers category's data), so there is no
+    "+4 within the record" to compute. Whether the triggers have a
+    Continuous Trigger of their own, stored somewhere else, is unknown.
+    """
+    if slot in TRIGGER_BUTTON_OFFSETS:
+        raise ValueError(
+            f"{slot!r} has no button-table record, so no Continuous Trigger byte can be "
+            "derived for it. Whether the triggers support it at all is unestablished.")
+    if not isinstance(slot, str) or slot not in BUTTON_TABLE_SLOTS:
+        raise ValueError(f"unknown button slot: {slot!r}")
+    idx = BUTTON_TABLE_SLOTS.index(slot)
+    return BUTTON_TABLE_OFFSET + idx * BUTTON_TABLE_SLOT_SIZE + CONTINUOUS_TRIGGER_RECORD_OFFSET
+
+
+def set_continuous_trigger(session: VendorSession, slot: str, enabled: bool,
+                            profile: int = 1, shift: bool = False) -> bytes:
+    """Turn rapid-fire on or off for one button.
+
+    Independent of the button's binding: this writes one byte inside the
+    record and touches neither the 0x01 marker nor the keycode, so it does
+    not allocate or free a slot the way remap()/unbind() do.
+    """
+    offset = continuous_trigger_offset(slot)
+    pl_byte = profile_layer_byte(profile, shift)
+    # Same addressed-write shape as every other config write:
+    # 03 [CATEGORY] [PAGE] [OFFSET] [LEN] [DATA]. Every button record sits
+    # below 0x100 so PAGE is always 0 here, but it is derived rather than
+    # hardcoded -- the curve work found a real page-crossing write once the
+    # addresses went past 0xFF.
+    payload = bytes([0x03, pl_byte, (offset >> 8) & 0xFF, offset & 0xFF, 0x01,
+                     0x01 if enabled else 0x00])
+    return session.send_raw(CMD_WRITE, payload)
+
+
+def decode_continuous_triggers(blob: bytes) -> dict:
+    """Decode every slot's Continuous Trigger flag out of a config blob.
+
+    Returns {slot_name: bool}. Unbound slots are included: Nexus shows the
+    checkbox on every button, so byte 4 is a live field in all 20 records
+    rather than something only bound buttons carry.
+
+    LT/RT are absent from the result for the reason in
+    continuous_trigger_offset() -- they have no record here.
+    """
+    result = {}
+    for idx, slot in enumerate(BUTTON_TABLE_SLOTS):
+        if slot is None:
+            continue
+        off = BUTTON_TABLE_OFFSET + idx * BUTTON_TABLE_SLOT_SIZE + CONTINUOUS_TRIGGER_RECORD_OFFSET
+        if off < len(blob):
+            result[slot] = blob[off] == 0x01
+    return result
+
+
 def read_button_bindings(session: VendorSession, profile: int = 1, shift: bool = False,
                           interval: float = 0.05) -> dict:
     """Read a profile/layer's current button bindings directly from the

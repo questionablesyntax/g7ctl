@@ -124,6 +124,12 @@ def default_state_dict(name: str = "New State") -> dict:
         "updated_at": now,
         "controller_slot": None,
         "buttons": {"default": {}, "shift": {}},
+        # Per-button rapid-fire. Additive optional field, same convention as
+        # report_rate_hz below -- absent from older state files, which still
+        # validate. Default layer only: the Shift layer has its own button
+        # table and so plausibly its own flags, but that is untested and
+        # nothing is known about whether Nexus even exposes it there.
+        "continuous_trigger": {},
         "report_rate_hz": 1000,
         "dpad_diagonal_lock": False,
         "swap_stick_dpad": False,
@@ -189,6 +195,20 @@ def validate_state(data: dict) -> None:
     swap = data.get("swap_stick_dpad")
     if swap is not None and not isinstance(swap, bool):
         raise StateError(f"swap_stick_dpad must be a bool or null, got {swap!r}")
+
+    # Continuous Trigger: additive optional field. Keys are validated against
+    # the button table rather than KNOWN_BUTTON_IDS, because LT/RT are real
+    # buttons with no table record and therefore no flag -- see
+    # buttons.continuous_trigger_offset().
+    ct = data.get("continuous_trigger")
+    if ct is not None:
+        if not isinstance(ct, dict):
+            raise StateError(f"continuous_trigger must be an object or null, got {ct!r}")
+        for btn, enabled in ct.items():
+            if btn not in buttons.BUTTON_TABLE_SLOTS or btn is None:
+                raise StateError(f"continuous_trigger: unknown button {btn!r}")
+            if enabled is not None and not isinstance(enabled, bool):
+                raise StateError(f"continuous_trigger[{btn!r}] must be a bool or null, got {enabled!r}")
 
     # Dock settings: same additive-field reasoning, and genuinely global/
     # device-wide (see dock_settings.py) -- not tied to controller_slot.
@@ -439,6 +459,7 @@ def read_state(session: VendorSession, slot: int = 1, interval: float = 0.05,
         "created_at": now,
         "updated_at": now,
         "controller_slot": slot,
+        "continuous_trigger": buttons.decode_continuous_triggers(default_blob),
         "buttons": {
             "default": buttons.decode_button_table(default_blob),
             # The Shift layer is device-global -- one layer shared by all
@@ -577,6 +598,21 @@ def _build_steps(state: dict, baseline: Optional[dict] = None) -> tuple[list[Ste
                 kc = buttons.resolve_keycode(keycode_name)
                 steps.append((f"Button {btn} ({layer_name}) -> {keycode_name}",
                               lambda s, b=btn_id, k=kc, sh=shift: buttons.remap(s, b, k, profile=slot, shift=sh)))
+
+    # Continuous Trigger (rapid-fire), one boolean per button. Written after
+    # the bindings above deliberately: a remap of an unconfigured slot uses
+    # the 2-byte allocate form, which rewrites the record's marker+keycode,
+    # and applying rapid-fire first would leave it fighting a later allocate
+    # on the same record. Bindings first, flags second.
+    baseline_ct = (baseline or {}).get("continuous_trigger") or {}
+    for btn, enabled in (state.get("continuous_trigger") or {}).items():
+        if enabled is None:
+            continue
+        if baseline is not None and baseline_ct.get(btn) == enabled:
+            skipped += 1
+            continue
+        steps.append((f"Continuous Trigger {btn}={enabled}",
+                       lambda s, b=btn, v=enabled: buttons.set_continuous_trigger(s, b, v, profile=slot)))
 
     button_step_count = len(steps)
     total_button_entries = sum(len(state["buttons"].get(layer, {})) for layer in ("default", "shift"))
