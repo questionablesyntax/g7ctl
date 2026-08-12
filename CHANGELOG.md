@@ -8,6 +8,14 @@ adheres to [semantic versioning](https://semver.org/).
 
 ### Added
 
+- **Per-button rapid-fire (Continuous Trigger).** The controller can repeat
+  a button while you hold it, and that setting is now readable and writable:
+  a checkbox per button on the Buttons tab, `g7ctl continuous-trigger <button>
+  on|off`, and a `continuous_trigger` section in state files. It is
+  independent of the button's binding — turning it on doesn't change what the
+  button sends. There is no rate setting; the controller has one fixed rate.
+  Not offered for LT/RT, which store their bindings differently and have no
+  such setting to write.
 - **Battery level.** `g7ctl battery` reports the controller's charge and
   whether it is charging. This costs nothing on the wire: the controller
   broadcasts its charge continuously while connected, so reading it sends no

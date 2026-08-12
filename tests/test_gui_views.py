@@ -475,3 +475,72 @@ class UnconfiguredCurveTest(unittest.TestCase):
         side.save_into(out)
         self.assertEqual(out["curve"]["points"], [[94, 23], [176, 79], [232, 161]],
                          "should seed from Concave, the preset that was showing")
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class ButtonsViewContinuousTriggerTest(unittest.TestCase):
+    """Rapid-fire checkboxes on the Buttons tab.
+
+    Scoped to the data plumbing -- load a state in, edit, read it back out --
+    because that is what a headless run can actually prove. Offscreen Qt will
+    happily report a widget as visible when nothing was ever painted, so
+    nothing here is evidence about how the tab *looks*; the column's
+    appearance still needs a human on a real desktop.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _view(self):
+        from g7ctlc.views.buttons_view import ButtonsView
+        return ButtonsView()
+
+    def test_flags_round_trip(self):
+        view = self._view()
+        state = state_mod.default_state_dict()
+        state["continuous_trigger"] = {"a": True, "y": True}
+        view.load_state(state)
+        self.assertTrue(view._continuous["a"].isChecked())
+        self.assertTrue(view._continuous["y"].isChecked())
+        self.assertFalse(view._continuous["b"].isChecked())
+
+        view._continuous["b"].setChecked(True)
+        view._continuous["a"].setChecked(False)
+        self.assertEqual(state["continuous_trigger"]["b"], True)
+        self.assertEqual(state["continuous_trigger"]["a"], False)
+        self.assertEqual(state["continuous_trigger"]["y"], True)
+
+    def test_triggers_have_no_checkbox_at_all(self):
+        # LT/RT have no button-table record, so offering a checkbox would be
+        # offering a control that cannot be written -- see
+        # pyg7.buttons.continuous_trigger_offset().
+        view = self._view()
+        self.assertNotIn("lt", view._continuous)
+        self.assertNotIn("rt", view._continuous)
+
+    def test_every_table_slot_the_gui_shows_has_a_checkbox(self):
+        from pyg7.buttons import BUTTON_TABLE_SLOTS
+        view = self._view()
+        for slot in BUTTON_TABLE_SLOTS:
+            if slot is not None:
+                self.assertIn(slot, view._continuous, f"{slot} has no rapid-fire checkbox")
+
+    def test_written_flags_are_accepted_by_validate_state(self):
+        # The view writes a bool for every slot, including unbound ones. If
+        # that shape didn't validate, the GUI would build states it cannot
+        # save -- which is only caught by running the two together.
+        view = self._view()
+        state = state_mod.default_state_dict()
+        view.load_state(state)
+        view._continuous["a"].setChecked(True)
+        state_mod.validate_state(state)
+
+    def test_shift_layer_hides_the_column(self):
+        # Rapid-fire is per-profile; the Shift layer is device-global. Note
+        # this asserts the visibility *flag*, not that anything was painted.
+        view = self._view()
+        view.set_layer("shift")
+        self.assertFalse(view.continuous_header.isVisible())
+        view.set_layer("default")
