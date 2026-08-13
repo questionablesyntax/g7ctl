@@ -79,7 +79,16 @@ BATTERY_MAX = 100
 # not sweep the selector space casually -- see PROTOCOL.md "Device info".
 CMD_DEVICE_INFO = 0x01
 INFO_FIRMWARE = 0x09
-INFO_UNKNOWN_0B = 0x0b
+# The ACTIVE profile -- which one the controller is physically using, as a
+# plain 1-4. Confirmed 2026-08-12: reads 0x01 on Profile 1 (six separate
+# readings, including three from July captures) and 0x03 immediately after
+# an M+A switch to Profile 3.
+#
+# This is why it was never found in storage. Ruled out of all six config
+# blobs, the 0x10 input stream and report 0x20 before anyone looked here --
+# it is device *state*, and CMD_DEVICE_INFO is the channel for that.
+INFO_ACTIVE_PROFILE = 0x0b
+PROFILE_MIN, PROFILE_MAX = 1, 4
 
 # Chunk size used by every observed real request except a region's final
 # (shorter) chunk. Confirmed via live capture: a profile's full config blob

@@ -43,6 +43,13 @@ BATTERY_POLL_INTERVAL = 30.0
 # vendor mode costs the whole session. Timeouts here are swallowed, not raised.
 BATTERY_READ_TIMEOUT = 0.3
 
+# The active profile changes only when the user presses a combo on the pad,
+# so this is polled lazily too -- but faster than battery, since seeing a
+# stale profile indicator right after switching is exactly the confusion
+# this is meant to remove.
+ACTIVE_PROFILE_INTERVAL = 5.0
+ACTIVE_PROFILE_TIMEOUT = 0.5
+
 
 class DeviceWatcher(QObject):
     state_changed = pyqtSignal(str)  # "disconnected" | "connecting" | "connected" | "paused" | "no_controller"
@@ -58,6 +65,10 @@ class DeviceWatcher(QObject):
     # Firmware version string, read once per connection (it cannot change
     # while the device is attached).
     firmware_known = pyqtSignal(str)
+    # Which profile the controller is physically on, 1-4. Polled, because
+    # unlike firmware it changes -- the user can switch it on the pad at any
+    # time with M+Y/B/A/X.
+    active_profile_changed = pyqtSignal(int)
 
     def __init__(self) -> None:
         super().__init__()
@@ -75,6 +86,8 @@ class DeviceWatcher(QObject):
         # changed while disconnected).
         self._dock_known = False
         self._firmware_done = False
+        self._active_due = 0.0
+        self._active_last = None
         self._battery_due = 0.0   # monotonic deadline for the next sample
         self._battery_last = None  # (percent, charging), for change-only emits
 
@@ -148,6 +161,7 @@ class DeviceWatcher(QObject):
                     self._drain_jobs(session)
                     session.heartbeat()
                     self._read_firmware_once(session)
+                    self._poll_active_profile(session)
                     self._poll_battery(session)
                     time.sleep(HEARTBEAT_INTERVAL)
                 except usb.core.USBError as exc:
@@ -172,6 +186,8 @@ class DeviceWatcher(QObject):
         BATTERY_POLL_INTERVAL later.
         """
         self._battery_due = 0.0
+        self._active_due = 0.0
+        self._active_last = None
         self._firmware_done = False
         if self._battery_last is not None:
             self._battery_last = None
@@ -198,6 +214,29 @@ class DeviceWatcher(QObject):
             return
         if info.controller:
             self.firmware_known.emit(info.controller)
+
+    def _poll_active_profile(self, session: VendorSession) -> None:
+        """Sample the active profile, at most every ACTIVE_PROFILE_INTERVAL.
+
+        Polled rather than read once: the user can change it on the pad at
+        any moment. Same failure policy as battery -- everything short of a
+        real USBError is swallowed, because a stale profile indicator is not
+        worth tearing down a working session for.
+        """
+        now = time.monotonic()
+        if now < self._active_due:
+            return
+        self._active_due = now + ACTIVE_PROFILE_INTERVAL
+        try:
+            value = session.read_active_profile(timeout=ACTIVE_PROFILE_TIMEOUT)
+        except usb.core.USBError:
+            raise
+        except Exception as exc:
+            log.debug("active-profile sample skipped: %r", exc)
+            return
+        if value != self._active_last:
+            self._active_last = value
+            self.active_profile_changed.emit(value)
 
     def _poll_battery(self, session: VendorSession) -> None:
         """Sample charge off the input stream, at most every
@@ -342,6 +381,8 @@ class DeviceWatcher(QObject):
         self._last_error = None
         self._dock_known = False
         self._firmware_done = False
+        self._active_due = 0.0
+        self._active_last = None
         self._battery_due = 0.0   # monotonic deadline for the next sample
         self._battery_last = None  # (percent, charging), for change-only emits  # a fresh connection earns one real dock read
         return session

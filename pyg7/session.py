@@ -16,8 +16,11 @@ from .constants import (
     EP_IN,
     EP_OUT,
     IFACE,
+    INFO_ACTIVE_PROFILE,
     INFO_FIRMWARE,
     INPUT_FRAME_MARKER,
+    PROFILE_MAX,
+    PROFILE_MIN,
     READ_CHUNK_LENGTH,
     READ_RESPONSE_MARKER,
     READ_SUBCOMMAND,
@@ -449,6 +452,27 @@ class VendorSession:
         else:
             controller = None
         return FirmwareInfo(controller=controller, raw=text, groups=tuple(groups))
+
+    def read_active_profile(self, timeout: Optional[float] = None) -> int:
+        """Which profile the controller is physically on, 1-4.
+
+        Not stored in any config blob -- it is device state, and this is the
+        channel the device uses to describe itself. Every category targets a
+        profile explicitly, so nothing in this library *depends* on the
+        active profile; this exists so a UI can stop implying the user is
+        editing the profile they are playing on when they are not.
+
+        Raises ValueError on anything outside 1-4 rather than passing a
+        nonsense profile number to a caller that will use it to address
+        writes.
+        """
+        payload = self.read_device_info(INFO_ACTIVE_PROFILE, timeout=timeout)
+        value = payload[0] if payload else None
+        if value is None or not PROFILE_MIN <= value <= PROFILE_MAX:
+            raise ValueError(
+                f"active profile out of range: {value!r} (expected {PROFILE_MIN}-{PROFILE_MAX}). "
+                "Either the device-info layout changed or this is not the active-profile field.")
+        return value
 
     def probe_controller_live(self, timeout: Optional[float] = None) -> bool:
         """Is there an actual controller answering on the other end, not just

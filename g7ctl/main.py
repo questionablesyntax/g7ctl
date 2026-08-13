@@ -256,6 +256,12 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
                           help=f"Seconds between heartbeats (default {state_mod.WRITE_HEARTBEAT_INTERVAL})")
 
     sub.add_parser(
+        "active-profile",
+        help="Show which profile the controller is physically using (device must already be "
+             "in vendor mode). Note every other command targets a profile explicitly, so this "
+             "is informational -- it does not change what --profile does.")
+
+    sub.add_parser(
         "firmware",
         help="Show the controller's firmware version (device must already be in vendor mode).")
 
@@ -387,10 +393,25 @@ def _handle_state_command(sess: VendorSession, args: argparse.Namespace) -> bool
 
     if args.action == "read-state":
         state = state_mod.read_state(sess, slot=args.profile)
+        # Reading Profile 2 while the controller is playing Profile 1 is a
+        # perfectly normal thing to do -- every category targets a profile
+        # explicitly -- but it used to be invisible, which made it easy to
+        # believe you were inspecting the profile in use.
+        try:
+            active = sess.read_active_profile()
+        except Exception:
+            active = None
+        if active is not None and active != args.profile:
+            print(f"Note: the controller is currently using Profile {active}, "
+                  f"not the Profile {args.profile} shown below.")
         _print_state(state, args.profile)
         if args.save:
             state_mod.save_state(args.save, state)
             print(f"Saved to {args.save}")
+        return True
+
+    if args.action == "active-profile":
+        print(f"  Active profile: {sess.read_active_profile()}")
         return True
 
     if args.action == "firmware":

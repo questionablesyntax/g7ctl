@@ -446,3 +446,55 @@ class BatteryLabelTest(unittest.TestCase):
         w.set_battery(46, False)
         w.clear_battery()
         self.assertEqual(w.battery_label.text(), "")
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class ActiveProfileMarkerTest(unittest.TestCase):
+    """Roadmap 32: the selector picks what you EDIT; this shows what you PLAY.
+
+    Data plumbing only -- offscreen Qt paints nothing, so how the combo
+    actually reads on screen is unverified here.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+        return MainWindow()
+
+    def _texts(self, w):
+        return [w.profile_combo.itemText(i) for i in range(w.profile_combo.count())]
+
+    def test_marks_only_the_active_profile(self):
+        w = self._window()
+        w.set_active_profile(3)
+        texts = self._texts(w)
+        self.assertIn("Profile 3 (in use)", texts)
+        self.assertIn("Profile 1", texts)
+        self.assertEqual(sum("(in use)" in t for t in texts), 1)
+
+    def test_switching_moves_the_marker_rather_than_adding_one(self):
+        w = self._window()
+        w.set_active_profile(3)
+        w.set_active_profile(2)
+        texts = self._texts(w)
+        self.assertIn("Profile 2 (in use)", texts)
+        self.assertIn("Profile 3", texts)
+        self.assertEqual(sum("(in use)" in t for t in texts), 1)
+
+    def test_the_shift_entry_is_never_marked(self):
+        # The Shift layer is not a profile and cannot be "in use".
+        w = self._window()
+        w.set_active_profile(1)
+        self.assertTrue(any("Shift Layer" in t and "(in use)" not in t for t in self._texts(w)))
+
+    def test_marking_does_not_change_the_selection(self):
+        # setItemText must not fire _on_profile_changed -- that would kick
+        # off a device read every time the poll noticed the same profile.
+        w = self._window()
+        before = w.profile_combo.currentIndex()
+        w.set_active_profile(4)
+        self.assertEqual(w.profile_combo.currentIndex(), before)

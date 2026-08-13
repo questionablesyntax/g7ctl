@@ -355,3 +355,38 @@ class FirmwareVersionTest(unittest.TestCase):
     def test_times_out_rather_than_hanging(self):
         with self.assertRaises(TimeoutError):
             VendorSession(_FakeReadDevice([])).read_firmware_version(timeout=0.05)
+
+
+class ActiveProfileTest(unittest.TestCase):
+    """CMD_DEVICE_INFO selector 0x0b -- which profile the controller is on.
+
+    Confirmed 2026-08-12: 0x01 on Profile 1 across six readings (three of
+    them from July captures) and 0x03 immediately after switching to Profile
+    3 with M+A. It is not in any config blob, the input stream or report
+    0x20 -- all ruled out with controls before anyone looked at this channel.
+    """
+
+    def test_reads_the_profile_number(self):
+        for slot in (1, 2, 3, 4):
+            dev = _FakeReadDevice([_info_report(0x0b, bytes([slot]))])
+            self.assertEqual(VendorSession(dev).read_active_profile(), slot)
+
+    def test_sends_the_documented_selector(self):
+        from pyg7.constants import CMD_DEVICE_INFO, INFO_ACTIVE_PROFILE
+        dev = _FakeReadDevice([_info_report(0x0b, b"\x01")])
+        VendorSession(dev).read_active_profile()
+        _endpoint, sent = dev.written[0]
+        self.assertEqual(sent[3], CMD_DEVICE_INFO)
+        self.assertEqual(sent[4], INFO_ACTIVE_PROFILE)
+
+    def test_rejects_an_out_of_range_profile(self):
+        # A caller could address writes with this. Better to fail loudly
+        # than hand back a profile number the device cannot have.
+        for bad in (0, 5, 0xFF):
+            dev = _FakeReadDevice([_info_report(0x0b, bytes([bad]))])
+            with self.assertRaises(ValueError):
+                VendorSession(dev).read_active_profile()
+
+    def test_skips_the_input_stream_on_the_shared_pipe(self):
+        dev = _FakeReadDevice([_input_frame(46), _info_report(0x0b, b"\x02")])
+        self.assertEqual(VendorSession(dev).read_active_profile(), 2)

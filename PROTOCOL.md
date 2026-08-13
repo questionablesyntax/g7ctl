@@ -143,12 +143,28 @@ length truncates the answer, which is precisely the bug that shipped here
 first. The firmware string ends at its own UTF-16 NUL.
 
 Only two selectors appear in the corpus, because these are the only two Nexus
-asks for:
+asks for -- and between them they answer both questions this protocol could
+not otherwise answer about the device itself:
 
 | selector | response | reading |
 |---|---|---|
 | `0x09` | `3c 0a 30 00 32 00 ...` | length 10, a 4-digit UTF-16LE string. **Transport-dependent** -- see below |
-| `0x0b` | `3c 0c 01` | length 12, value `01` |
+| `0x0b` | `3c 0c [N]` | **the ACTIVE profile**, 1-4 |
+
+**Selector `0x0b` is the active profile** -- which of the four the controller
+is physically using, as a plain `1`-`4`. Confirmed 2026-08-12: `0x01` across
+six readings on Profile 1 (three of them from July captures) and `0x03`
+immediately after an `M`+`A` switch to Profile 3.
+
+This is why it was never found in storage, and the search that preceded it is
+worth recording so nobody repeats it. The active profile is **not** in any of
+the six config blobs (ruled out by comparing dumps taken on different
+profiles), **not** in the `0x10` input stream and **not** in report `0x20`
+(both ruled out with a same-profile control and a return-trip test). It is not
+configuration at all -- it is device state, and `CMD=0x01` is the channel the
+device uses to describe itself rather than its settings. Every category
+targets a profile explicitly, so nothing needs this to write correctly; it
+exists so a UI can stop implying you are editing the profile you are playing.
 
 **Selector `0x09` is the controller's firmware version.** Confirmed
 2026-08-12 against the version the owner reads off the controller itself:
