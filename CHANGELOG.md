@@ -8,6 +8,10 @@ adheres to [semantic versioning](https://semver.org/).
 
 ### Added
 
+- **Firmware version.** `g7ctl firmware` reports the controller's firmware
+  version, and the GUI shows it in the connection status tooltip. Useful on
+  its own for bug reports, and the groundwork for anything that ever needs to
+  know what the controller is running.
 - **Battery level in the GUI.** The charge now shows in the status bar
   whenever the controller is connected, alongside whether it is charging. It
   updates on its own and costs nothing: the controller already broadcasts
