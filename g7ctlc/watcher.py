@@ -55,6 +55,9 @@ class DeviceWatcher(QObject):
     battery_changed = pyqtSignal(int, bool)
     # No battery reading available (disconnected, or the stream went quiet).
     battery_unknown = pyqtSignal()
+    # Firmware version string, read once per connection (it cannot change
+    # while the device is attached).
+    firmware_known = pyqtSignal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -71,6 +74,7 @@ class DeviceWatcher(QObject):
         # connection is still worth one real dock read, in case something
         # changed while disconnected).
         self._dock_known = False
+        self._firmware_done = False
         self._battery_due = 0.0   # monotonic deadline for the next sample
         self._battery_last = None  # (percent, charging), for change-only emits
 
@@ -143,6 +147,7 @@ class DeviceWatcher(QObject):
                 try:
                     self._drain_jobs(session)
                     session.heartbeat()
+                    self._read_firmware_once(session)
                     self._poll_battery(session)
                     time.sleep(HEARTBEAT_INTERVAL)
                 except usb.core.USBError as exc:
@@ -167,9 +172,32 @@ class DeviceWatcher(QObject):
         BATTERY_POLL_INTERVAL later.
         """
         self._battery_due = 0.0
+        self._firmware_done = False
         if self._battery_last is not None:
             self._battery_last = None
             self.battery_unknown.emit()
+
+    def _read_firmware_once(self, session: VendorSession) -> None:
+        """Read the firmware version a single time per connection.
+
+        Unlike battery this is not polled: it cannot change while the device
+        is attached, and every extra device-info query is a command on a
+        channel where unsupported selectors are known to end the session.
+        One failure is not retried for the same reason -- the version is
+        cosmetic and not worth spending commands on.
+        """
+        if self._firmware_done:
+            return
+        self._firmware_done = True
+        try:
+            info = session.read_firmware_version(timeout=1.0)
+        except usb.core.USBError:
+            raise
+        except Exception as exc:
+            log.debug("firmware read skipped: %r", exc)
+            return
+        if info.controller:
+            self.firmware_known.emit(info.controller)
 
     def _poll_battery(self, session: VendorSession) -> None:
         """Sample charge off the input stream, at most every
@@ -313,6 +341,7 @@ class DeviceWatcher(QObject):
         self._set_state("connected")
         self._last_error = None
         self._dock_known = False
+        self._firmware_done = False
         self._battery_due = 0.0   # monotonic deadline for the next sample
         self._battery_last = None  # (percent, charging), for change-only emits  # a fresh connection earns one real dock read
         return session

@@ -256,6 +256,10 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
                           help=f"Seconds between heartbeats (default {state_mod.WRITE_HEARTBEAT_INTERVAL})")
 
     sub.add_parser(
+        "firmware",
+        help="Show the controller's firmware version (device must already be in vendor mode).")
+
+    sub.add_parser(
         "battery",
         help="Show the controller's charge level (device must already be in vendor mode). "
              "Read-only: this issues no command at all, since the value arrives unprompted "
@@ -387,6 +391,20 @@ def _handle_state_command(sess: VendorSession, args: argparse.Namespace) -> bool
         if args.save:
             state_mod.save_state(args.save, state)
             print(f"Saved to {args.save}")
+        return True
+
+    if args.action == "firmware":
+        info = sess.read_firmware_version()
+        if info.controller:
+            print(f"  Firmware: {info.controller}")
+        else:
+            print(f"  Firmware: unrecognised format, raw={info.raw!r}")
+        # Extra groups are shown raw rather than labelled. On a v2.4.4
+        # controller reached over the dongle the answer is "02440152", and
+        # 0152 is also the dongle's bcdDevice -- suggestive, but not
+        # established, and a wrong label here would be worse than none.
+        if len(info.groups) > 1:
+            print(f"  (device also reported: {' '.join(info.groups[1:])} -- undecoded)")
         return True
 
     if args.action == "battery":

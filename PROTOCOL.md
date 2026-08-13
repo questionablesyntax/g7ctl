@@ -131,10 +131,19 @@ so any such census that does not pin `usb.device_address` will report other
 hardware's traffic as controller commands -- an earlier one here did. The G7
 uses four report IDs in total: `0x03` and `0x0f` OUT, `0x10` and `0x20` IN.
 
-**Device info** (`CMD=0x01`): byte 4 selects *which* field is returned; the
-answer arrives on `IN 0x10` as `3c [LEN] [...]`, the same length-prefixed
-shape config reads use. Only two selectors appear in the corpus, because
-these are the only two Nexus asks for:
+**Device info** (`CMD=0x01`): byte 4 of the command selects *which* field is
+returned. The answer arrives on `IN 0x10` as `3c [SELECTOR+1] [...]`.
+
+**That byte is an echo of the selector, not a length** -- `0x09` answers
+`0x0a`, `0x0b` answers `0x0c` -- and this matters because it looks exactly
+like the length prefix config reads use. It does not track payload size: it
+reads `0x0a` for the 8-byte firmware string in the July captures and the same
+`0x0a` for the 16-byte string current firmware returns. Reading it as a
+length truncates the answer, which is precisely the bug that shipped here
+first. The firmware string ends at its own UTF-16 NUL.
+
+Only two selectors appear in the corpus, because these are the only two Nexus
+asks for:
 
 | selector | response | reading |
 |---|---|---|
@@ -159,6 +168,13 @@ this exchange was wired and every one predates the update, so the first
 reading of the split was "wired says `0209`, dongle says `0244`, therefore
 this is the *dongle's* version over RF." That fit the data perfectly and was
 completely wrong. The confounder was time, not transport.
+
+**The second group is not the dongle's firmware either.** Current firmware
+answers `"02440152"`; the obvious guess is that `0152` is the dongle, and it
+is wrong -- the owner's dongle reports v2.0.9, not v1.5.2. `0152` does match
+the USB descriptor's `bcdDevice` exactly, so a hardware/descriptor revision
+is the better guess, but it stays a guess. `pyg7` returns extra groups raw
+and unlabelled, and `g7ctl firmware` prints them marked "undecoded".
 
 **Do not read the leading zero as part of a two-digit major**, and note the
 format cannot express a component above 9 -- a v2.10.0 would have to encode

@@ -277,3 +277,81 @@ class BatteryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _info_report(selector: int, payload: bytes) -> bytes:
+    """A CMD_DEVICE_INFO answer.
+
+    Byte 4 is `selector + 1`, an echo -- NOT a length. Confirmed on both
+    known selectors, and it stays 0x0a for the firmware string whether that
+    string is 8 bytes (July captures) or 16 (current firmware). Building the
+    fake this way is the point: an earlier version of this helper wrote a
+    real length there, which let a parser that truncated on it pass.
+    """
+    from pyg7.constants import READ_RESPONSE_MARKER, REPORT_ID_READ_RESPONSE
+    pkt = bytearray(64)
+    pkt[0] = REPORT_ID_READ_RESPONSE
+    pkt[3] = READ_RESPONSE_MARKER
+    pkt[4] = (selector + 1) & 0xFF
+    pkt[5:5 + len(payload)] = payload
+    return bytes(pkt)
+
+
+def _fw(text: str) -> bytes:
+    from pyg7.constants import INFO_FIRMWARE
+    # NUL-terminated, like the device: the terminator is the only thing that
+    # marks where the string ends.
+    return _info_report(INFO_FIRMWARE, text.encode("utf-16-le") + b"\x00\x00")
+
+
+class FirmwareVersionTest(unittest.TestCase):
+    """CMD_DEVICE_INFO selector 0x09 -- the controller's firmware version.
+
+    Both literals here are real: "0209" is what every July capture returned
+    (the controller ran v2.0.9 then) and "02440152" is what the same
+    controller returned live once it was on v2.4.4, confirmed against the
+    version shown on the device itself.
+    """
+
+    def test_parses_the_confirmed_value(self):
+        dev = _FakeReadDevice([_fw("02440152")])
+        self.assertEqual(VendorSession(dev).read_firmware_version().controller, "2.4.4")
+
+    def test_parses_the_older_single_group_form(self):
+        dev = _FakeReadDevice([_fw("0209")])
+        info = VendorSession(dev).read_firmware_version()
+        self.assertEqual(info.controller, "2.0.9")
+        self.assertEqual(info.groups, ("0209",))
+
+    def test_extra_groups_are_carried_but_not_decoded(self):
+        # The second group is NOT the dongle's firmware: the owner's dongle
+        # reports v2.0.9 while this field reads 0152. It matches bcdDevice
+        # instead. Carried through raw rather than labelled.
+        info = VendorSession(_FakeReadDevice([_fw("02440152")])).read_firmware_version()
+        self.assertEqual(info.groups, ("0244", "0152"))
+        self.assertEqual(info.raw, "02440152")
+
+    def test_unrecognised_format_returns_none_rather_than_inventing_a_version(self):
+        info = VendorSession(_FakeReadDevice([_fw("v2.4")])).read_firmware_version()
+        self.assertIsNone(info.controller)
+        self.assertEqual(info.raw, "v2.4")
+
+    def test_skips_input_frames_on_the_shared_pipe(self):
+        dev = _FakeReadDevice([_input_frame(46), _fw("02440152")])
+        self.assertEqual(VendorSession(dev).read_firmware_version().controller, "2.4.4")
+
+    def test_skips_read_responses_on_the_shared_pipe(self):
+        dev = _FakeReadDevice([_read_response_report(1, 0, 1, b"\x00"), _fw("0209")])
+        self.assertEqual(VendorSession(dev).read_firmware_version().controller, "2.0.9")
+
+    def test_sends_the_documented_command_and_selector(self):
+        from pyg7.constants import CMD_DEVICE_INFO, INFO_FIRMWARE
+        dev = _FakeReadDevice([_fw("0209")])
+        VendorSession(dev).read_firmware_version()
+        _endpoint, sent = dev.written[0]
+        self.assertEqual(sent[3], CMD_DEVICE_INFO)
+        self.assertEqual(sent[4], INFO_FIRMWARE)
+
+    def test_times_out_rather_than_hanging(self):
+        with self.assertRaises(TimeoutError):
+            VendorSession(_FakeReadDevice([])).read_firmware_version(timeout=0.05)

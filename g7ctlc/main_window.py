@@ -83,6 +83,7 @@ class MainWindow(QMainWindow):
         self._state = state_mod.default_state_dict("Current State")
         self._dirty = False
         self._connection_state = "disconnected"
+        self._firmware = None
         self._syncing = False  # true while either a sync-to or read-from-device job is in flight
         # Set only when *we* released the device because the window lost
         # focus, so refocusing knows to reconnect. Kept distinct from the
@@ -330,6 +331,16 @@ class MainWindow(QMainWindow):
         # coloured teaches the user to ignore the colour.
         self.battery_label.setStyleSheet("" if percent > 20 else "color: #d99a3f;")
         self.battery_label.setVisible(True)
+
+    def set_firmware(self, version: str) -> None:
+        """Record the controller's firmware version, read once per connection.
+
+        It goes in the connection label's tooltip rather than its text: the
+        version is reference information someone looks up when filing a bug,
+        not something worth spending status-bar width on every session.
+        """
+        self._firmware = version
+        self.connection_label.setToolTip(f"Controller firmware v{version}")
 
     def clear_battery(self) -> None:
         """No reading available -- hide rather than show a stale number."""
