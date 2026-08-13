@@ -116,3 +116,106 @@ class EstablishSessionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _BatterySession:
+    """Serves scripted read_battery() results; records nothing else."""
+
+    def __init__(self, results):
+        self.via_dongle = False
+        self._results = list(results)
+        self.calls = 0
+        self.timeouts = []
+
+    def read_battery(self, timeout=None):
+        self.calls += 1
+        self.timeouts.append(timeout)
+        item = self._results.pop(0) if self._results else TimeoutError("quiet")
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class BatteryPollTest(unittest.TestCase):
+    """DeviceWatcher._poll_battery().
+
+    The invariant that matters is not the reading -- it is that a battery
+    sample can never take the session down. It rides in the same loop that
+    heartbeats, and a heartbeat gap is what makes the firmware drop vendor
+    mode.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _watcher(self):
+        from g7ctlc.watcher import DeviceWatcher
+        return DeviceWatcher()
+
+    def test_emits_a_reading(self):
+        from pyg7.session import BatteryStatus
+        w = self._watcher()
+        seen = []
+        w.battery_changed.connect(lambda p, c: seen.append((p, c)))
+        w._poll_battery(_BatterySession([BatteryStatus(46, False)]))
+        self.assertEqual(seen, [(46, False)])
+
+    def test_rate_limited_between_polls(self):
+        from pyg7.session import BatteryStatus
+        w = self._watcher()
+        sess = _BatterySession([BatteryStatus(46, False), BatteryStatus(47, False)])
+        w._poll_battery(sess)
+        w._poll_battery(sess)   # immediately after -- must not sample again
+        self.assertEqual(sess.calls, 1)
+
+    def test_unchanged_reading_is_not_re_emitted(self):
+        from pyg7.session import BatteryStatus
+        w = self._watcher()
+        seen = []
+        w.battery_changed.connect(lambda p, c: seen.append((p, c)))
+        sess = _BatterySession([BatteryStatus(46, False), BatteryStatus(46, False)])
+        w._poll_battery(sess)
+        w._battery_due = 0.0
+        w._poll_battery(sess)
+        self.assertEqual(len(seen), 1)
+
+    def test_a_timeout_is_swallowed_not_raised(self):
+        # A quiet stream must not look like connection loss -- the run loop
+        # treats a raised exception as a reason to tear the session down.
+        w = self._watcher()
+        w._poll_battery(_BatterySession([TimeoutError("quiet")]))  # must not raise
+
+    def test_a_bad_frame_is_swallowed_not_raised(self):
+        w = self._watcher()
+        w._poll_battery(_BatterySession([ValueError("battery byte out of range")]))
+
+    def test_a_usb_error_still_propagates(self):
+        # Genuine connection loss is the run loop's job, not something to
+        # hide behind a missing battery reading.
+        import usb.core
+        w = self._watcher()
+        with self.assertRaises(usb.core.USBError):
+            w._poll_battery(_BatterySession([usb.core.USBError("no such device")]))
+
+    def test_read_timeout_is_much_tighter_than_a_config_read(self):
+        from g7ctlc.watcher import BATTERY_READ_TIMEOUT
+        from pyg7.session import READ_CHUNK_TIMEOUT
+        self.assertLess(BATTERY_READ_TIMEOUT, READ_CHUNK_TIMEOUT)
+
+    def test_forgetting_clears_and_lets_the_same_value_re_emit(self):
+        # Without this, the change-only emit would suppress an identical
+        # reading on reconnect and the label would stay blank.
+        from pyg7.session import BatteryStatus
+        w = self._watcher()
+        seen, gone = [], []
+        w.battery_changed.connect(lambda p, c: seen.append((p, c)))
+        w.battery_unknown.connect(lambda: gone.append(True))
+        sess = _BatterySession([BatteryStatus(46, False), BatteryStatus(46, False)])
+        w._poll_battery(sess)
+        w._forget_battery()
+        w._poll_battery(sess)
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(len(gone), 1)

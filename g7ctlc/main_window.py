@@ -296,6 +296,19 @@ class MainWindow(QMainWindow):
             "controller back without quitting."
         )
         bottom.addWidget(self.playability_label)
+        # Charge, sampled off the input stream by DeviceWatcher. Hidden
+        # entirely when there is no reading rather than showing "Battery: ?" --
+        # an unknown charge is not information, and a permanent placeholder in
+        # a status bar reads as something being wrong.
+        self.battery_label = QLabel("")
+        self.battery_label.setProperty("role", "muted")
+        self.battery_label.setToolTip(
+            "Charge as reported by the controller itself.\n\n"
+            "Read from the input stream it broadcasts while connected, so it "
+            "costs no extra USB traffic and issues no config read."
+        )
+        self.battery_label.setVisible(False)
+        bottom.addWidget(self.battery_label)
         self.error_label = QLabel("")
         self.error_label.setStyleSheet("color: #e0524f;")
         bottom.addWidget(self.error_label)
@@ -307,6 +320,21 @@ class MainWindow(QMainWindow):
         self.status_label.setProperty("role", "muted")
         bottom.addWidget(self.status_label)
         return bottom
+
+    def set_battery(self, percent: int, charging: bool) -> None:
+        """Show a charge reading. Called on the GUI thread via a queued
+        connection from DeviceWatcher.battery_changed."""
+        self.battery_label.setText(
+            f"Battery: {percent}%" + ("  (charging)" if charging else ""))
+        # Amber below 20%, and only then -- a status bar that is permanently
+        # coloured teaches the user to ignore the colour.
+        self.battery_label.setStyleSheet("" if percent > 20 else "color: #d99a3f;")
+        self.battery_label.setVisible(True)
+
+    def clear_battery(self) -> None:
+        """No reading available -- hide rather than show a stale number."""
+        self.battery_label.clear()
+        self.battery_label.setVisible(False)
 
     # --- Window geometry ----------------------------------------------------
 

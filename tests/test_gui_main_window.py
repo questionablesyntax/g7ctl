@@ -402,3 +402,47 @@ class ShiftViewSelectorTest(unittest.TestCase):
                          "Shift column visible on Profile 1 before any "
                          "profile change")
         self.assertTrue(view._combos[("a", "default")].isVisibleTo(view))
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class BatteryLabelTest(unittest.TestCase):
+    """The status-bar charge label.
+
+    Data plumbing only. Offscreen Qt reports visibility for widgets that were
+    never painted, so nothing here says how the status bar looks.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+        return MainWindow()
+
+    def test_hidden_until_there_is_a_reading(self):
+        w = self._window()
+        self.assertFalse(w.battery_label.isVisible())
+        self.assertEqual(w.battery_label.text(), "")
+
+    def test_shows_percent_and_charging(self):
+        w = self._window()
+        w.set_battery(46, False)
+        self.assertIn("46%", w.battery_label.text())
+        self.assertNotIn("charging", w.battery_label.text())
+        w.set_battery(98, True)
+        self.assertIn("charging", w.battery_label.text())
+
+    def test_low_charge_is_highlighted_and_normal_charge_is_not(self):
+        w = self._window()
+        w.set_battery(46, False)
+        self.assertEqual(w.battery_label.styleSheet(), "")
+        w.set_battery(12, False)
+        self.assertNotEqual(w.battery_label.styleSheet(), "")
+
+    def test_clearing_hides_it_rather_than_showing_a_stale_number(self):
+        w = self._window()
+        w.set_battery(46, False)
+        w.clear_battery()
+        self.assertEqual(w.battery_label.text(), "")
