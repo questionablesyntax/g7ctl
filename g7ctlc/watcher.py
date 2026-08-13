@@ -33,6 +33,16 @@ log = logging.getLogger(__name__)
 POLL_INTERVAL = 1.0        # how often to check for the device while disconnected
 HEARTBEAT_INTERVAL = 0.25  # matches the app's observed heartbeat cadence while connected
 
+# How often to sample battery off the input stream. Charge moves on the scale
+# of minutes, so this is deliberately lazy -- the cost is not the read (frames
+# are already arriving; the first one returns almost immediately) but the risk
+# of stalling the heartbeat loop, which is what keeps the session alive.
+BATTERY_POLL_INTERVAL = 30.0
+# Short on purpose, and much tighter than READ_CHUNK_TIMEOUT. A missed battery
+# sample is worth nothing; a heartbeat gap long enough for the firmware to drop
+# vendor mode costs the whole session. Timeouts here are swallowed, not raised.
+BATTERY_READ_TIMEOUT = 0.3
+
 
 class DeviceWatcher(QObject):
     state_changed = pyqtSignal(str)  # "disconnected" | "connecting" | "connected" | "paused" | "no_controller"
@@ -40,6 +50,11 @@ class DeviceWatcher(QObject):
     sync_progress = pyqtSignal(int, int, str)  # step, total, label
     sync_finished = pyqtSignal(bool, str)      # success, message
     read_finished = pyqtSignal(bool, str, object)  # success, message, state dict or None
+    # percent, charging. Emitted only when the reading changes, so the GUI
+    # thread isn't woken every poll to repaint an identical label.
+    battery_changed = pyqtSignal(int, bool)
+    # No battery reading available (disconnected, or the stream went quiet).
+    battery_unknown = pyqtSignal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -56,6 +71,8 @@ class DeviceWatcher(QObject):
         # connection is still worth one real dock read, in case something
         # changed while disconnected).
         self._dock_known = False
+        self._battery_due = 0.0   # monotonic deadline for the next sample
+        self._battery_last = None  # (percent, charging), for change-only emits
 
     def request_sync(self, state: dict) -> None:
         """Thread-safe: call from the GUI thread. Applied on this loop's
@@ -108,6 +125,7 @@ class DeviceWatcher(QObject):
                     if session is not None:
                         self._teardown(session)
                         session = None
+                        self._forget_battery()
                     self._set_state("paused")
                     time.sleep(POLL_INTERVAL)
                     continue
@@ -125,15 +143,67 @@ class DeviceWatcher(QObject):
                 try:
                     self._drain_jobs(session)
                     session.heartbeat()
+                    self._poll_battery(session)
                     time.sleep(HEARTBEAT_INTERVAL)
                 except usb.core.USBError as exc:
                     self._emit_error(f"Lost connection: {exc}")
                     self._teardown(session)
                     session = None
+                    self._forget_battery()
                     self._set_state("disconnected")
         finally:
             if session is not None:
                 self._teardown(session)
+            self._forget_battery()
+
+    def _forget_battery(self) -> None:
+        """Drop the cached reading when the session goes away.
+
+        Without this, a charge level from a previous connection would sit on
+        screen looking live -- and the change-only emit in _poll_battery()
+        would suppress the identical value on reconnect, so a stale number
+        could outlive several sessions. Also clears the poll deadline so a
+        fresh connection samples immediately rather than up to
+        BATTERY_POLL_INTERVAL later.
+        """
+        self._battery_due = 0.0
+        if self._battery_last is not None:
+            self._battery_last = None
+            self.battery_unknown.emit()
+
+    def _poll_battery(self, session: VendorSession) -> None:
+        """Sample charge off the input stream, at most every
+        BATTERY_POLL_INTERVAL seconds.
+
+        Deliberately the least intrusive read in this loop. It issues no
+        command -- the device pushes these frames unprompted while a session
+        is open (PROTOCOL.md "Battery level") -- so unlike a config read it
+        cannot contribute to the CMD_READ wedge, and it adds nothing to the
+        bus.
+
+        Every failure short of a real USBError is swallowed. A missed sample
+        just leaves the last reading on screen; raising here would tear down
+        a perfectly good session over a cosmetic label. USBError is left to
+        propagate because that genuinely is connection loss, which the run
+        loop already handles.
+        """
+        now = time.monotonic()
+        if now < self._battery_due:
+            return
+        self._battery_due = now + BATTERY_POLL_INTERVAL
+        try:
+            status = session.read_battery(timeout=BATTERY_READ_TIMEOUT)
+        except usb.core.USBError:
+            raise
+        except Exception as exc:
+            # Includes TimeoutError (stream quiet this instant) and
+            # ValueError (a frame whose battery byte is out of range).
+            log.debug("battery sample skipped: %r", exc)
+            return
+        reading = (status.percent, status.charging)
+        if reading != self._battery_last:
+            self._battery_last = reading
+            self.battery_changed.emit(status.percent, status.charging)
 
     def _drain_jobs(self, session: VendorSession) -> None:
         try:
@@ -242,7 +312,9 @@ class DeviceWatcher(QObject):
 
         self._set_state("connected")
         self._last_error = None
-        self._dock_known = False  # a fresh connection earns one real dock read
+        self._dock_known = False
+        self._battery_due = 0.0   # monotonic deadline for the next sample
+        self._battery_last = None  # (percent, charging), for change-only emits  # a fresh connection earns one real dock read
         return session
 
     def _connect(self) -> Optional[VendorSession]:
