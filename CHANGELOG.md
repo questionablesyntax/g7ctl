@@ -8,6 +8,13 @@ adheres to [semantic versioning](https://semver.org/).
 
 ### Added
 
+- **The GUI now shows which profile the controller is actually on.** The
+  profile selector marks it "(in use)". Choosing a profile in the app has
+  always meant "which one to read and write" rather than "which one the
+  controller is playing" — the two are independent and both work correctly —
+  but nothing on screen said so, so it was easy to think you were editing the
+  profile you were using when you were not. `g7ctl active-profile` reports it,
+  and `read-state` now says plainly when you are inspecting a different one.
 - **Firmware version.** `g7ctl firmware` reports the controller's firmware
   version, and the GUI shows it in the connection status tooltip. Useful on
   its own for bug reports, and the groundwork for anything that ever needs to
