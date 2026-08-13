@@ -84,6 +84,7 @@ class MainWindow(QMainWindow):
         self._dirty = False
         self._connection_state = "disconnected"
         self._firmware = None
+        self._active_profile = None
         self._syncing = False  # true while either a sync-to or read-from-device job is in flight
         # Set only when *we* released the device because the window lost
         # focus, so refocusing knows to reconnect. Kept distinct from the
@@ -152,7 +153,10 @@ class MainWindow(QMainWindow):
             "each independently profile-scoped.\n\n"
             "\"Shift Layer (shared)\" is not a fifth profile: the controller "
             "has ONE Shift layer, used by all four profiles. Editing it there "
-            "changes it everywhere."
+            "changes it everywhere.\n\n"
+            "\"(in use)\" marks the profile the controller is physically on. "
+            "You can read and write any of them regardless -- the two are "
+            "independent."
         )
         self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
         top.addWidget(self.profile_combo)
@@ -331,6 +335,29 @@ class MainWindow(QMainWindow):
         # coloured teaches the user to ignore the colour.
         self.battery_label.setStyleSheet("" if percent > 20 else "color: #d99a3f;")
         self.battery_label.setVisible(True)
+
+    def set_active_profile(self, slot: int) -> None:
+        """Mark which profile the controller is physically using.
+
+        The selector chooses what you *edit*; this shows what you are
+        *playing*. They are independent -- every category targets a profile
+        explicitly, so editing Profile 2 while playing Profile 1 works
+        correctly -- but until now nothing on screen said so, and a user
+        editing "their" profile had no way to tell they were looking at a
+        different one.
+
+        Rendered by relabelling the combo entries rather than adding another
+        status widget, so the fact lands where the choice is made. Uses
+        setItemText, which does not change the current index and so cannot
+        fire _on_profile_changed.
+        """
+        self._active_profile = slot
+        for i in range(self.profile_combo.count()):
+            data = self.profile_combo.itemData(i)
+            if not isinstance(data, int) or data == SHIFT_VIEW:
+                continue
+            self.profile_combo.setItemText(
+                i, f"Profile {data} (in use)" if data == slot else f"Profile {data}")
 
     def set_firmware(self, version: str) -> None:
         """Record the controller's firmware version, read once per connection.

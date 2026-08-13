@@ -94,6 +94,7 @@ def main() -> int:
     watcher.battery_changed.connect(window.set_battery)
     watcher.battery_unknown.connect(window.clear_battery)
     watcher.firmware_known.connect(window.set_firmware)
+    watcher.active_profile_changed.connect(window.set_active_profile)
 
     def _on_release_toggled(release: bool) -> None:
         (watcher.pause if release else watcher.resume)()
