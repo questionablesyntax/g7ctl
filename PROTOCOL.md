@@ -141,19 +141,32 @@ these are the only two Nexus asks for:
 | `0x09` | `3c 0a 30 00 32 00 ...` | length 10, a 4-digit UTF-16LE string. **Transport-dependent** -- see below |
 | `0x0b` | `3c 0c 01` | length 12, value `01` |
 
-**Selector `0x09` is not a single fixed value.** Every capture in the corpus
-was taken **wired** (`109b`) and returned `"0209"`. Read live over the
-**dongle** (`109c`) it returns `"0244"` -- stable across three separate
-sessions, so it is a fixed property of whatever is answering rather than
-anything dynamic.
+**Selector `0x09` is the controller's firmware version.** Confirmed
+2026-08-12 against the version the owner reads off the controller itself:
 
-The straightforward reading is that it is a firmware version and the dongle
-has its own, meaning over RF you are reading the **dongle's** version and not
-the controller's. That is an inference from a clean transport split, not a
-confirmed fact. **Falsifiable prediction: read `0x09` wired and it should
-return `"0209"` again.** Until someone does that, do not present this value
-to a user as "your controller's firmware version" -- over the dongle it
-probably is not.
+| value | when | firmware |
+|---|---|---|
+| `"0209"` | every corpus capture (July 2026) | v2.0.9 |
+| `"0244"` | live, 2026-08-12 | **v2.4.4** -- matches the device |
+
+Four ASCII digits, UTF-16LE, read as a leading `0` followed by one digit each
+of major, minor and patch: `0244` -> `2.4.4`. The two samples differ because
+the firmware was **updated between them**, not because of anything about the
+connection.
+
+Worth recording how nearly this was written up wrong. Every corpus capture of
+this exchange was wired and every one predates the update, so the first
+reading of the split was "wired says `0209`, dongle says `0244`, therefore
+this is the *dongle's* version over RF." That fit the data perfectly and was
+completely wrong. The confounder was time, not transport.
+
+**Do not read the leading zero as part of a two-digit major**, and note the
+format cannot express a component above 9 -- a v2.10.0 would have to encode
+differently. Both are open questions; two samples fix the mapping for
+single-digit versions only.
+
+`bcdDevice` in the USB descriptor (`0152`) is **not** this. It is a USB
+descriptor revision and does not track firmware.
 
 **Sweeping the remaining selectors is NOT free, and this was learned the
 hard way.** 253 values have never been tried, and an attempt to sweep
