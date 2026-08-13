@@ -138,15 +138,35 @@ these are the only two Nexus asks for:
 
 | selector | response | reading |
 |---|---|---|
-| `0x09` | `3c 0a 30 00 32 00 30 00 39 00` | length 10, UTF-16LE `"0209"` -- a version string |
+| `0x09` | `3c 0a 30 00 32 00 ...` | length 10, a 4-digit UTF-16LE string. **Transport-dependent** -- see below |
 | `0x0b` | `3c 0c 01` | length 12, value `01` |
 
-The selector space is unexplored -- 253 other values have never been tried.
-This is the most promising known lead for a **model/variant identifier**:
-Nexus renders the correct one of the five G7 Pro colourways, and nothing in
-the USB descriptors distinguishes them (`product` is `"GameSir-G7 Pro"` for
-all of them, and `bcdDevice` is a firmware revision), so it must be asking
-the device something. Sweeping `CMD=0x01` selectors is cheap and read-only.
+**Selector `0x09` is not a single fixed value.** Every capture in the corpus
+was taken **wired** (`109b`) and returned `"0209"`. Read live over the
+**dongle** (`109c`) it returns `"0244"` -- stable across three separate
+sessions, so it is a fixed property of whatever is answering rather than
+anything dynamic.
+
+The straightforward reading is that it is a firmware version and the dongle
+has its own, meaning over RF you are reading the **dongle's** version and not
+the controller's. That is an inference from a clean transport split, not a
+confirmed fact. **Falsifiable prediction: read `0x09` wired and it should
+return `"0209"` again.** Until someone does that, do not present this value
+to a user as "your controller's firmware version" -- over the dongle it
+probably is not.
+
+**Sweeping the remaining selectors is NOT free, and this was learned the
+hard way.** 253 values have never been tried, and an attempt to sweep
+`0x00`-`0x1F` **dropped the device out of vendor mode after about 7
+seconds**, reverting it to `100a`. A control run in the same conditions --
+32 commands using only the two selectors Nexus itself sends, same heartbeat
+cadence, same command rate -- survived with no trouble at all. So it is the
+*unknown selectors* that end the session, not the pacing.
+
+That is a clean revert rather than the `CMD_READ` wedge, so it is recoverable
+without touching the controller. But it makes a full sweep a many-session job
+with a re-handshake after each stall, and re-handshaking rapidly is itself
+what risks the wedge. Anyone attempting it should expect that cost.
 
 **Every write needs an active heartbeat session.** An isolated write with
 no heartbeat before/after is silently discarded and the device reverts to
