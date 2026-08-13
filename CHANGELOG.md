@@ -6,6 +6,15 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Battery level in the GUI.** The charge now shows in the status bar
+  whenever the controller is connected, alongside whether it is charging. It
+  updates on its own and costs nothing: the controller already broadcasts
+  its charge while connected, so nothing extra is asked of it. The reading
+  disappears when the device is released rather than leaving a stale number
+  on screen, and turns amber below 20%.
+
 ## [0.1.8] - 2026-08-12
 
 **Two settings the controller had all along.** Rapid-fire was decoded four
