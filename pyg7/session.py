@@ -10,11 +10,13 @@ from .constants import (
     BATTERY_CHARGING_OFFSET,
     BATTERY_MAX,
     BATTERY_OFFSET,
+    CMD_DEVICE_INFO,
     CMD_HEARTBEAT,
     CMD_READ,
     EP_IN,
     EP_OUT,
     IFACE,
+    INFO_FIRMWARE,
     INPUT_FRAME_MARKER,
     READ_CHUNK_LENGTH,
     READ_RESPONSE_MARKER,
@@ -23,6 +25,19 @@ from .constants import (
 )
 
 log = logging.getLogger(__name__)
+
+
+class FirmwareInfo(NamedTuple):
+    """What CMD_DEVICE_INFO's firmware selector returns.
+
+    `controller` is the parsed version of the first 4-digit group and is
+    confirmed against real hardware. `raw` is the whole string and `groups`
+    its 4-digit pieces, both carried through undecoded -- newer firmware
+    returns more than one group and what the extras mean is not established.
+    """
+    controller: "Optional[str]"
+    raw: str
+    groups: tuple
 
 
 class BatteryStatus(NamedTuple):
@@ -360,6 +375,80 @@ class VendorSession:
                 f"battery byte out of range: {percent} > {BATTERY_MAX}. "
                 "Either the input frame layout changed or this is not an input frame.")
         return BatteryStatus(percent=percent, charging=frame[BATTERY_CHARGING_OFFSET] == 1)
+
+    def read_device_info(self, selector: int, timeout: Optional[float] = None) -> bytes:
+        """Raw payload of a CMD_DEVICE_INFO answer (everything after byte 4).
+
+        **Byte 4 is an echo of `selector + 1`, not a length.** Both known
+        selectors confirm it -- `0x09` answers `0x0a`, `0x0b` answers `0x0c`
+        -- and it does not track payload size: it reads `0x0a` for the
+        8-byte firmware string in the July captures and the same `0x0a` for
+        today's 16-byte one. Reading it as a length silently truncates.
+        Callers get the whole payload region and decide where their own data
+        ends.
+
+        **Only pass selectors known to be supported.** An unsupported one
+        drops the device out of vendor mode within seconds -- a clean revert
+        to PID_XINPUT rather than the CMD_READ wedge, so it recovers in
+        software, but it ends the session. See PROTOCOL.md "Device info".
+        """
+        if timeout is None:
+            timeout = READ_CHUNK_TIMEOUT_DONGLE if self.via_dongle else READ_CHUNK_TIMEOUT
+        self.send_raw(CMD_DEVICE_INFO, bytes([selector]))
+        deadline = time.time() + timeout
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise TimeoutError(f"no answer to device-info selector {selector:#04x} within {timeout}s")
+            try:
+                report = bytes(self.dev.read(EP_IN, 64, timeout=max(1, int(remaining * 1000))))
+            except usb.core.USBError as e:
+                if getattr(e, "errno", None) in (110, None) or "timeout" in str(e).lower():
+                    continue
+                raise
+            # Same report ID as read responses and the input stream; byte 4
+            # is a length here rather than an echoed command or the input
+            # marker, so both of those have to be excluded explicitly.
+            if (len(report) >= 6
+                    and report[0] == REPORT_ID_READ_RESPONSE
+                    and report[3] == READ_RESPONSE_MARKER
+                    and report[4] != INPUT_FRAME_MARKER
+                    and report[4] != CMD_READ
+                    and report[4] == (selector + 1) & 0xFF):
+                return report[5:]
+
+    def read_firmware_version(self, timeout: Optional[float] = None) -> "FirmwareInfo":
+        """The controller's firmware version, e.g. "2.4.4".
+
+        The device answers with a UTF-16LE string of 4-digit groups. The
+        first group is the controller's firmware and is confirmed: `"0244"`
+        against a controller reading v2.4.4, and `"0209"` in captures from
+        when it ran v2.0.9.
+
+        Later groups are NOT decoded here, only carried through in `raw`.
+        A v2.4.4 controller reached over the dongle answers `"02440152"`,
+        and `0152` is also exactly the dongle's `bcdDevice` -- so the second
+        group is plausibly the dongle's own firmware, but "plausibly" is not
+        good enough to put a number in front of a user. The July captures,
+        on older firmware, returned the first group alone.
+        """
+        payload = self.read_device_info(INFO_FIRMWARE, timeout=timeout)
+        # UTF-16LE, NUL-terminated. Length has to come from the terminator
+        # because byte 4 is a selector echo, not a length -- see
+        # read_device_info(). Trim to an even byte count first so a stray
+        # trailing byte can't produce a replacement char.
+        text = payload[:len(payload) & ~1].decode("utf-16-le", "replace").split("\x00")[0]
+        groups = [text[i:i + 4] for i in range(0, len(text), 4)]
+        first = groups[0] if groups else ""
+        # "0244" -> "2.4.4". The leading character is padding in both known
+        # samples. This cannot express a component above 9, so a future
+        # v2.10.0 would have to encode some other way -- return the raw
+        # string unparsed rather than inventing a version if it doesn't fit.
+        if len(first) == 4 and first.isdigit():
+            controller = f"{int(first[1])}.{int(first[2])}.{int(first[3])}"
+        else:
+            controller = None
+        return FirmwareInfo(controller=controller, raw=text, groups=tuple(groups))
 
     def probe_controller_live(self, timeout: Optional[float] = None) -> bool:
         """Is there an actual controller answering on the other end, not just

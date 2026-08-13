@@ -68,6 +68,19 @@ BATTERY_OFFSET = 33          # percentage, 0-100
 BATTERY_CHARGING_OFFSET = 32  # 1 while charging, 0 otherwise
 BATTERY_MAX = 100
 
+# Device-info query. Byte 4 of the command selects which field comes back;
+# the answer arrives on REPORT_ID_READ_RESPONSE as [LEN] then a UTF-16LE
+# string. Only these two selectors appear anywhere in the capture corpus,
+# because they are the only two Nexus asks for.
+#
+# WARNING: unknown selectors drop the device out of vendor mode within
+# seconds (a clean revert to PID_XINPUT, not the CMD_READ wedge). A control
+# of 32 commands using only these two, at the same rate, survives fine. Do
+# not sweep the selector space casually -- see PROTOCOL.md "Device info".
+CMD_DEVICE_INFO = 0x01
+INFO_FIRMWARE = 0x09
+INFO_UNKNOWN_0B = 0x0b
+
 # Chunk size used by every observed real request except a region's final
 # (shorter) chunk. Confirmed via live capture: a profile's full config blob
 # is exactly 480 bytes (8 chunks of 0x37 + one 0x28 remainder), and the
