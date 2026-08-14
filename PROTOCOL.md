@@ -465,7 +465,7 @@ profile byte-identical to before.
 **LT/RT have no Continuous Trigger byte that can be derived.** They have no
 record in the uniform table at all (their keycode is a lone byte inside the
 Triggers category's data -- see "Reading current config"), so there is no
-"+4 within the record" for them. Whether the triggers support rapid-fire
+"+4 within the record" for them. Whether the triggers support Continuous Trigger
 some other way is unknown, and `continuous_trigger_offset()` raises rather
 than guessing an address that would land in Triggers data.
 
