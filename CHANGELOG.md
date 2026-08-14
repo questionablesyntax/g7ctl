@@ -28,21 +28,21 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [0.1.8] - 2026-08-12
 
-**Two settings the controller had all along.** Rapid-fire was decoded four
-days ago and never wired up; battery turned out to be broadcast continuously
+**Two settings the controller had all along.** Continuous Trigger was decoded
+four days ago and never wired up; battery turned out to be broadcast continuously
 on a stream this project had been reading — and discarding — since the input
 stream was first decoded. Neither needed new protocol work, only noticing.
 
 ### Added
 
-- **Per-button rapid-fire (Continuous Trigger).** The controller can repeat
-  a button while you hold it, and that setting is now readable and writable:
-  a checkbox per button on the Buttons tab, `g7ctl continuous-trigger <button>
-  on|off`, and a `continuous_trigger` section in state files. It is
-  independent of the button's binding — turning it on doesn't change what the
-  button sends. There is no rate setting; the controller has one fixed rate.
-  Not offered for LT/RT, which store their bindings differently and have no
-  such setting to write.
+- **Per-button Continuous Trigger.** The controller can latch a button —
+  press once and it stays held until you press it again — and that setting is
+  now readable and writable: a checkbox per button on the Buttons tab,
+  `g7ctl continuous-trigger <button> on|off`, and a `continuous_trigger`
+  section in state files. It is independent of the button's binding: it
+  doesn't change what the button sends, only how long it stays sent. Not
+  offered for LT/RT, which store their bindings differently and have no such
+  setting to write.
 - **Battery level.** `g7ctl battery` reports the controller's charge and
   whether it is charging. This costs nothing on the wire: the controller
   broadcasts its charge continuously while connected, so reading it sends no
@@ -171,9 +171,8 @@ That reframing is what made the rest of this release findable.
   interior points run past 200 (the conversion between them is a guess), and
   the interpolation drawn between points is unknown, which is why nothing
   draws the curve.
-- **Continuous Trigger** (Nexus's per-button rapid-fire) is byte 4 of each
-  button's 7-byte record — a plain boolean with no rate, present on every
-  button.
+- **Continuous Trigger** is byte 4 of each button's 7-byte record — a plain
+  boolean, present on every button.
 - **The motion/gyro register block is located.** Nexus's Motion tab is
   structurally a stick config, and stores itself in a stick-shaped record at
   stick offset + `0x61`. This was the region previously catalogued as "a
