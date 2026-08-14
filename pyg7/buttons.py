@@ -454,11 +454,11 @@ def decode_button_table(blob: bytes) -> dict:
     return result
 
 
-# --- Continuous Trigger (rapid-fire) ---------------------------------------
+# --- Continuous Trigger ---------------------------------------
 #
 # Nexus's per-button "Continuous Trigger" checkbox. It lives at byte 4 of the
 # button's own 7-byte record, so its address is just the record's address
-# plus 4 -- see PROTOCOL.md "Continuous Trigger (rapid-fire)".
+# plus 4 -- see PROTOCOL.md "Continuous Trigger".
 #
 # Confirmed 2026-08-08 (test61) at two independent addresses, both of which
 # fall exactly where this arithmetic predicts: A is slot 8, record 0x7A,
@@ -492,7 +492,11 @@ def continuous_trigger_offset(slot: str) -> int:
 
 def set_continuous_trigger(session: VendorSession, slot: str, enabled: bool,
                             profile: int = 1, shift: bool = False) -> bytes:
-    """Turn rapid-fire on or off for one button.
+    """Turn Continuous Trigger on or off for one button.
+
+    Continuous Trigger latches the button: press once and it stays held
+    until pressed again. It is **not** turbo/rapid-fire -- the button does
+    not repeat, which is also why there is no rate setting to write.
 
     Independent of the button's binding: this writes one byte inside the
     record and touches neither the 0x01 marker nor the keycode, so it does

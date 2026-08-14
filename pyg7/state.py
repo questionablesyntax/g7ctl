@@ -124,7 +124,7 @@ def default_state_dict(name: str = "New State") -> dict:
         "updated_at": now,
         "controller_slot": None,
         "buttons": {"default": {}, "shift": {}},
-        # Per-button rapid-fire. Additive optional field, same convention as
+        # Per-button Continuous Trigger. Additive optional field, same convention as
         # report_rate_hz below -- absent from older state files, which still
         # validate. Default layer only: the Shift layer has its own button
         # table and so plausibly its own flags, but that is untested and
@@ -606,10 +606,10 @@ def _build_steps(state: dict, baseline: Optional[dict] = None) -> tuple[list[Ste
     # steps, appended next, were briefly being reported as button writes.
     button_step_count = len(steps)
 
-    # Continuous Trigger (rapid-fire), one boolean per button. Written after
+    # Continuous Trigger, one boolean per button. Written after
     # the bindings above deliberately: a remap of an unconfigured slot uses
     # the 2-byte allocate form, which rewrites the record's marker+keycode,
-    # and applying rapid-fire first would leave it fighting a later allocate
+    # and applying Continuous Trigger first would leave it fighting a later allocate
     # on the same record. Bindings first, flags second.
     baseline_ct = (baseline or {}).get("continuous_trigger") or {}
     for btn, enabled in (state.get("continuous_trigger") or {}).items():

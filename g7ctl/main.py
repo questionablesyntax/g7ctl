@@ -222,11 +222,13 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
 
     p_ct = sub.add_parser(
         "continuous-trigger",
-        help="Turn per-button rapid-fire on or off (device must already be in vendor mode). "
-             "Independent of the button's binding -- this doesn't change what the button sends.")
+        help="Turn per-button Continuous Trigger on or off (device must already be in vendor mode). "
+             "Continuous Trigger latches the button: press once and it stays held until pressed "
+             "again. It is not turbo -- the button does not repeat. Independent of the binding: "
+             "it doesn't change what the button sends, only how long it stays sent.")
     p_ct.add_argument("button", choices=[s for s in buttons.BUTTON_TABLE_SLOTS if s],
                        help="Button slot. LT/RT are absent: they have no button-table record, "
-                            "so no rapid-fire byte can be derived for them.")
+                            "so no Continuous Trigger byte can be derived for them.")
     p_ct.add_argument("value", choices=["on", "off"])
     p_ct.add_argument("--profile", type=int, default=1, choices=[1, 2, 3, 4], help="Target profile 1-4 (default 1)")
     _add_heartbeat_args(p_ct)
@@ -452,7 +454,7 @@ def _print_state(state: dict, slot: int) -> None:
     coverage landed, and a `read-state` that hides two thirds of what it just
     fetched makes write->read->compare testing harder than it needs to be.
     """
-    # Rapid-fire is a property of the Default layer's records, so it's shown
+    # Continuous Trigger is a property of the Default layer's records, so it's shown
     # inline there rather than as a separate block -- but only as a marker on
     # the buttons that have it, so an all-off profile reads exactly as it did
     # before this field existed.
