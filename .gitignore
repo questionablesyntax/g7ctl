@@ -17,6 +17,11 @@ venv/
 # `!.claude/settings.json`) rather than dropping this rule.
 .claude/
 
+# Machine-local agent context: paths to the private notes tree, hardware
+# quirks, "this repo is public" reminders. CLAUDE.md (committed) carries the
+# parts that are useful to anyone working on this repo.
+CLAUDE.local.md
+
 # makepkg build artifacts (packaging/)
 src/
 pkg/
