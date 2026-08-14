@@ -498,3 +498,72 @@ class ActiveProfileMarkerTest(unittest.TestCase):
         before = w.profile_combo.currentIndex()
         w.set_active_profile(4)
         self.assertEqual(w.profile_combo.currentIndex(), before)
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class ContinuousTriggerReachesTheViewTest(unittest.TestCase):
+    """Regression, reported from a game on 2026-08-14.
+
+    Rapid-fire was on for A and Y on the device and the GUI showed it off.
+    Cause: set_read_finished() merged buttons, D-pad, sticks, triggers,
+    vibration, report rate and dock -- and dropped continuous_trigger on the
+    floor. The Buttons tab then painted default_state_dict()'s all-unchecked
+    scaffold, which looks exactly like a real reading of "all off".
+
+    Second-order risk, which is why this is a data-loss bug and not a display
+    one: ButtonsView._on_edit() writes every checkbox back into the state, so
+    any later edit + Sync would have pushed those false values to the device
+    and cleared rapid-fire the user set in Nexus or via the CLI.
+
+    **These tests go through set_read_finished() deliberately.** The existing
+    coverage called ButtonsView.load_state() directly, which always worked --
+    it exercised a path the application does not take on a device read, so it
+    passed for the entire time the feature was broken.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+        return MainWindow()
+
+    def _device_state(self, continuous):
+        state = state_mod.default_state_dict("from device")
+        state["controller_slot"] = 1
+        state["continuous_trigger"] = continuous
+        return state
+
+    def test_device_values_reach_the_checkboxes(self):
+        w = self._window()
+        w.set_connection_state("connected")
+        w.set_read_finished(True, "ok", self._device_state({"a": True, "y": True, "b": False}))
+        self.assertTrue(w.buttons_view._continuous["a"].isChecked())
+        self.assertTrue(w.buttons_view._continuous["y"].isChecked())
+        self.assertFalse(w.buttons_view._continuous["b"].isChecked())
+
+    def test_the_state_dict_itself_carries_them(self):
+        w = self._window()
+        w.set_connection_state("connected")
+        w.set_read_finished(True, "ok", self._device_state({"a": True}))
+        self.assertTrue((w._state.get("continuous_trigger") or {}).get("a"))
+
+    def test_a_later_read_clears_flags_that_were_turned_off(self):
+        # Replace, not merge: a button switched off elsewhere must not stay
+        # checked because an earlier read had it on.
+        w = self._window()
+        w.set_connection_state("connected")
+        w.set_read_finished(True, "ok", self._device_state({"a": True}))
+        w.set_read_finished(True, "ok", self._device_state({"a": False}))
+        self.assertFalse(w.buttons_view._continuous["a"].isChecked())
+
+    def test_a_device_state_without_the_key_does_not_crash(self):
+        # Older state files and any read predating this feature.
+        w = self._window()
+        w.set_connection_state("connected")
+        state = self._device_state({})
+        del state["continuous_trigger"]
+        w.set_read_finished(True, "ok", state)
+        self.assertFalse(w.buttons_view._continuous["a"].isChecked())
