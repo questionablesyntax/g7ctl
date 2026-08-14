@@ -40,7 +40,7 @@
 
 pkgbase=g7ctl-git
 pkgname=('python-pyg7-git' 'g7ctl-git' 'g7ctlc-git')
-pkgver=0.1.8.r3.g4c4eb54
+pkgver=0.1.8.r10.g7f878bd
 pkgrel=1
 pkgdesc="Configure a GameSir G7 Pro controller on Linux, without Windows or the Nexus app (git)"
 arch=('any')
