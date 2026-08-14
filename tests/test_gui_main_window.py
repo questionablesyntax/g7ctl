@@ -504,7 +504,7 @@ class ActiveProfileMarkerTest(unittest.TestCase):
 class ContinuousTriggerReachesTheViewTest(unittest.TestCase):
     """Regression, reported from a game on 2026-08-14.
 
-    Rapid-fire was on for A and Y on the device and the GUI showed it off.
+    Continuous Trigger was on for A and Y on the device and the GUI showed it off.
     Cause: set_read_finished() merged buttons, D-pad, sticks, triggers,
     vibration, report rate and dock -- and dropped continuous_trigger on the
     floor. The Buttons tab then painted default_state_dict()'s all-unchecked
@@ -513,7 +513,7 @@ class ContinuousTriggerReachesTheViewTest(unittest.TestCase):
     Second-order risk, which is why this is a data-loss bug and not a display
     one: ButtonsView._on_edit() writes every checkbox back into the state, so
     any later edit + Sync would have pushed those false values to the device
-    and cleared rapid-fire the user set in Nexus or via the CLI.
+    and cleared Continuous Trigger the user set in Nexus or via the CLI.
 
     **These tests go through set_read_finished() deliberately.** The existing
     coverage called ButtonsView.load_state() directly, which always worked --

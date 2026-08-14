@@ -573,9 +573,9 @@ class CurvePointsTest(unittest.TestCase):
 
 
 class ContinuousTriggerTest(unittest.TestCase):
-    """Per-button rapid-fire -- byte 4 of the button's 7-byte record.
+    """Per-button Continuous Trigger -- byte 4 of the button's 7-byte record.
 
-    See PROTOCOL.md "Continuous Trigger (rapid-fire)". The two addresses
+    See PROTOCOL.md "Continuous Trigger". The two addresses
     pinned here are the two `test61` actually captured; everything else is
     generated from the same table the binding writes already use, which is
     exactly why those two matter.

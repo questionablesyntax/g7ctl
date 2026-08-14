@@ -479,7 +479,7 @@ class UnconfiguredCurveTest(unittest.TestCase):
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
 class ButtonsViewContinuousTriggerTest(unittest.TestCase):
-    """Rapid-fire checkboxes on the Buttons tab.
+    """Continuous Trigger checkboxes on the Buttons tab.
 
     Scoped to the data plumbing -- load a state in, edit, read it back out --
     because that is what a headless run can actually prove. Offscreen Qt will
@@ -525,7 +525,7 @@ class ButtonsViewContinuousTriggerTest(unittest.TestCase):
         view = self._view()
         for slot in BUTTON_TABLE_SLOTS:
             if slot is not None:
-                self.assertIn(slot, view._continuous, f"{slot} has no rapid-fire checkbox")
+                self.assertIn(slot, view._continuous, f"{slot} has no Continuous Trigger checkbox")
 
     def test_written_flags_are_accepted_by_validate_state(self):
         # The view writes a bool for every slot, including unbound ones. If
@@ -538,7 +538,7 @@ class ButtonsViewContinuousTriggerTest(unittest.TestCase):
         state_mod.validate_state(state)
 
     def test_shift_layer_hides_the_column(self):
-        # Rapid-fire is per-profile; the Shift layer is device-global. Note
+        # Continuous Trigger is per-profile; the Shift layer is device-global. Note
         # this asserts the visibility *flag*, not that anything was painted.
         view = self._view()
         view.set_layer("shift")

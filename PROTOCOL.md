@@ -423,11 +423,21 @@ button table** (`0x42 + n*7`), checked for all 20 slots.
 
 Not remappable: Xbox/Guide (center) button, M (hardware profile-switch).
 
-### Continuous Trigger (rapid-fire), byte 4 of a button's record
+### Continuous Trigger, byte 4 of a button's record
 
-Nexus's Buttons tab exposes a per-button "Continuous Trigger" toggle --
-rapid-fire. It is stored **inside the button's own 7-byte record**, at byte
-4, and written like any other single byte:
+Nexus's Buttons tab exposes a per-button **Continuous Trigger** toggle. It
+**latches the button**: press once and it stays held until pressed again.
+
+It is *not* turbo/rapid-fire -- the button does not repeat. This document
+described it as rapid-fire until 2026-08-14, when the owner button-tested it
+and found the latch behaviour. The misnomer came in from roadmap item 26,
+which had it as "per-button turbo" before anything was decoded, and nothing
+challenged the word once the address was confirmed. Note the tell that was
+sitting there the whole time: **there is no rate setting anywhere in the
+protocol**, which is odd for a turbo and exactly right for a latch.
+
+It is stored **inside the button's own 7-byte record**, at byte 4, and
+written like any other single byte:
 
 ```
 03 [PROFILE] 00 [record_offset + 4] 01 [00|01]
@@ -439,7 +449,8 @@ and its toggle wrote `0x7E`; `Y`'s record is at `0x8F` and its toggle wrote
 is genuinely per-button, not one global flag.
 
 **It is a plain boolean; there is no rate setting** (confirmed in Nexus's
-own UI). So the value is `01`/`00` and nothing else.
+own UI, and consistent with latch rather than turbo semantics). So the value
+is `01`/`00` and nothing else.
 
 **Every button binding has one** -- Nexus shows the checkbox on every
 button, so byte 4 is a live field in all 20 records, not something only

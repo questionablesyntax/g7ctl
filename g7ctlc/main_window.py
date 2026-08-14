@@ -643,7 +643,7 @@ class MainWindow(QMainWindow):
             self._state["buttons"].setdefault(layer, {}).update(device_state["buttons"].get(layer, {}))
         self._state["dpad_diagonal_lock"] = device_state["dpad_diagonal_lock"]
         self._state["swap_stick_dpad"] = device_state["swap_stick_dpad"]
-        # Continuous Trigger (rapid-fire). Must land BEFORE the Buttons view
+        # Continuous Trigger. Must land BEFORE the Buttons view
         # repaints on the next line, or the checkboxes are painted from the
         # previous state and the device's values arrive too late to show.
         #
@@ -652,12 +652,12 @@ class MainWindow(QMainWindow):
         # partial-coverage case for a merge to protect.
         #
         # Omitting this entirely was a real bug, reported from a game on
-        # 2026-08-14: the GUI read the device's rapid-fire state, dropped it
+        # 2026-08-14: the GUI read the device's Continuous Trigger state, dropped it
         # here, and painted default_state_dict()'s all-unchecked scaffold, so
         # buttons that were genuinely repeating showed as off. Worse, the
         # Buttons view writes every checkbox back into the state on any edit,
         # so a later Sync would have pushed those false values to the device
-        # and silently cleared rapid-fire set from Nexus or the CLI.
+        # and silently cleared Continuous Trigger set from Nexus or the CLI.
         self._state["continuous_trigger"] = device_state.get("continuous_trigger", {})
         self.buttons_view.load_state(self._state)
 

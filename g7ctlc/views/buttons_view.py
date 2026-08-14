@@ -48,20 +48,23 @@ _NAME_COL_WIDTH = 140
 _CONTINUOUS_COL_WIDTH = 90
 
 _CONTINUOUS_TOOLTIP = (
-    "Continuous Trigger (rapid-fire): the button repeats while held.\n\n"
-    "Independent of the binding -- it doesn't change what the button sends.\n"
-    "There is no rate setting; the controller has one fixed rate.\n\n"
+    "Continuous Trigger makes the button latch: press once and it stays "
+    "held until you press it again.\n\n"
+    "It is not turbo/rapid-fire -- the button does not repeat. That is also "
+    "why there is no rate setting.\n\n"
+    "Independent of the binding: it doesn't change what the button sends, "
+    "only how long it stays sent.\n\n"
     "Profile-scoped, and stored inside the button's own record, so it "
     "applies to the Default layer only."
 )
 
 # LT/RT are the exception: they have no record in the button table (their
 # keycode is a lone byte inside the Triggers category's data), so there is
-# no rapid-fire byte to derive for them -- see
+# no Continuous Trigger byte to derive for them -- see
 # pyg7.buttons.continuous_trigger_offset(). They get a blank spacer instead
 # of a checkbox, rather than a checkbox that silently does nothing.
 _CONTINUOUS_UNSUPPORTED_TOOLTIP = (
-    "The triggers have no rapid-fire setting -- they're stored differently "
+    "The triggers have no Continuous Trigger setting -- they're stored differently "
     "from the other buttons, and whether the hardware supports it for them "
     "at all is unknown."
 )
@@ -117,7 +120,7 @@ class ButtonsView(QWidget):
         # the profile selector, not beside a per-profile column.
         self.column_header = self._muted_label("Default Layer")
         header.addWidget(self.column_header, 1)
-        self.continuous_header = self._muted_label("Rapid-fire")
+        self.continuous_header = self._muted_label("Continuous Trigger")
         self.continuous_header.setFixedWidth(_CONTINUOUS_COL_WIDTH)
         self.continuous_header.setToolTip(_CONTINUOUS_TOOLTIP)
         header.addWidget(self.continuous_header)
@@ -218,7 +221,7 @@ class ButtonsView(QWidget):
         self.swap_stick_dpad.setVisible(not shift)
         self.dpad_diagonal_lock.setVisible(not shift)
         self.options_separator.setVisible(not shift)
-        # Rapid-fire lives in the per-profile button record, so it has no
+        # Continuous Trigger lives in the per-profile button record, so it has no
         # meaning on the device-global Shift screen -- and no way to be
         # written there either, same as the D-pad options above.
         self.continuous_header.setVisible(not shift)
