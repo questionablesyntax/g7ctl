@@ -599,6 +599,13 @@ def _build_steps(state: dict, baseline: Optional[dict] = None) -> tuple[list[Ste
                 steps.append((f"Button {btn} ({layer_name}) -> {keycode_name}",
                               lambda s, b=btn_id, k=kc, sh=shift: buttons.remap(s, b, k, profile=slot, shift=sh)))
 
+    # Count binding writes before anything else is appended. The diff
+    # summary below exists to tell "sync did nothing because everything
+    # matched" apart from "sync did nothing because the diff is broken", so
+    # its numbers have to mean what they say -- and Continuous Trigger
+    # steps, appended next, were briefly being reported as button writes.
+    button_step_count = len(steps)
+
     # Continuous Trigger (rapid-fire), one boolean per button. Written after
     # the bindings above deliberately: a remap of an unconfigured slot uses
     # the 2-byte allocate form, which rewrites the record's marker+keycode,
@@ -614,7 +621,6 @@ def _build_steps(state: dict, baseline: Optional[dict] = None) -> tuple[list[Ste
         steps.append((f"Continuous Trigger {btn}={enabled}",
                        lambda s, b=btn, v=enabled: buttons.set_continuous_trigger(s, b, v, profile=slot)))
 
-    button_step_count = len(steps)
     total_button_entries = sum(len(state["buttons"].get(layer, {})) for layer in ("default", "shift"))
 
     rate = state.get("report_rate_hz")
