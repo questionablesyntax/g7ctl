@@ -156,15 +156,13 @@ is physically using, as a plain `1`-`4`. Confirmed 2026-08-12: `0x01` across
 six readings on Profile 1 (three of them from July captures) and `0x03`
 immediately after an `M`+`A` switch to Profile 3.
 
-This is why it was never found in storage, and the search that preceded it is
-worth recording so nobody repeats it. The active profile is **not** in any of
-the six config blobs (ruled out by comparing dumps taken on different
-profiles), **not** in the `0x10` input stream and **not** in report `0x20`
-(both ruled out with a same-profile control and a return-trip test). It is not
-configuration at all -- it is device state, and `CMD=0x01` is the channel the
-device uses to describe itself rather than its settings. Every category
-targets a profile explicitly, so nothing needs this to write correctly; it
-exists so a UI can stop implying you are editing the profile you are playing.
+It is device state, not configuration, which is where it is *not*: the active
+profile does not appear in any of the six config blobs, in the `0x10` input
+stream, or in report `0x20`. All three were checked and ruled out.
+
+Every category targets a profile explicitly, so nothing needs this value to
+address a write correctly. It exists so a UI can show which profile is in
+use.
 
 **Selector `0x09` is the controller's firmware version.** Confirmed
 2026-08-12 against the version the owner reads off the controller itself:
@@ -179,12 +177,6 @@ of major, minor and patch: `0244` -> `2.4.4`. The two samples differ because
 the firmware was **updated between them**, not because of anything about the
 connection.
 
-Worth recording how nearly this was written up wrong. Every corpus capture of
-this exchange was wired and every one predates the update, so the first
-reading of the split was "wired says `0209`, dongle says `0244`, therefore
-this is the *dongle's* version over RF." That fit the data perfectly and was
-completely wrong. The confounder was time, not transport.
-
 **The second group is not the dongle's firmware either.** Current firmware
 answers `"02440152"`; the obvious guess is that `0152` is the dongle, and it
 is wrong -- the owner's dongle reports v2.0.9, not v1.5.2. `0152` does match
@@ -197,8 +189,10 @@ format cannot express a component above 9 -- a v2.10.0 would have to encode
 differently. Both are open questions; two samples fix the mapping for
 single-digit versions only.
 
-`bcdDevice` in the USB descriptor (`0152`) is **not** this. It is a USB
-descriptor revision and does not track firmware.
+`bcdDevice` is transport-dependent and not a reliable substitute: the
+wired controller (`109b`) enumerates with `bcdDevice = 2.44`, matching the
+firmware, while the dongle (`109c`) reports `0152`. Query the selector rather
+than reading the descriptor.
 
 **Sweeping the remaining selectors is NOT free, and this was learned the
 hard way.** 253 values have never been tried, and an attempt to sweep
@@ -236,8 +230,7 @@ data field that legitimately ends in `0x00` cannot be distinguished from
 padding, so `LEN >= observed` is consistent and only `LEN < observed` would
 falsify. Nothing falsified.
 
-Three consequences, each of which this document previously described as a
-separate mechanism:
+Three consequences:
 
 - **The prefix's third byte is a 256-byte page selector**, not a category
   tag. That is why Sticks' storage base and Dock's are both `0x100`: they
@@ -428,13 +421,8 @@ Not remappable: Xbox/Guide (center) button, M (hardware profile-switch).
 Nexus's Buttons tab exposes a per-button **Continuous Trigger** toggle. It
 **latches the button**: press once and it stays held until pressed again.
 
-It is *not* turbo/rapid-fire -- the button does not repeat. This document
-described it as rapid-fire until 2026-08-14, when the owner button-tested it
-and found the latch behaviour. The misnomer came in from roadmap item 26,
-which had it as "per-button turbo" before anything was decoded, and nothing
-challenged the word once the address was confirmed. Note the tell that was
-sitting there the whole time: **there is no rate setting anywhere in the
-protocol**, which is odd for a turbo and exactly right for a latch.
+It is *not* turbo/rapid-fire -- the button does not repeat. Confirmed by
+button-testing the hardware, 2026-08-14.
 
 It is stored **inside the button's own 7-byte record**, at byte 4, and
 written like any other single byte:
@@ -449,8 +437,7 @@ and its toggle wrote `0x7E`; `Y`'s record is at `0x8F` and its toggle wrote
 is genuinely per-button, not one global flag.
 
 **It is a plain boolean; there is no rate setting** (confirmed in Nexus's
-own UI, and consistent with latch rather than turbo semantics). So the value
-is `01`/`00` and nothing else.
+own UI). So the value is `01`/`00` and nothing else.
 
 **Every button binding has one** -- Nexus shows the checkbox on every
 button, so byte 4 is a live field in all 20 records, not something only
