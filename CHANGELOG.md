@@ -26,6 +26,26 @@ adheres to [semantic versioning](https://semver.org/).
   disappears when the device is released rather than leaving a stale number
   on screen, and turns amber below 20%.
 
+### Fixed
+
+- **The GUI could drop Continuous Trigger state on read.** A Read from
+  Device (including the automatic one on connect, or the one triggered by
+  switching profiles) merged buttons, D-pad, sticks, triggers, vibration,
+  report rate and dock settings from the device — and silently dropped
+  Continuous Trigger, painting every checkbox unchecked regardless of the
+  controller's actual state. Not just cosmetic: any edit followed by Sync
+  Now would have pushed those false values back and cleared Continuous
+  Trigger set from GameSir Nexus or the CLI. Reported from a game, where a
+  button was visibly repeating while its checkbox showed off.
+- **An unread or stale tab looked exactly like a confirmed one.** Before a
+  first successful Read from Device — or after one fails or is declined —
+  every tab showed plausible values with nothing to say they hadn't come
+  from the controller. Switching profiles was the sharpest case: a failed
+  or declined read left the *previous* profile's real values on screen
+  looking like a confirmed reading of the newly selected one. Unconfirmed
+  tabs now grey out and an explanatory banner appears above them, on top of
+  the existing Sync Now guard.
+
 ## [0.1.8] - 2026-08-12
 
 **Two settings the controller had all along.** Continuous Trigger was decoded
