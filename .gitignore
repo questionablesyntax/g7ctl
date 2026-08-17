@@ -18,6 +18,12 @@ pkg/
 *.pkg.tar.zst
 *.tar.gz
 
+# makepkg's own local bare mirror clone for packaging/git/PKGBUILD's
+# git+https source -- its .git internals, not a source checkout. Got swept
+# into a commit once by an over-broad `git add`; anchored so it can't be
+# confused with the real g7ctl/ package directory at the repo root.
+/packaging/git/g7ctl/
+
 # Local packaging test tool (see its header) -- deliberately untracked.
 /test-build.sh
 packaging/.testbuild/
