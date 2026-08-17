@@ -567,3 +567,90 @@ class ContinuousTriggerReachesTheViewTest(unittest.TestCase):
         del state["continuous_trigger"]
         w.set_read_finished(True, "ok", state)
         self.assertFalse(w.buttons_view._continuous["a"].isChecked())
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class UnconfirmedStateDisplayTest(unittest.TestCase):
+    """Roadmap: 'the GUI displays unread state as if it were real'.
+
+    A read failure only ever touched a muted status label and left Sync
+    disabled -- everything else about the screen looked exactly like a
+    confirmed reading, which is what made a real bug (Continuous Trigger
+    dropped by set_read_finished(), see ContinuousTriggerReachesTheViewTest)
+    look believable instead of obviously broken. These tests check the tabs
+    themselves go inert, not just Sync Now.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+        return MainWindow()
+
+    def test_freshly_launched_window_is_unconfirmed(self):
+        w = self._window()
+        self.assertFalse(w.tabs.isEnabled())
+        self.assertTrue(w.unconfirmed_banner.isVisibleTo(w))
+
+    def test_successful_read_confirms_the_display(self):
+        w = self._window()
+        w.set_connection_state("connected")
+        state = state_mod.default_state_dict("read")
+        w.set_read_finished(True, "read ok", state)
+        self.assertTrue(w.tabs.isEnabled())
+        self.assertFalse(w.unconfirmed_banner.isVisibleTo(w))
+
+    def test_failed_read_leaves_the_display_inert(self):
+        w = self._window()
+        w.set_connection_state("connected")
+        with mock.patch("g7ctlc.main_window.QMessageBox.warning"):
+            w.set_read_finished(False, "Read failed: timeout", None)
+        self.assertFalse(w.tabs.isEnabled())
+        self.assertTrue(w.unconfirmed_banner.isVisibleTo(w))
+
+    def test_import_confirms_the_display(self):
+        w = self._window()
+        with mock.patch.object(
+            state_mod, "load_state", return_value=state_mod.default_state_dict("imported")
+        ), mock.patch(
+            "g7ctlc.main_window.QFileDialog.getOpenFileName",
+            return_value=("/tmp/snapshot.json", ""),
+        ):
+            w._on_import()
+        self.assertTrue(w.tabs.isEnabled())
+        self.assertFalse(w.unconfirmed_banner.isVisibleTo(w))
+
+    def test_switching_profile_un_confirms_immediately_even_before_the_read_returns(self):
+        """The specific bug the roadmap item is about: a confirmed reading
+        of Profile 1 must not go on looking confirmed for Profile 2 just
+        because nothing has failed yet -- the new read hasn't even
+        finished."""
+        w = self._window()
+        w.set_connection_state("connected")
+        w.set_read_finished(True, "read ok", state_mod.default_state_dict("read"))
+        self.assertTrue(w.tabs.isEnabled())  # sanity: confirmed for Profile 1
+
+        w.profile_combo.setCurrentIndex(w.profile_combo.findData(2))
+
+        self.assertFalse(w._state_confirmed)
+        self.assertFalse(w.tabs.isEnabled())
+        self.assertTrue(w.unconfirmed_banner.isVisibleTo(w))
+
+    def test_a_declined_read_after_switching_profile_stays_unconfirmed(self):
+        """Same bug, via the path that made it easy to miss: the user
+        declines to discard unsynced edits, so no read even runs -- the
+        screen must not keep presenting Profile 1's confirmed values as
+        Profile 2's."""
+        w = self._window()
+        w.set_connection_state("connected")
+        w.set_read_finished(True, "read ok", state_mod.default_state_dict("read"))
+        w._dirty = True
+
+        with mock.patch.object(w, "_confirm", return_value=False):
+            w.profile_combo.setCurrentIndex(w.profile_combo.findData(2))
+
+        self.assertFalse(w._state_confirmed)
+        self.assertFalse(w.tabs.isEnabled())
