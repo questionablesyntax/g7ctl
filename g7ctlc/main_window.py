@@ -126,6 +126,7 @@ class MainWindow(QMainWindow):
         outer.addLayout(self._build_status_bar())
 
         self._load_views_from_state()
+        self._refresh_confirmed_display()
 
     # --- Construction helpers ----------------------------------------------
     #
@@ -196,13 +197,32 @@ class MainWindow(QMainWindow):
         top.addWidget(self.help_btn)
         return top
 
-    def _build_tabs(self) -> QTabWidget:
-        """One tab per settings category, mirroring pyg7's modules.
+    def _build_tabs(self) -> QWidget:
+        """One tab per settings category, mirroring pyg7's modules, plus the
+        banner that marks them unconfirmed (see _refresh_confirmed_display).
 
         Settings is last and deliberately apart from the rest: everything
         before it is per-profile, while the dock settings it holds are
         device-wide.
         """
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        # Roadmap: "the GUI displays unread state as if it were real" -- a
+        # freshly-launched window, or one where a read just failed, painted
+        # default_state_dict()'s scaffold or the previous profile's real
+        # values with nothing distinguishing them from a confirmed reading.
+        # Sync Now being disabled was the only signal, and it is easy to
+        # miss since nobody is trying to sync yet. This banner plus the
+        # disabled-tabs styling from _refresh_confirmed_display() puts the
+        # same fact where it can't be missed: on the values themselves.
+        self.unconfirmed_banner = QLabel(
+            "Not yet confirmed against the device -- these are placeholder "
+            "values. Read from Device once connected."
+        )
+        self.unconfirmed_banner.setStyleSheet("color: #d99a3f;")
+        layout.addWidget(self.unconfirmed_banner)
         self.tabs = QTabWidget()
         self.buttons_view = ButtonsView()
         self.sticks_view = SticksView()
@@ -220,7 +240,8 @@ class MainWindow(QMainWindow):
             # Any edit in any tab marks the state dirty, which is what
             # suppresses the automatic read-on-connect from discarding it.
             view.changed.connect(self._on_dirty)
-        return self.tabs
+        layout.addWidget(self.tabs, 1)
+        return container
 
     def _build_action_bar(self) -> QHBoxLayout:
         """File actions on the left, device actions on the right.
@@ -530,6 +551,26 @@ class MainWindow(QMainWindow):
     def _refresh_sync_btn(self) -> None:
         self.sync_btn.setEnabled(self._sync_allowed())
 
+    def _refresh_confirmed_display(self) -> None:
+        """Make an unconfirmed self._state look inert, not just un-syncable.
+
+        Disabling the whole tab widget cascades Qt's disabled state to every
+        control inside it, so this reuses the greyed-out styling every input
+        already has for QComboBox/QSpinBox/QCheckBox/etc (see theme.py) --
+        one flag, not a per-view "is this real" plumbing job. The banner
+        above the tabs (built in _build_tabs()) covers the case a user
+        never hovers or tries to interact, which "just disabled" would miss.
+
+        Must be called every time self._state_confirmed changes: on
+        construction, after every read attempt (success or failure), on
+        Import, and on a profile switch (whose value it turns False again --
+        see _on_profile_changed for why that has to happen even before the
+        resulting read comes back).
+        """
+        confirmed = self._state_confirmed
+        self.tabs.setEnabled(confirmed)
+        self.unconfirmed_banner.setVisible(not confirmed)
+
     def _on_release_clicked(self) -> None:
         self.release_toggled.emit(self._connection_state != "paused")
 
@@ -618,6 +659,7 @@ class MainWindow(QMainWindow):
         if success and device_state is not None:
             self._state_confirmed = True
         self._refresh_sync_btn()
+        self._refresh_confirmed_display()
         self.read_btn.setEnabled(self._connection_state == "connected")
         self.profile_combo.setEnabled(True)
         if not success or device_state is None:
@@ -727,6 +769,18 @@ class MainWindow(QMainWindow):
             # profile, and a sync from this screen still targets that one.
             return
         self._state["controller_slot"] = selected
+        # The values on screen right now were confirmed (if ever) against
+        # whichever profile was selected before, not this one -- they say
+        # nothing about this profile until a read of it succeeds. Clearing
+        # here, not only on read failure, is what stops a failed OR declined
+        # read from leaving the previous profile's real values on screen
+        # looking exactly like a confirmed reading of the new selection.
+        # (Roadmap: "GUI displays unread state as if it were real" -- this
+        # was the specific case that made a real bug look believable rather
+        # than obviously broken.)
+        self._state_confirmed = False
+        self._refresh_confirmed_display()
+        self._refresh_sync_btn()
         if self._connection_state == "connected" and not self._syncing:
             self.request_read_from_device()
 
@@ -800,6 +854,7 @@ class MainWindow(QMainWindow):
         self._state_confirmed = True
         self._load_views_from_state()
         self._refresh_sync_btn()
+        self._refresh_confirmed_display()
         self._set_dirty(True)
         self.status_label.setText(f"Imported {Path(path).name} -- not yet synced")
 

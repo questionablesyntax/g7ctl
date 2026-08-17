@@ -56,6 +56,17 @@ QTabBar::tab:selected {{
 QTabBar::tab:hover:!selected {{
     color: {TEXT};
 }}
+/* Unconfirmed state (main_window.py's _refresh_confirmed_display): the
+   whole QTabWidget is disabled rather than just Sync Now, so its own tab
+   labels need a disabled look too -- the default Qt palette one is barely
+   distinguishable from the enabled {TEXT_MUTED} color above on this
+   theme. */
+QTabWidget:disabled QTabBar::tab {{
+    color: {BORDER};
+}}
+QTabWidget:disabled QTabBar::tab:selected {{
+    border-bottom: 2px solid {BORDER};
+}}
 
 /* --- GroupBox --- */
 QGroupBox {{
