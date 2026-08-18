@@ -379,12 +379,12 @@ class DeviceWatcher(QObject):
 
         self._set_state("connected")
         self._last_error = None
-        self._dock_known = False
+        self._dock_known = False   # a fresh connection earns one real dock read
         self._firmware_done = False
         self._active_due = 0.0
         self._active_last = None
-        self._battery_due = 0.0   # monotonic deadline for the next sample
-        self._battery_last = None  # (percent, charging), for change-only emits  # a fresh connection earns one real dock read
+        self._battery_due = 0.0    # monotonic deadline for the next sample
+        self._battery_last = None  # (percent, charging), for change-only emits
         return session
 
     def _connect(self) -> Optional[VendorSession]:

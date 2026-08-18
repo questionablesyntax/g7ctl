@@ -409,9 +409,12 @@ class VendorSession:
                 if getattr(e, "errno", None) in (110, None) or "timeout" in str(e).lower():
                     continue
                 raise
-            # Same report ID as read responses and the input stream; byte 4
-            # is a length here rather than an echoed command or the input
-            # marker, so both of those have to be excluded explicitly.
+            # Same report ID as read responses and the input stream. Byte 4
+            # is the selector echo (see the docstring -- an echo, NOT a
+            # length), so matching it is what identifies our answer; the
+            # INPUT_FRAME_MARKER and CMD_READ exclusions guard the same byte
+            # against the two other things that legitimately arrive on this
+            # report ID while a session is open.
             if (len(report) >= 6
                     and report[0] == REPORT_ID_READ_RESPONSE
                     and report[3] == READ_RESPONSE_MARKER

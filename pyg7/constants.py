@@ -68,10 +68,14 @@ BATTERY_OFFSET = 33          # percentage, 0-100
 BATTERY_CHARGING_OFFSET = 32  # 1 while charging, 0 otherwise
 BATTERY_MAX = 100
 
-# Device-info query. Byte 4 of the command selects which field comes back;
-# the answer arrives on REPORT_ID_READ_RESPONSE as [LEN] then a UTF-16LE
-# string. Only these two selectors appear anywhere in the capture corpus,
-# because they are the only two Nexus asks for.
+# Device-info query. Byte 4 of the command selects which field comes back.
+# The answer arrives on REPORT_ID_READ_RESPONSE, and its own byte 4 is an
+# ECHO of `selector + 1` -- not a length, despite sitting where a length
+# sits in other framing on this report ID. Reading it as one truncates the
+# payload: it reads 0x0a for both an 8-byte and a 16-byte firmware string.
+# See VendorSession.read_device_info(). Only these two selectors appear
+# anywhere in the capture corpus, because they are the only two Nexus asks
+# for.
 #
 # WARNING: unknown selectors drop the device out of vendor mode within
 # seconds (a clean revert to PID_XINPUT, not the CMD_READ wedge). A control
