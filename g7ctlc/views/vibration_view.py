@@ -13,20 +13,46 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from pyg7.vibration import LEVELS
+
 LEVEL_SETTINGS = [
     ("left_grip", "Left Grip"), ("right_grip", "Right Grip"),
     ("left_trigger", "Left Trigger"), ("right_trigger", "Right Trigger"),
 ]
 
 
+def _nearest_level_index(value: Optional[int]) -> int:
+    """Which of LEVELS a value is closest to, for display -- used for both
+    the ordinary default (None -> the middle level) and for a value read
+    from state that isn't one of the five (an older export, hand-edited
+    JSON, or CLI scripting predating this restriction). Display only:
+    doesn't touch the state dict, so an off-scale value stays exactly what
+    it was until this control is actually moved -- Sync then rejects it
+    with a clear error (see pyg7.vibration._level) rather than the GUI
+    silently rewriting a file it didn't create."""
+    if value is None:
+        value = LEVELS[len(LEVELS) // 2]
+    return min(range(len(LEVELS)), key=lambda i: abs(LEVELS[i] - value))
+
+
 def _level_row() -> tuple[QSlider, QWidget]:
+    # Range is an INDEX into LEVELS, not the level itself -- the only way to
+    # make a slider land on exactly five stops is to give it exactly five
+    # positions, rather than a 0-100 range with drag snapped after the
+    # fact (which still lets a fast drag release land in between on some
+    # Qt styles). See LEVELS' own comment for why five and not 101: below
+    # 25 nothing was felt on hardware, and 25/50/75/100 are each distinctly
+    # stronger with no plateau -- matches what GameSir Nexus itself offers.
     slider = QSlider(Qt.Orientation.Horizontal)
-    slider.setRange(0, 100)
-    value_label = QLabel("50")
+    slider.setRange(0, len(LEVELS) - 1)
+    slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+    slider.setTickInterval(1)
+    slider.setPageStep(1)
+    value_label = QLabel(str(LEVELS[0]))
     value_label.setFixedWidth(30)
     value_label.setStyleSheet("font-weight: 600;")
     value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-    slider.valueChanged.connect(lambda v: value_label.setText(str(v)))
+    slider.valueChanged.connect(lambda i: value_label.setText(str(LEVELS[i])))
     row = QHBoxLayout()
     row.addWidget(slider, 1)
     row.addWidget(value_label)
@@ -53,7 +79,12 @@ class VibrationView(QWidget):
         self.sliders = {}
         for key, label in LEVEL_SETTINGS:
             slider, container = _level_row()
-            slider.setToolTip(f"{label} rumble intensity, 0-100.")
+            slider.setToolTip(
+                f"{label} rumble intensity: {', '.join(str(lvl) for lvl in LEVELS)} -- "
+                "the same five values GameSir Nexus offers. Not arbitrary: "
+                "felt-tested on hardware, values below 25 produced no "
+                "detectable vibration."
+            )
             slider.valueChanged.connect(self._on_edit)
             form.addRow(label, container)
             self.sliders[key] = slider
@@ -92,7 +123,7 @@ class VibrationView(QWidget):
         try:
             vib = state["vibration"]
             for key, slider in self.sliders.items():
-                slider.setValue(vib.get(key) if vib.get(key) is not None else 50)
+                slider.setValue(_nearest_level_index(vib.get(key)))
             for key, check in self.checks.items():
                 check.setChecked(bool(vib.get(key)))
         finally:
@@ -103,7 +134,7 @@ class VibrationView(QWidget):
             return
         vib = self._state["vibration"]
         for key, slider in self.sliders.items():
-            vib[key] = slider.value()
+            vib[key] = LEVELS[slider.value()]
         for key, check in self.checks.items():
             vib[key] = check.isChecked()
         self.changed.emit()

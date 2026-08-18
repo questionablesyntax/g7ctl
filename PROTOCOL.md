@@ -685,16 +685,30 @@ Left/Right are already distinct `SETTING_ID`s below.
 **Nexus's own sliders offer 5 positions, not 101.** Every vibration-level
 write in the capture corpus carries `00`, `19`, `32`, `4B` or `64` --
 0/25/50/75/100 -- and nothing else. The wire encoding is still a plain
-percent byte (same arrangement as Dock LED Brightness), so this is a UI
-restriction rather than a protocol one.
+percent byte (same arrangement as Dock LED Brightness), so this was
+originally read as a UI restriction rather than a protocol one.
 
-**Whether the firmware honours an off-grid value is untested.** `pyg7` and
-the GUI accept the full 0-100 range, so a user can ask for 37 -- a value
-Nexus can never produce. Nothing establishes whether the device stores 37,
-snaps it to a step, or discards the write, and no capture can answer it
-because Nexus never sends one. A write-then-read round trip would settle
-whether it is *stored*; whether the motor actually varies at that
-granularity is a separate question and not answerable from the wire at all.
+**Now confirmed on hardware, both halves of the open question above.**
+Storage is exact: write 47, read back 47; write 63, read back 63 -- the
+device is not silently snapping an off-grid value to a step. But felt
+tests on the physical motors (grip motors specifically; trigger motors
+assumed to match, not independently tested) found a real floor: nothing
+below 25 produced detectable vibration, and 24 vs. 25 was a clean,
+repeatable boundary -- sharp enough that it reads as a deliberate firmware
+gate rather than a fuzzy physical dead zone, though the two aren't
+mutually exclusive (a threshold could exist physically and still have been
+turned into a hard software floor). Above the floor, 25/50/75/100 were
+each felt as distinctly stronger than the last with no plateau -- so the
+motor is not quantized to some small step count once past the gate, only
+gated below it.
+
+**`pyg7` and the GUI now match Nexus's five values rather than exposing
+the full 0-100 range.** `vibration.set_value()` rejects anything outside
+`{0, 25, 50, 75, 100}`; the GUI's sliders snap to the same five stops. Not
+a protocol restriction -- the wire format is still a plain percent byte,
+and nothing stops a raw `03`-command write from trying an off-grid value
+-- but there is no known reason to, now that both halves of "does it do
+anything different" are answered.
 
 ## Report Rate
 

@@ -238,10 +238,10 @@ def validate_state(data: dict) -> None:
             raise StateError(f"unknown trigger side {side_name!r}")
         _validate_trigger_settings(side_data)
 
-    _validate_percent(data["vibration"].get("left_grip"), "vibration.left_grip")
-    _validate_percent(data["vibration"].get("right_grip"), "vibration.right_grip")
-    _validate_percent(data["vibration"].get("left_trigger"), "vibration.left_trigger")
-    _validate_percent(data["vibration"].get("right_trigger"), "vibration.right_trigger")
+    _validate_vibration_level(data["vibration"].get("left_grip"), "vibration.left_grip")
+    _validate_vibration_level(data["vibration"].get("right_grip"), "vibration.right_grip")
+    _validate_vibration_level(data["vibration"].get("left_trigger"), "vibration.left_trigger")
+    _validate_vibration_level(data["vibration"].get("right_trigger"), "vibration.right_trigger")
 
 
 def _is_valid_keycode_value(s: str) -> bool:
@@ -267,6 +267,16 @@ def _validate_percent(v: object, label: str) -> None:
         return
     if not isinstance(v, int) or not 0 <= v <= 100:
         raise StateError(f"{label} must be 0-100, got {v!r}")
+
+
+def _validate_vibration_level(v: object, label: str) -> None:
+    """Narrower than _validate_percent -- see vibration.LEVELS for why
+    vibration is the one percent-style setting restricted to five values
+    instead of the full 0-100 range every other one of these allows."""
+    if v is None:
+        return
+    if not isinstance(v, int) or v not in vibration.LEVELS:
+        raise StateError(f"{label} must be one of {vibration.LEVELS}, got {v!r}")
 
 
 def _validate_curve(curve: dict, label: str) -> None:

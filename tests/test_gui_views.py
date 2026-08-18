@@ -162,11 +162,14 @@ class VibrationViewRoundTripTest(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_levels_and_flags_round_trip(self):
+        # Values are 2026-08-17's felt-tested five (see pyg7.vibration.
+        # LEVELS), not arbitrary -- the widget only has five stops now, so a
+        # round-trip test needs values it can actually land on.
         from g7ctlc.views.vibration_view import VibrationView
         state = state_mod.default_state_dict("test")
         state["vibration"] = {
-            "left_grip": 17, "right_grip": 83,
-            "left_trigger": 42, "right_trigger": 61,
+            "left_grip": 25, "right_grip": 75,
+            "left_trigger": 0, "right_trigger": 100,
             "left_trigger_force": True, "left_trigger_sync": False,
             "right_trigger_force": False, "right_trigger_sync": True,
         }
@@ -176,6 +179,27 @@ class VibrationViewRoundTripTest(unittest.TestCase):
         before = copy.deepcopy(state)
         view._on_edit()  # re-save with no genuine edit -- must reproduce the same values
         self.assertEqual(state["vibration"], before["vibration"])
+
+    def test_off_scale_value_displays_at_its_nearest_stop_without_rewriting_state(self):
+        # A value outside the five stops (an older export, hand-edited
+        # JSON, or CLI scripting from before this restriction) must not
+        # crash the widget. It displays at its nearest neighbor -- but
+        # load_state() must not silently coerce the state dict itself; the
+        # original value stays until the control is actually touched, at
+        # which point _on_edit() overwrites it like any real edit. Sync
+        # rejects an untouched off-scale value with a clear error rather
+        # than the GUI quietly rewriting a file it didn't create.
+        from g7ctlc.views.vibration_view import VibrationView
+        state = state_mod.default_state_dict("test")
+        state["vibration"]["left_grip"] = 43  # nearest stop is 50
+
+        view = VibrationView()
+        view.load_state(state)
+        self.assertEqual(view.sliders["left_grip"].value(), 2)  # index of 50 in LEVELS
+        self.assertEqual(state["vibration"]["left_grip"], 43, "load_state() must not rewrite the value it was given")
+
+        view._on_edit()  # a genuine edit now DOES normalize it
+        self.assertEqual(state["vibration"]["left_grip"], 50)
 
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")

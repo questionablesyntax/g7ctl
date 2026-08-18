@@ -9,7 +9,6 @@ module docstring.
 from .constants import CMD_WRITE, prefix_triggers_vibration
 from .session import VendorSession
 from .values import SettingValue
-from .values import percent as _percent
 
 LEVEL_SETTING_IDS = {
     "left_grip": 0x20,
@@ -17,6 +16,24 @@ LEVEL_SETTING_IDS = {
     "left_trigger": 0x22,
     "right_trigger": 0x23,
 }
+
+# The firmware stores whatever byte it's sent (write 47, read back 47 --
+# confirmed on hardware), so storage itself is a genuine 0-100 scale, not
+# quantized. But felt-testing the actual motors found a hard floor: values
+# below 25 produce no perceptible vibration on either grip motor (24 and 25
+# were directly compared, repeatably -- 24 silent, 25 clearly felt), and
+# 25/50/75/100 are each felt as progressively stronger with no plateau in
+# between, which rules out the motor itself being quantized to some coarser
+# step count above the floor. GameSir Nexus's own UI only ever offers these
+# five values, which independently matches the same conclusion. Restricted
+# here to the same five so the CLI, GUI and any state file agree on what a
+# "valid" level actually is, rather than accepting 96 values whose only
+# audience is a value equal to one of these five. Trigger motors (as
+# opposed to grip) were not independently felt-tested, but Nexus applies
+# the identical five-value scale to all four settings, so the same
+# restriction is applied uniformly here rather than leaving two of the four
+# settings on a different, untested rule.
+LEVELS = (0, 25, 50, 75, 100)
 
 # Force+Sync are bit flags on ONE byte per side, not two separate settings:
 # bit0=Force, bit1=Sync. Confirmed via the toggle sequence
@@ -56,12 +73,27 @@ def decode_settings(blob: bytes) -> dict:
     return result
 
 
+def _level(value: SettingValue) -> int:
+    """Coerce to one of LEVELS, or raise -- see that constant's comment for
+    why this is five values rather than 0-100 like every other percent-style
+    setting in this library."""
+    v = int(value)
+    if v not in LEVELS:
+        raise ValueError(
+            f"vibration level must be one of {LEVELS}, got {v} -- "
+            "the firmware stores any 0-100 byte faithfully, but only these "
+            "five produce distinct felt output; anything else is either "
+            "identical to its nearest neighbor or below the motors' "
+            "perceptible floor")
+    return v
+
+
 def set_value(session: VendorSession, setting: str, value: SettingValue, profile: int = 1) -> bytes:
     setting = setting.lower()
     prefix = prefix_triggers_vibration(profile)
     if setting in LEVEL_SETTING_IDS:
         sid = LEVEL_SETTING_IDS[setting]
-        payload = prefix + bytes([sid, 0x01, _percent(value)])
+        payload = prefix + bytes([sid, 0x01, _level(value)])
     elif setting in FLAGS_SETTING_IDS:
         sid = FLAGS_SETTING_IDS[setting]
         if isinstance(value, int):
