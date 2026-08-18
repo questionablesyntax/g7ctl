@@ -56,6 +56,11 @@ arch=('any')
 url="https://github.com/questionablesyntax/g7ctl"
 license=('Apache-2.0' 'GPL-3.0-or-later')
 makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools')
+# python-pyusb because pyg7 imports usb.core at module level, so without it the
+# suite cannot even be imported. python-pyqt6 because without it every g7ctlc
+# test skips itself rather than failing -- a green check() would then mean much
+# less than it looks like it means.
+checkdepends=('python-pyusb' 'python-pyqt6')
 
 # Points at the v$pkgver release tag. Re-run `updpkgsums` on every version
 # bump -- the checksum below is specific to one tarball, and a stale one
@@ -66,6 +71,20 @@ sha256sums=('686d80a6afeb8e8c0cd00c7b5604c8cff10838befbbf5f2f1e2cd69eee4e97c4')
 build() {
   cd "$pkgbase-$pkgver"
   python -m build --wheel --no-isolation
+}
+
+check() {
+  # Runs the suite against the tarball actually being packaged, rather than
+  # trusting that it matches the checkout it was tagged from. Cheap: no
+  # hardware is involved -- every write goes to a fake session that records
+  # calls -- and it catches the packaging-specific failure the checkout
+  # cannot, a file that never made it into the archive.
+  #
+  # unittest rather than pytest so this needs no extra test-runner
+  # dependency; the suite uses only stdlib unittest features. `-t .` puts
+  # the top-level dir on the path so `tests.fakes` resolves.
+  cd "$pkgbase-$pkgver"
+  python -m unittest discover -s tests -t . -q
 }
 
 package_python-pyg7() {
