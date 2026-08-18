@@ -6,6 +6,15 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-08-17
+
+**Loose ends.** The controller could already tell you three things this
+project had never asked it: which profile it is actually playing, what
+firmware it runs, and how much charge is left. None of them needed new
+protocol work. Alongside those, the interface stopped describing two
+settings incorrectly, and stopped presenting values it had never read as
+though it had.
+
 ### Added
 
 - **The GUI now shows which profile the controller is actually on.** The
@@ -580,7 +589,8 @@ and motion/gyro is unimplemented by choice.
 - The PKGBUILD is structurally validated but has not been build-tested
   against a real release tarball.
 
-[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.5...v0.1.6
