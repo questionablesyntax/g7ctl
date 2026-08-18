@@ -35,13 +35,33 @@ adheres to [semantic versioning](https://semver.org/).
   50, 75 and 100 are each felt as distinctly stronger with no in-between
   steps that matter. GameSir Nexus has only ever offered these same five
   values. The GUI's sliders now snap to them, matching what Nexus shows,
-  and `g7ctl vibration-set`/state files reject anything else with a clear
-  error instead of silently accepting a value that was never going to do
+  and `g7ctl vibration-set` rejects anything else with a clear error
+  instead of silently accepting a value that was never going to do
   anything different from its nearest neighbor. If you scripted a
   different value before, it needs updating to one of the five.
 
+  This is a rule about what gets *written*, not about what the controller
+  is allowed to be holding. A controller left at some other level by an
+  earlier version still reads back correctly and reports its real value,
+  snapshots exported before this change still import, and a sync only
+  objects if it would actually have to write one of the offending values —
+  so an old level you aren't touching doesn't block syncing anything else.
+
 ### Fixed
 
+- **Continuous Trigger was described as rapid-fire in the interface.** The
+  Buttons tab labelled the column "Rapid-fire" and its tooltip said the
+  button repeats while held; `g7ctl continuous-trigger --help` said the
+  same. The setting is a latch — press once and it stays held until you
+  press it again — and it does not repeat, which is also why there is no
+  rate setting to go with it. Labels, tooltips and help text now say what
+  it actually does. Behaviour is unchanged; only the description was wrong.
+- **The sync summary counted Continuous Trigger writes as button writes.**
+  The line `g7ctl write-state` logs after a sync — the quickest way to tell
+  "nothing to do because everything already matched" from "nothing to do
+  because the diff is broken" — tallied Continuous Trigger changes in its
+  button-write count, so a sync that changed only a latch setting reported
+  it as a binding change.
 - **The GUI could drop Continuous Trigger state on read.** A Read from
   Device (including the automatic one on connect, or the one triggered by
   switching profiles) merged buttons, D-pad, sticks, triggers, vibration,
