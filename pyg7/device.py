@@ -148,21 +148,99 @@ def find_native_identity() -> Optional[usb.core.Device]:
     return find_device(PID_NATIVE)
 
 
+# Interface 1 is what actually distinguishes the two personalities, and on
+# firmware v2.4.4 it is the ONLY thing that does -- see is_xinput_personality().
+HID_INTERFACE_CLASS = 0x03
+PERSONALITY_INTERFACE = 1
+
+
+def _interface_classes(dev: usb.core.Device, number: int) -> list:
+    """Every alternate setting's bInterfaceClass for one interface number.
+
+    Returns [] when the descriptors can't be read -- a device that is
+    mid-re-enumeration, or gone. Callers must treat [] as "don't know"
+    rather than as any particular answer.
+    """
+    try:
+        cfg = dev.get_active_configuration()
+    except Exception:  # pragma: no cover - depends on live USB state
+        return []
+    return [i.bInterfaceClass for i in cfg if i.bInterfaceNumber == number]
+
+
+def is_xinput_personality(dev: usb.core.Device) -> bool:
+    """Is this device presenting the XInput personality (a working gamepad),
+    rather than the vendor/config one?
+
+    **PID is not a reliable answer to this, and stopped being one.** The
+    identity model in this project was built on firmware v2.0.9, where
+    XInput was `PID_XINPUT` and vendor/config was `PID_VENDOR`. On v2.4.4
+    (`bcdDevice` 0244) the controller enumerates the **XInput personality at
+    PID_VENDOR**: measured 2026-08-18 on a freshly-plugged controller
+    reporting `3537:109b` with iProduct "Xbox 360 Controller for Windows",
+    `xpad` bound, `/dev/input/js0` live, and 2531 XInput report frames
+    (`00 14 00 04 ...`) in 6s on EP 0x82. `find_device(PID_XINPUT)` finds
+    nothing at all on that firmware.
+
+    Interface 1 still separates them cleanly, and is the discriminator used
+    here because it describes function rather than labelling:
+
+    - XInput personality: interface 1 is **HID** (class 0x03), the composite
+      keyboard+mouse device that emits remapped key/mouse events.
+    - Vendor/config personality: interface 1 is not HID -- vendor class or
+      the isochronous audio pair, depending on identity and alt setting.
+
+    iProduct ("Xbox 360 Controller for Windows" vs "GameSir-G7 Pro") tracks
+    the same split, but a descriptor class is a stronger thing to branch on
+    than a marketing string.
+
+    Answers **False when the descriptors can't be read**, so an unreadable
+    device keeps this module's previous behaviour rather than becoming
+    invisible to it.
+    """
+    return HID_INTERFACE_CLASS in _interface_classes(dev, PERSONALITY_INTERFACE)
+
+
+def find_xinput_device() -> Optional[usb.core.Device]:
+    """The controller in its XInput personality, at whichever PID this
+    firmware puts it behind.
+
+    PID_XINPUT first (v2.0.9 and, presumably, anything that still uses it),
+    then the vendor PIDs filtered by personality (v2.4.4, where the XInput
+    personality lives at PID_VENDOR). Returns None if the controller isn't
+    present in that personality at all.
+    """
+    dev = find_device(PID_XINPUT)
+    if dev is not None:
+        return dev
+    for pid in (PID_VENDOR, PID_DONGLE):
+        dev = find_device(pid)
+        if dev is not None and is_xinput_personality(dev):
+            return dev
+    return None
+
+
 def find_writable_device() -> tuple[Optional[usb.core.Device], bool]:
     """Find a device *already* ready to accept 0x0f vendor writes -- the wired
     controller at PID_VENDOR or the dongle at PID_DONGLE. Returns
     (device, via_dongle) or (None, False).
 
-    Neither identity is where the hardware idles: both are reached by
-    enter_vendor_mode()'s handshake, and both fall back to PID_XINPUT once
-    heartbeats stop. This finds the ones already switched, which in practice
-    is most of the time -- a previous session usually left it there."""
-    dev = find_device(PID_VENDOR)
-    if dev is not None:
-        return dev, False
-    dev = find_device(PID_DONGLE)
-    if dev is not None:
-        return dev, True
+    Neither personality is where the hardware idles: the vendor ones are
+    reached by enter_vendor_mode()'s handshake, and fall back once heartbeats
+    stop. This finds the ones already switched, which in practice is most of
+    the time -- a previous session usually left it there.
+
+    **The PID alone is not enough to decide this.** On firmware v2.4.4 the
+    XInput personality -- a working gamepad, `xpad` bound and `js0` live --
+    also enumerates at PID_VENDOR. Matching on PID alone claimed it, which
+    detached `xpad`, took the user's controller away mid-use, and then held a
+    heartbeat loop on a device whose vendor endpoint answers nothing, which
+    presents as a wedge without being one. See is_xinput_personality().
+    """
+    for pid, via_dongle in ((PID_VENDOR, False), (PID_DONGLE, True)):
+        dev = find_device(pid)
+        if dev is not None and not is_xinput_personality(dev):
+            return dev, via_dongle
     return None, False
 
 
@@ -197,7 +275,10 @@ def enter_vendor_mode(timeout_s: float = 10.0,
     next `find_writable_device()` poll. Observed directly: same USB port,
     `disconnect` at handshake, re-enumerated as `109c` ~2s later.
     """
-    dev = find_device(PID_XINPUT)
+    # Not find_device(PID_XINPUT): on firmware v2.4.4 the XInput personality
+    # enumerates at PID_VENDOR, so looking for PID_XINPUT alone finds nothing
+    # and this reports "no device" for a controller sitting right there.
+    dev = find_xinput_device()
     if dev is None:
         if find_native_identity() is not None:
             log.error(
@@ -250,7 +331,13 @@ def enter_vendor_mode(timeout_s: float = 10.0,
         # case; both are equally valid outcomes of the same handshake.
         for pid, via_dongle in ((PID_VENDOR, False), (PID_DONGLE, True)):
             vdev = find_device(pid)
-            if vdev is not None:
+            # The personality check is what makes this a wait at all on
+            # firmware v2.4.4: the device is at PID_VENDOR both before and
+            # after the handshake, so matching on PID alone returns the
+            # *pre*-handshake device immediately and every read after it
+            # fails. Waiting for interface 1 to stop being HID waits for the
+            # thing that actually changes.
+            if vdev is not None and not is_xinput_personality(vdev):
                 log.info("Now in vendor mode (%04x:%04x, bus=%s addr=%s).",
                          VID, pid, vdev.bus, vdev.address)
                 return vdev, via_dongle

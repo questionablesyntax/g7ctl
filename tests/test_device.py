@@ -109,3 +109,118 @@ class EnterVendorModeLandingIdentityTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _FakeIntf:
+    def __init__(self, number, klass):
+        self.bInterfaceNumber = number
+        self.bInterfaceClass = klass
+
+
+class _FakeDev:
+    """Minimal stand-in exposing only what is_xinput_personality() reads.
+
+    `interfaces=None` models a device whose descriptors can't be read at all
+    (mid-re-enumeration, or unplugged between the find and the query).
+    """
+    def __init__(self, pid, interfaces, product=""):
+        self.idProduct = pid
+        self.product = product
+        self.bus = 3
+        self.address = 88
+        self._interfaces = interfaces
+
+    def get_active_configuration(self):
+        if self._interfaces is None:
+            raise OSError("descriptors unavailable")
+        return self._interfaces
+
+
+def _xinput_personality(pid):
+    """Interface 1 is the HID keyboard+mouse composite -- a working gamepad."""
+    return _FakeDev(pid, [_FakeIntf(0, 0xFF), _FakeIntf(1, 0x03)],
+                    "Xbox 360 Controller for Windows")
+
+
+def _vendor_personality(pid):
+    """Interface 1 is not HID -- vendor class, or the isochronous audio pair."""
+    return _FakeDev(pid, [_FakeIntf(0, 0xFF), _FakeIntf(1, 0xFF)], "GameSir-G7 Pro")
+
+
+class PersonalityTest(unittest.TestCase):
+    """The XInput personality moved onto PID_VENDOR in firmware v2.4.4, so
+    the PID stopped identifying which personality is present. Measured
+    2026-08-18: a freshly-plugged controller at 3537:109b, iProduct "Xbox 360
+    Controller for Windows", xpad bound and js0 live, streaming XInput report
+    frames -- while find_device(PID_XINPUT) found nothing at all.
+    """
+
+    def test_hid_interface_1_means_xinput_personality(self):
+        self.assertTrue(device.is_xinput_personality(_xinput_personality(constants.PID_VENDOR)))
+
+    def test_non_hid_interface_1_means_vendor_personality(self):
+        self.assertFalse(device.is_xinput_personality(_vendor_personality(constants.PID_VENDOR)))
+
+    def test_unreadable_descriptors_are_not_reported_as_xinput(self):
+        # "Don't know" must keep the module's previous behaviour rather than
+        # making a device invisible to find_writable_device().
+        self.assertFalse(device.is_xinput_personality(_FakeDev(constants.PID_VENDOR, None)))
+
+
+class FindWritableDeviceTest(unittest.TestCase):
+    def _patched(self, table):
+        return mock.patch.object(device, "find_device", side_effect=lambda pid: table.get(pid))
+
+    def test_refuses_a_gamepad_sitting_at_the_vendor_pid(self):
+        """The bug. Claiming this detached xpad, took the controller away
+        mid-use, and left a heartbeat loop on an endpoint that answers
+        nothing -- which looks exactly like a wedge."""
+        with self._patched({constants.PID_VENDOR: _xinput_personality(constants.PID_VENDOR)}):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIsNone(dev)
+        self.assertFalse(via_dongle)
+
+    def test_still_finds_a_genuine_vendor_mode_device(self):
+        target = _vendor_personality(constants.PID_VENDOR)
+        with self._patched({constants.PID_VENDOR: target}):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIs(dev, target)
+        self.assertFalse(via_dongle)
+
+    def test_still_finds_the_dongle(self):
+        target = _vendor_personality(constants.PID_DONGLE)
+        with self._patched({constants.PID_DONGLE: target}):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIs(dev, target)
+        self.assertTrue(via_dongle)
+
+    def test_a_gamepad_at_the_vendor_pid_does_not_mask_the_dongle(self):
+        # Order matters: the wired PID is checked first, and rejecting it
+        # must continue to the dongle rather than returning None.
+        dongle = _vendor_personality(constants.PID_DONGLE)
+        with self._patched({constants.PID_VENDOR: _xinput_personality(constants.PID_VENDOR),
+                            constants.PID_DONGLE: dongle}):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIs(dev, dongle)
+        self.assertTrue(via_dongle)
+
+
+class FindXinputDeviceTest(unittest.TestCase):
+    def _patched(self, table):
+        return mock.patch.object(device, "find_device", side_effect=lambda pid: table.get(pid))
+
+    def test_finds_it_at_the_classic_pid(self):
+        target = _xinput_personality(constants.PID_XINPUT)
+        with self._patched({constants.PID_XINPUT: target}):
+            self.assertIs(device.find_xinput_device(), target)
+
+    def test_finds_it_at_the_vendor_pid_on_v244_firmware(self):
+        """Without this, enter_vendor_mode() reports "no device found" for a
+        controller that is plugged in and working."""
+        target = _xinput_personality(constants.PID_VENDOR)
+        with self._patched({constants.PID_VENDOR: target}):
+            self.assertIs(device.find_xinput_device(), target)
+
+    def test_does_not_mistake_a_vendor_mode_device_for_one_needing_a_handshake(self):
+        with self._patched({constants.PID_VENDOR: _vendor_personality(constants.PID_VENDOR)}):
+            self.assertIsNone(device.find_xinput_device())
