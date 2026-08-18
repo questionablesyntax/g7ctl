@@ -6,6 +6,22 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **g7ctl could take over your controller while you were using it.** On
+  firmware v2.4.4 the controller can sit at USB id `3537:109b` while working
+  perfectly well as a gamepad. That id previously meant "already in config
+  mode, safe to take over", so connecting would grab the controller out from
+  under the game you were playing — and then sit there getting no answers,
+  which looked like the controller had locked up. It now checks what the
+  device is actually presenting rather than trusting the id, and leaves a
+  working gamepad alone.
+- **On that same firmware, g7ctl could not connect at all.** Entering config
+  mode looked for the controller at `3537:100a`, which is where older
+  firmware puts it. A v2.4.4 controller freshly plugged in isn't there, so
+  every command reported "no device found" for a controller sitting plugged
+  in and working. It's now found at either id.
+
 ## [0.1.9] - 2026-08-17
 
 **Loose ends.** The controller could already tell you three things this
