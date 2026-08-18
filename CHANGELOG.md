@@ -26,6 +26,20 @@ adheres to [semantic versioning](https://semver.org/).
   disappears when the device is released rather than leaving a stale number
   on screen, and turns amber below 20%.
 
+### Changed
+
+- **Vibration levels are now five values (0/25/50/75/100), not a free
+  0-100 range.** Storage was always exact — writing 47 and reading it back
+  really does give 47 — but felt-testing the physical motors found a hard
+  floor: nothing below 25 was perceptible on either grip motor, and 25,
+  50, 75 and 100 are each felt as distinctly stronger with no in-between
+  steps that matter. GameSir Nexus has only ever offered these same five
+  values. The GUI's sliders now snap to them, matching what Nexus shows,
+  and `g7ctl vibration-set`/state files reject anything else with a clear
+  error instead of silently accepting a value that was never going to do
+  anything different from its nearest neighbor. If you scripted a
+  different value before, it needs updating to one of the five.
+
 ### Fixed
 
 - **The GUI could drop Continuous Trigger state on read.** A Read from

@@ -205,7 +205,7 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
 
     p_vib = sub.add_parser("vibration-set", help="Set a Vibrations-tab setting (device must already be in vendor mode).")
     p_vib.add_argument("setting", choices=sorted(vibration.SETTINGS))
-    p_vib.add_argument("value", help="0-100 for levels, on/off for force/sync flags")
+    p_vib.add_argument("value", help=f"one of {vibration.LEVELS} for levels, on/off for force/sync flags")
     p_vib.add_argument("--profile", type=int, default=1, choices=[1, 2, 3, 4], help="Target profile 1-4 (default 1)")
     _add_heartbeat_args(p_vib)
 

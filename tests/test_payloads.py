@@ -224,6 +224,22 @@ class VibrationTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             vibration.set_value(FakeSession(), "left_grip", 101)
 
+    def test_off_scale_level_rejected(self):
+        # Storage itself is exact 0-100 (write 47, read back 47, confirmed
+        # on hardware) -- but felt-testing found the motors don't produce
+        # distinct output at every value, only at these five. A value
+        # that's in-range but not one of them (unlike 101 above, which
+        # fails for a different reason) must still be rejected.
+        with self.assertRaises(ValueError):
+            vibration.set_value(FakeSession(), "left_grip", 43)
+
+    def test_every_level_is_accepted(self):
+        for level in vibration.LEVELS:
+            with self.subTest(level=level):
+                sess = FakeSession()
+                vibration.set_value(sess, "left_grip", level, profile=1)
+                self.assertEqual(sess.only_payload(), bytes([0x03, 0x01, 0x00, 0x20, 0x01, level]))
+
     def test_unknown_setting_rejected(self):
         with self.assertRaises(ValueError):
             vibration.set_value(FakeSession(), "middle_grip", 50)
