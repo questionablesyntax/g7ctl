@@ -8,19 +8,24 @@ adheres to [semantic versioning](https://semver.org/).
 
 ### Fixed
 
-- **g7ctl could take over your controller while you were using it.** On
-  firmware v2.4.4 the controller can sit at USB id `3537:109b` while working
-  perfectly well as a gamepad. That id previously meant "already in config
-  mode, safe to take over", so connecting would grab the controller out from
-  under the game you were playing — and then sit there getting no answers,
-  which looked like the controller had locked up. It now checks what the
-  device is actually presenting rather than trusting the id, and leaves a
-  working gamepad alone.
-- **On that same firmware, g7ctl could not connect at all.** Entering config
-  mode looked for the controller at `3537:100a`, which is where older
-  firmware puts it. A v2.4.4 controller freshly plugged in isn't there, so
-  every command reported "no device found" for a controller sitting plugged
-  in and working. It's now found at either id.
+- **After plugging the controller in, g7ctl could fail to connect to it at
+  all.** A freshly plugged-in controller can sit at USB id `3537:109b` while
+  working perfectly well as a gamepad. g7ctl read that id as "already in
+  config mode", so it would take the controller over — pulling it away from
+  whatever was using it — and then get no answers back, reporting a timeout
+  that looked like the controller had locked up. Unplugging and replugging
+  didn't help, because that is the state that causes it.
+
+  g7ctl now identifies the controller by what it is actually presenting
+  rather than by its USB id, so it leaves a working gamepad alone and does
+  the proper handshake instead. This also fixes the same controller being
+  reported as "no device found": the search only ever looked for it at
+  `3537:100a`, where it sits after a config session ends but not necessarily
+  when freshly plugged in.
+
+  Seen on firmware v2.4.4. Whether earlier firmware behaves the same way has
+  not been tested, so this is not a reason to assume an older controller is
+  unaffected.
 
 ## [0.1.9] - 2026-08-17
 
