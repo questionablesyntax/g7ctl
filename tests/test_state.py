@@ -249,9 +249,12 @@ class BuildStepsTest(unittest.TestCase):
     def test_only_the_changed_setting_is_written(self):
         import copy
         baseline = copy.deepcopy(self.state)
-        self.state["vibration"]["left_grip"] = 99
+        # 75 rather than an arbitrary number: _vibration_steps() enforces
+        # vibration.LEVELS on any value it's about to write, so an off-scale
+        # stand-in would fail for that reason and stop testing diffing.
+        self.state["vibration"]["left_grip"] = 75
         labels = self._labels(baseline=baseline)
-        self.assertEqual(labels, ["Vibration: left_grip=99"])
+        self.assertEqual(labels, ["Vibration: left_grip=75"])
 
     def test_a_change_in_every_category_produces_exactly_one_write(self):
         """Each category has its own step-builder with its own copy of the
@@ -270,7 +273,7 @@ class BuildStepsTest(unittest.TestCase):
             (["sticks", "right", "advanced_mapping", "sensitivity"], 77, "Right Stick: sensitivity=77"),
             (["triggers", "left", "deadzone", "max"], 44, "Left Trigger: deadzone.max=44"),
             (["triggers", "right", "hair_trigger_mode"], "fixed", "Right Trigger: hair_trigger_mode=fixed"),
-            (["vibration", "right_grip"], 12, "Vibration: right_grip=12"),
+            (["vibration", "right_grip"], 75, "Vibration: right_grip=75"),
             (["report_rate_hz"], 250, "Report rate=250Hz"),
             (["dpad_diagonal_lock"], True, "D-Pad Diagonal Lock=True"),
             (["swap_stick_dpad"], True, "Swap Left Stick and D-pad=True"),
@@ -335,6 +338,67 @@ class BuildStepsTest(unittest.TestCase):
                 self.assertIn(profile_byte, (0x03, 0x07), label)
             else:
                 self.assertEqual(profile_byte, 0x03, label)
+
+
+class OffScaleVibrationTest(unittest.TestCase):
+    """A vibration level that is in-range (0-100) but not one of
+    vibration.LEVELS.
+
+    The five-value restriction is a rule about what is worth *writing* --
+    the firmware stores any 0-100 byte faithfully (write 47, read back 47,
+    confirmed on hardware). Enforcing it in validate_state() instead broke
+    every path that carries a *reading* rather than a declaration: a
+    controller left at 47 by an older g7ctl could not be read at all, and
+    snapshots this app itself exported could not be re-imported.
+
+    These go through read_state()/load_state()/_build_steps() rather than
+    calling the validator directly, because calling the validator directly
+    is exactly what hid this: the suite's other vibration tests build steps
+    without ever validating, and its validation tests only used values
+    (150, 999) that are out of range under either rule.
+    """
+
+    def _blob_with(self, left_grip: int) -> bytes:
+        from pyg7.constants import FULL_BLOB_LENGTH
+        from pyg7.vibration import LEVEL_SETTING_IDS
+        blob = bytearray(FULL_BLOB_LENGTH)
+        blob[LEVEL_SETTING_IDS["left_grip"]] = left_grip
+        return bytes(blob)
+
+    def test_read_state_accepts_a_level_the_device_really_holds(self):
+        from .fakes import FakeSession
+        state = state_mod.read_state(FakeSession(self._blob_with(47)), slot=1)
+        # Reported as-is, not snapped: rounding here would mean a later sync
+        # silently wrote a different value than the one on the device.
+        self.assertEqual(state["vibration"]["left_grip"], 47)
+
+    def test_an_older_export_still_imports(self):
+        import json
+        import tempfile
+        state = state_mod.default_state_dict("older export")
+        state["vibration"]["left_grip"] = 60
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            json.dump(state, fh)
+            path = fh.name
+        self.assertEqual(state_mod.load_state(path)["vibration"]["left_grip"], 60)
+
+    def test_writing_an_off_scale_level_is_rejected_before_any_step_runs(self):
+        state = state_mod.default_state_dict("test")
+        state["vibration"]["left_grip"] = 47
+        with self.assertRaises(state_mod.StateError):
+            state_mod._build_steps(state, baseline=None)
+
+    def test_an_untouched_off_scale_level_does_not_block_other_writes(self):
+        """The case that matters after a read: the device is at 47, the user
+        changed something else entirely. That sync has to work -- the 47 is
+        skipped as already-matching and never reaches the write rule."""
+        import copy
+        state = state_mod.default_state_dict("test")
+        state["vibration"]["left_grip"] = 47
+        baseline = copy.deepcopy(state)
+        state["report_rate_hz"] = 250
+        labels = [label for label, _fn in state_mod._build_steps(state, baseline=baseline)[0]]
+        self.assertEqual(labels, ["Report rate=250Hz"])
 
 
 class SparseSubsectionTest(unittest.TestCase):
