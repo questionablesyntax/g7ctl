@@ -238,10 +238,18 @@ def validate_state(data: dict) -> None:
             raise StateError(f"unknown trigger side {side_name!r}")
         _validate_trigger_settings(side_data)
 
-    _validate_vibration_level(data["vibration"].get("left_grip"), "vibration.left_grip")
-    _validate_vibration_level(data["vibration"].get("right_grip"), "vibration.right_grip")
-    _validate_vibration_level(data["vibration"].get("left_trigger"), "vibration.left_trigger")
-    _validate_vibration_level(data["vibration"].get("right_trigger"), "vibration.right_trigger")
+    # 0-100, NOT vibration.LEVELS. The five-value restriction is a rule about
+    # what is worth *writing* (see vibration.LEVELS), not about what the
+    # device can hold: the firmware stores any 0-100 byte faithfully, so a
+    # controller configured by an older g7ctl -- or mid-experiment -- really
+    # can be sitting at 47. Validating that away here made read_state() raise
+    # on a perfectly readable controller and made older exports un-importable.
+    # The restriction is enforced in _vibration_steps(), at the point a write
+    # is actually produced.
+    _validate_percent(data["vibration"].get("left_grip"), "vibration.left_grip")
+    _validate_percent(data["vibration"].get("right_grip"), "vibration.right_grip")
+    _validate_percent(data["vibration"].get("left_trigger"), "vibration.left_trigger")
+    _validate_percent(data["vibration"].get("right_trigger"), "vibration.right_trigger")
 
 
 def _is_valid_keycode_value(s: str) -> bool:
@@ -272,7 +280,16 @@ def _validate_percent(v: object, label: str) -> None:
 def _validate_vibration_level(v: object, label: str) -> None:
     """Narrower than _validate_percent -- see vibration.LEVELS for why
     vibration is the one percent-style setting restricted to five values
-    instead of the full 0-100 range every other one of these allows."""
+    instead of the full 0-100 range every other one of these allows.
+
+    Deliberately NOT called from validate_state(): a state dict is also how
+    a *reading* of the device is carried around, and the device can hold any
+    0-100 byte. This is the write-side rule, so it runs in _vibration_steps()
+    while steps are being built -- before any of them execute, so a rejected
+    value can't leave a half-applied sync behind -- and only for a value that
+    is actually about to be written. A setting that already matches the
+    device is skipped and never checked, so an off-scale value the user
+    isn't touching doesn't block a sync of everything else."""
     if v is None:
         return
     if not isinstance(v, int) or v not in vibration.LEVELS:
@@ -904,6 +921,10 @@ def _vibration_steps(v: dict, baseline: Optional[dict] = None, profile: int = 1)
         if baseline.get(setting) == value:
             skipped += 1
             continue
+        # About to actually write this one, so now the five-value rule
+        # applies. Raising here happens during the build, before any step
+        # has run against the device.
+        _validate_vibration_level(value, f"vibration.{setting}")
         steps.append((f"Vibration: {setting}={value}",
                        lambda sess, s=setting, val=value: vibration.set_value(sess, s, val, profile=profile)))
     for side in ("left", "right"):
