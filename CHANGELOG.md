@@ -6,6 +6,15 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-08-18
+
+**One fix, for a controller you just plugged in.** g7ctl decided whether the
+controller was in config mode by looking at its USB id. A freshly plugged-in
+controller can sit at the id g7ctl read as "already in config mode" while
+working perfectly well as a gamepad, so the tool would take it over and then
+get nothing back. Replugging made it worse, not better. g7ctl now asks what
+the controller is actually presenting instead.
+
 ### Fixed
 
 - **After plugging the controller in, g7ctl could fail to connect to it at
@@ -610,7 +619,8 @@ and motion/gyro is unimplemented by choice.
 - The PKGBUILD is structurally validated but has not been build-tested
   against a real release tarball.
 
-[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.9...HEAD
+[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.10...HEAD
+[0.1.10]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.6...v0.1.7
