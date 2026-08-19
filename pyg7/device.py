@@ -22,6 +22,7 @@ from .constants import (
     HANDSHAKE_CHUNKS,
     IFACE,
     PID_DONGLE,
+    PID_DONGLE_TRIMODE,
     PID_NATIVE,
     PID_VENDOR,
     PID_VENDOR_TRIMODE,
@@ -69,6 +70,7 @@ VENDOR_PID_CANDIDATES = (
     (PID_VENDOR, False),
     (PID_DONGLE, True),
     (PID_VENDOR_TRIMODE, False),
+    (PID_DONGLE_TRIMODE, True),
     (PID_VENDOR_ZZZ, False),
 )
 

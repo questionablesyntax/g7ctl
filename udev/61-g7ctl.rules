@@ -22,6 +22,11 @@ SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="109c", TAG+="uaccess
 # (added it by hand before this line existed) -- not a guess.
 SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="1003", TAG+="uaccess"
 
+# The Tri-mode variant's 2.4GHz dongle in vendor/config mode -- see
+# PID_DONGLE_TRIMODE in pyg7/constants.py. Same reporter, same day,
+# same method (found and confirmed by hand before this line existed).
+SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="1004", TAG+="uaccess"
+
 # Vendor/config identity on a G7 Pro "Zenless Zone Zero" edition -- see
 # PID_VENDOR_ZZZ in pyg7/constants.py. Same reasoning as the 1003 line
 # above. Confirmed 2026-08-19: the reporter tested this rule with the
