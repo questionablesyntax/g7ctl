@@ -68,6 +68,7 @@ SCHEMA_VERSION = 1
 _HAIR_TRIGGER_MODES = set(triggers.HAIR_TRIGGER_MODES)
 _OUTPUT_MODES = set(sticks.OUTPUT_MODES)
 _MOTION_X_AXIS_MODES = set(motion.X_AXIS_OUTPUT_MODES)
+_MOTION_ACTIVATE_METHODS = set(motion.ACTIVATE_METHODS)
 
 # Default heartbeat pacing used while applying a state dict, matching the
 # observed app cadence (see g7ctl/main.py's _wrapped_write).
@@ -119,7 +120,7 @@ def _default_motion_settings(side: str) -> dict:
     motion.py's module docstring) -- `False` (a real, settable default) on
     Aim, `None` (not applicable) on Tilt."""
     return {
-        "activate_method": 0,
+        "activate_method": "off",
         "activate_button": None,
         "x_axis_output_mode": "yaw",
         "curve": {"preset": "standard", "points": None},
@@ -380,9 +381,8 @@ def _validate_stick_settings(s: dict) -> None:
 
 def _validate_motion_settings(side: str, s: dict) -> None:
     am = s.get("activate_method")
-    if am is not None and not (isinstance(am, int) and 0 <= am <= 3):
-        raise StateError(f"motion.{side}.activate_method must be 0-3 (observed range, name "
-                          f"unconfirmed) or null, got {am!r}")
+    if am is not None and am not in _MOTION_ACTIVATE_METHODS:
+        raise StateError(f"unknown motion activate_method {am!r}")
     ab = s.get("activate_button")
     if ab is not None and not _is_valid_keycode_value(ab):
         raise StateError(f"unknown keycode {ab!r} for motion.{side}.activate_button")

@@ -52,6 +52,18 @@ _OUTPUT_MODE_NAMES = {v: k for k, v in OUTPUT_MODES.items()}
 X_AXIS_OUTPUT_MODES = {"yaw": 0x01, "yaw_roll": 0x03}
 _X_AXIS_OUTPUT_MODE_NAMES = {v: k for k, v in X_AXIS_OUTPUT_MODES.items()}
 
+# Confirmed 2026-08-18 (owner, reading Nexus's own Activate Method dropdown
+# directly) -- not inferred from convention the way the earlier guess that
+# 0x00 = "Off" was. Matches the guess for 0x00, but the other three values
+# had no candidate names before this.
+ACTIVATE_METHODS = {
+    "off": 0x00,
+    "hold_to_activate": 0x01,
+    "press_to_activate": 0x02,
+    "always_on": 0x03,
+}
+_ACTIVATE_METHOD_NAMES = {v: k for k, v in ACTIVATE_METHODS.items()}
+
 # Local (page-1) offsets, valid for Aim. Add TILT_OFFSET for Tilt, except
 # "invert_yaw" (its own, off-stride TILT_INVERT_YAW_OFFSET) and
 # "invert_roll" (Aim only -- see _side_offset()).
@@ -61,9 +73,7 @@ _X_AXIS_OUTPUT_MODE_NAMES = {v: k for k, v in X_AXIS_OUTPUT_MODES.items()}
 # blob's shape. See PROTOCOL.md "Motion" for the full record, including
 # the two prior partial passes (test61, test65) this superseded.
 SETTING_IDS = {
-    "activate_method": 0x9C,   # raw int, 0-3 observed both sides; only 0x00 is a confident
-                                # guess ("Off", matching this protocol's convention elsewhere,
-                                # e.g. triggers.HAIR_TRIGGER_MODES) -- the rest are unnamed.
+    "activate_method": 0x9C,   # named enum, ACTIVATE_METHODS -- see above
     "activate_button": 0x9D,   # keycode -- which button, held/pressed, activates motion input
     "x_axis_output_mode": 0x9E,
     "deadzone_initial": 0xA0,
@@ -182,7 +192,7 @@ def decode_settings(blob: bytes, side: str = "aim") -> dict:
         directions[_DIRECTION_ZONES[setting]] = None if code in (None, 0xFF) else decode_keycode(code)
 
     return {
-        "activate_method": b("activate_method"),
+        "activate_method": _ACTIVATE_METHOD_NAMES.get(b("activate_method")),
         "activate_button": (None if b("activate_button") in (None, 0xFF)
                              else decode_keycode(b("activate_button"))),
         "x_axis_output_mode": _X_AXIS_OUTPUT_MODE_NAMES.get(b("x_axis_output_mode")),
@@ -211,12 +221,10 @@ def set_value(session: VendorSession, side: str, setting: str, value: SettingVal
     prefix = prefix_sticks(profile)
 
     if setting == "activate_method":
-        # Raw int, not a named enum -- see SETTING_IDS' comment. Bounded to
-        # the observed 0-3 range; not necessarily the true valid range.
-        v = int(value)
-        if not 0 <= v <= 3:
-            raise ValueError(f"activate_method must be 0-3 (observed range, name unconfirmed), got {v}")
-        payload = prefix + bytes([sid, 0x01, v])
+        val = ACTIVATE_METHODS.get(str(value).lower())
+        if val is None:
+            raise ValueError(f"activate_method must be one of {list(ACTIVATE_METHODS)}")
+        payload = prefix + bytes([sid, 0x01, val])
     elif setting == "activate_button":
         payload = prefix + bytes([sid, 0x01, resolve_keycode(value)])
     elif setting == "x_axis_output_mode":

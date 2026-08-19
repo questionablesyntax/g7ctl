@@ -184,10 +184,16 @@ class ValidateStateTest(unittest.TestCase):
         del self.state["motion"]
         state_mod.validate_state(self.state)  # must not raise
 
-    def test_rejects_bad_motion_activate_method(self):
-        self.state["motion"]["aim"]["activate_method"] = 4
+    def test_rejects_unknown_motion_activate_method(self):
+        self.state["motion"]["aim"]["activate_method"] = "sneeze_to_activate"
         with self.assertRaises(state_mod.StateError):
             state_mod.validate_state(self.state)
+
+    def test_allows_every_named_motion_activate_method(self):
+        for name in ("off", "hold_to_activate", "press_to_activate", "always_on"):
+            with self.subTest(name=name):
+                self.state["motion"]["aim"]["activate_method"] = name
+                state_mod.validate_state(self.state)  # must not raise
 
     def test_rejects_unknown_motion_x_axis_output_mode(self):
         self.state["motion"]["aim"]["x_axis_output_mode"] = "pitch"
