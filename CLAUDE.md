@@ -41,6 +41,38 @@ handshake for this reason. Do not remove that pacing, and prefer
 length or address does not error -- it silently corrupts a neighbouring
 setting. See PROTOCOL.md.
 
+## Versioning
+
+Semantic versioning (semver.org), MAJOR.MINOR.PATCH. MAJOR stays at 0 until
+the protocol/schema is stable enough to promise backward compatibility --
+nothing here has earned that promise yet. Reverse-engineering can still
+turn up a wrong address that forces a breaking fix; see PROTOCOL.md's own
+history of corrected claims, including one (Motion's original `+0x61`
+layout) that shipped as settled before a later capture proved it wrong.
+
+**PATCH** (`0.1.x` -> `0.1.x+1`, the default): bug fixes, corrected or
+refined behaviour in an already-shipped settings category, new fields
+*within* an existing category, packaging/docs/test-only changes. Every
+release so far (`0.1.0`-`0.1.10`) has been one of these -- including ones
+that added real functionality (custom curves, vibration-level correction,
+active-profile display), because none of them opened a whole new category.
+
+**MINOR** (`0.1.x` -> `0.(x+1).0`): new user-facing surface area -- a whole
+settings category ships (CLI verb family + GUI tab + `state.py` schema
+section), or `SCHEMA_VERSION` changes. Motion is the first: a new tab, not
+a deepening of an existing one, and the last category GameSir Nexus
+exposes that this project didn't have yet.
+
+**MAJOR**: reserved. Bumping it is a deliberate decision (most likely "the
+protocol is stable, cut 1.0"), never an automatic consequence of a
+change's size.
+
+`pyg7`/`g7ctl`/`g7ctlc` version in lockstep (see Checks below) -- a
+deliberate choice, not an oversight, per `pyproject.toml`'s own comment.
+Giving `pyg7` (Apache-2.0, meant for consumers other than this repo's own
+apps) an independent version line is a future option worth revisiting once
+something outside this repo actually depends on it, not a current plan.
+
 ## Checks
 
 ```bash
