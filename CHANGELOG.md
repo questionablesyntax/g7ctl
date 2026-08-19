@@ -6,6 +6,27 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Entering vendor mode could time out repeatedly against a controller
+  that was actually right there, just still re-enumerating.** The
+  handshake used to fire the instant any XInput-mode device was found,
+  using that one snapshot for the pacing wait and then for the handshake
+  itself. If the device re-enumerated again during that wait -- which can
+  happen for several minutes in a bad stretch -- every step after was
+  silently operating on a device that no longer existed at that address,
+  so the handshake never reached the device that *did*, and the attempt
+  spent its full timeout waiting for a re-enumeration nothing had
+  triggered. Confirmed against a real stuck-for-several-minutes incident,
+  captured on the wire: GameSir Nexus's own successful recovery sent a
+  byte-for-byte identical handshake, and differed only in landing after
+  the device had already been sitting stable for a moment. `g7ctl` now
+  re-checks the device is genuinely still there, at the same address,
+  right up until it sends the handshake, instead of trusting an
+  increasingly stale snapshot across the whole wait. If the device
+  never settles, the error message now says so plainly (still cycling,
+  not missing) rather than a generic timeout.
+
 ## [0.2.0] - 2026-08-18
 
 **Motion (Aim/Tilt gyro) is implemented -- the last tab GameSir Nexus
