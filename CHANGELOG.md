@@ -6,6 +6,8 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-18
+
 **Motion (Aim/Tilt gyro) is implemented -- the last tab GameSir Nexus
 exposes that this project didn't yet.** `pyg7/motion.py`, CLI (`motion-set`),
 GUI (a new Motion tab), and full state-schema coverage: Deadzone/
@@ -44,6 +46,13 @@ counting as done, not just implemented.
 - Motion's own Curve Adjustment presets (Standard/Concave/S-Curve), with
   shape data specific to Motion -- numerically different from the Sticks/
   Triggers curve, same underlying structure.
+
+### Fixed
+
+- The Buttons tab's "Continuous Trigger" column header overflowed its own
+  90px column into whatever sat next to it -- the label is wider than the
+  checkbox column beneath it, unlike every other header on that tab. Now
+  word-wraps onto two lines instead.
 
 ### Known gaps, stated rather than silently absent
 
@@ -669,7 +678,8 @@ and motion/gyro is unimplemented by choice.
 - The PKGBUILD is structurally validated but has not been build-tested
   against a real release tarball.
 
-[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.10...HEAD
+[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.10...v0.2.0
 [0.1.10]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.7...v0.1.8
