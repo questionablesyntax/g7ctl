@@ -394,10 +394,19 @@ class MotionWriteTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             motion.set_value(FakeSession(), "aim", "x_axis_output_mode", "pitch", profile=1)
 
-    def test_activate_method_is_bounded_0_to_3(self):
-        motion.set_value(FakeSession(), "aim", "activate_method", 3, profile=1)  # must not raise
+    def test_activate_method_encoding(self):
+        # Confirmed 2026-08-18 (owner, reading Nexus's own dropdown labels).
+        cases = (("off", 0x00), ("hold_to_activate", 0x01),
+                 ("press_to_activate", 0x02), ("always_on", 0x03))
+        for name, expected in cases:
+            with self.subTest(name=name):
+                sess = FakeSession()
+                motion.set_value(sess, "aim", "activate_method", name, profile=1)
+                self.assertEqual(sess.only_payload()[-1], expected)
+
+    def test_unknown_activate_method_rejected(self):
         with self.assertRaises(ValueError):
-            motion.set_value(FakeSession(), "aim", "activate_method", 4, profile=1)
+            motion.set_value(FakeSession(), "aim", "activate_method", "sneeze_to_activate", profile=1)
 
     def test_activate_button_accepts_a_keycode_name(self):
         sess = FakeSession()

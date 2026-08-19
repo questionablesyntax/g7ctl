@@ -986,7 +986,7 @@ capture, not by resemblance.** Same category prefix `03 [PROFILE] 01`
 
 | Setting | `SETTING_ID` | Payload after prefix | Notes |
 |---|---|---|---|
-| Activate Method | `0x9C` | `[id] 01 [0-3]` | Raw value -- Nexus's names for these aren't confirmed except that `0x00` is believed, not confirmed, to be "Off" (this protocol's convention elsewhere, e.g. Triggers' Hair Trigger Mode) |
+| Activate Method | `0x9C` | `[id] 01 [00=Off\|01=Hold to Activate\|02=Press to Activate\|03=Always On]` | Confirmed 2026-08-18 (owner, reading Nexus's own dropdown labels directly -- not inferred from convention) |
 | Activate Button | `0x9D` | `[id] 01 [KEYCODE]` | Which button, held/pressed, activates motion input |
 | X-Axis Output Mode | `0x9E` | `[id] 01 [01=Yaw\|03=Yaw+Roll]` | Gates whether an invert control exists at all -- see below |
 | Deadzone Initial | `0xA0` | long form, **suffix must be read live -- same reasoning as Sticks** | |
@@ -1080,9 +1080,9 @@ points yet.
   not -- cosmetic, not a blocker (see `pyg7/motion.py`).
 - **Mouse output mode may have its own extra field**, the way Sticks' Mouse
   mode has DPI. Never captured, no capture attempted.
-- **`activate_method`'s named enum.** Only the raw 0-3 range is confirmed;
-  Nexus's names for values other than the believed-but-unconfirmed `0x00`
-  ("Off") are unknown.
+
+`activate_method`'s named enum was the third item here; closed 2026-08-18
+(owner read Nexus's dropdown directly) -- see the table above.
 
 ## The `CMD_READ` wedge, and what it costs
 
@@ -1312,10 +1312,9 @@ software):
   established. Motion's own curve has the same gap for the same reason
   (never captured on the wire), plus its presets are the only part of
   Motion that IS implemented -- see "Motion" below.
-- Motion's `activate_method` enum names, and whatever extra field(s) its
-  Mouse output mode may have (the way Sticks' Mouse mode has DPI) -- see
-  "Motion" below for what's confirmed and implemented; this is what's
-  left.
+- Whatever extra field(s) Motion's Mouse output mode may have (the way
+  Sticks' Mouse mode has DPI) -- see "Motion" below for what's confirmed
+  and implemented; this is what's left there.
 - 4 of the 5 spare bytes in each button-table record. Byte 4 is Continuous
   Trigger (see "Buttons"); bytes 2, 3, 5 and 6 remain unknown, and byte 6
   is demonstrably in use -- one profile carries `0x0A` there on every slot,

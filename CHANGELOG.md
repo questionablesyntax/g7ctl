@@ -26,9 +26,10 @@ counting as done, not just implemented.
 ### Added
 
 - **Motion tab: Deadzone, Anti-Deadzone, Curve preset, X/Y Sensitivity
-  Scale, Invert Y, Activate Method, Activate Button, X-Axis Output Mode,
-  and Output** (L Stick/R Stick/Button Binds/Mouse -- same enum as the
-  Sticks tab's own Output mode), on both Aim and Tilt sub-tabs.
+  Scale, Invert Y, Activate Method** (Off/Hold to Activate/Press to
+  Activate/Always On), **Activate Button, X-Axis Output Mode, and Output**
+  (L Stick/R Stick/Button Binds/Mouse -- same enum as the Sticks tab's own
+  Output mode), on both Aim and Tilt sub-tabs.
 - **Output's Button Binds mode**, its own field set found live rather than
   from a capture plan: Overlap Area and four directional keycode bindings
   (Up/Down/Left/Right -- no "ring" zone, motion has no stick click), each a
@@ -49,8 +50,6 @@ counting as done, not just implemented.
 - Motion's Curve Adjustment presets are implemented; dragging individual
   Custom curve points is not -- never captured on the wire (same gap the
   Sticks/Triggers tabs already have for their own curves).
-- `activate_method`'s values beyond a believed-but-unconfirmed `0x00`
-  ("Off") have no confirmed names, only a raw 0-3 range.
 - Mouse output mode may have its own extra field the way the Sticks tab's
   Mouse mode has DPI -- never captured, no capture attempted.
 - The Tilt-side address for the byte labelled "Invert Yaw" outside Button

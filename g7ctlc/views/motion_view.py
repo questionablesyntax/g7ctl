@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QScrollArea,
-    QSpinBox,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -42,6 +41,12 @@ from ..widgets import (
 from .sticks_view import OUTPUT_MODE_OPTIONS
 
 X_AXIS_OUTPUT_MODE_OPTIONS = [("yaw", "Yaw"), ("yaw_roll", "Yaw + Roll")]
+# Confirmed 2026-08-18 (owner, reading Nexus's own dropdown) -- see
+# pyg7/motion.py's ACTIVATE_METHODS.
+ACTIVATE_METHOD_OPTIONS = [
+    ("off", "Off"), ("hold_to_activate", "Hold to Activate"),
+    ("press_to_activate", "Press to Activate"), ("always_on", "Always On"),
+]
 
 
 class _MotionSideWidget(CategorySideWidget):
@@ -57,13 +62,10 @@ class _MotionSideWidget(CategorySideWidget):
         self.form.setVerticalSpacing(10)
         self.form.setHorizontalSpacing(14)
 
-        self.activate_method = QSpinBox()
-        self.activate_method.setRange(0, 3)
-        self.activate_method.setToolTip(
-            "Raw value, 0-3 -- the observed range, not necessarily the full "
-            "valid one. Nexus's own names for these aren't confirmed yet "
-            "except that 0 is believed (not confirmed) to be \"Off\"."
-        )
+        self.activate_method = QComboBox()
+        for value, label in ACTIVATE_METHOD_OPTIONS:
+            self.activate_method.addItem(label, value)
+        self.activate_method.setToolTip("How motion input gets activated.")
         self.activate_button = make_keycode_combo()
         self.activate_button.setToolTip("Which button, held or pressed, activates motion input.")
         self.x_axis_output_mode = QComboBox()
@@ -157,9 +159,7 @@ class _MotionSideWidget(CategorySideWidget):
         outer.addWidget(adv_box)
         outer.addStretch(1)
 
-        for w in (self.activate_method,):
-            w.valueChanged.connect(self._emit_changed)
-        for w in (self.activate_button, self.x_axis_output_mode, self.curve):
+        for w in (self.activate_method, self.activate_button, self.x_axis_output_mode, self.curve):
             w.currentIndexChanged.connect(self._emit_changed)
         for w in (self.dz_initial, self.dz_max, self.adz_initial, self.adz_max,
                   self.sensitivity_scale, self.overlap_area):
@@ -182,7 +182,8 @@ class _MotionSideWidget(CategorySideWidget):
             _set_row_visible(self.form, self.invert_roll, yaw_roll and directional)
 
     def _load_fields(self, side_data: dict) -> None:
-        self.activate_method.setValue(side_data.get("activate_method") or 0)
+        am_idx = self.activate_method.findData(side_data.get("activate_method") or "off")
+        self.activate_method.setCurrentIndex(am_idx if am_idx >= 0 else 0)
         select_by_data(self.activate_button, side_data.get("activate_button"))
         idx = self.x_axis_output_mode.findData(side_data.get("x_axis_output_mode") or "yaw")
         self.x_axis_output_mode.setCurrentIndex(idx if idx >= 0 else 0)
@@ -212,7 +213,7 @@ class _MotionSideWidget(CategorySideWidget):
         self._update_visibility()
 
     def save_into(self, side_data: dict) -> None:
-        side_data["activate_method"] = self.activate_method.value()
+        side_data["activate_method"] = self.activate_method.currentData()
         side_data["activate_button"] = self.activate_button.currentData()
         side_data["x_axis_output_mode"] = self.x_axis_output_mode.currentData()
         curve = side_data.setdefault("curve", {})
