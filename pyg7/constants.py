@@ -37,6 +37,17 @@ PID_VENDOR_ZZZ = 0x105d   # vendor/config identity on a G7 Pro "Zenless Zone Zer
                       # interface 0 and Steam shows a working pad regardless of which
                       # personality is present, which is not evidence either way -- see
                       # is_xinput_personality()). See PROTOCOL.md "Device identities".
+PID_DONGLE_TRIMODE = 0x1004   # the Tri-mode variant's 2.4GHz dongle in vendor/config
+                      # mode -- PID_VENDOR_TRIMODE's counterpart, exactly one PID higher,
+                      # same relationship PID_VENDOR (109b) has to PID_DONGLE (109c).
+                      # Reported and CONFIRMED 2026-08-19 by the same reporter as
+                      # PID_VENDOR_TRIMODE: found by hand ("vendor ID for white Tri-mode
+                      # is 1004"), receiver connection worked after a brute constants.py
+                      # edit -- a genuine round trip. The "+1" relationship held on two
+                      # separate SKUs now (this project's own 109b/109c, and this one) --
+                      # worth testing as a real pattern before more variants get their
+                      # own hardcoded pair, but not assumed here yet. See PROTOCOL.md
+                      # "Device identities".
 PID_NATIVE = 0x1022   # the controller's own "default GameSir identity" -- reached by
                       # holding Menu+Share on the controller (documented in GameSir's
                       # manual as an XInput/native-identity toggle; also the same

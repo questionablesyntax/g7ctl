@@ -106,6 +106,11 @@ class EnterVendorModeLandingIdentityTest(unittest.TestCase):
         self.assertIs(dev, landed)
         self.assertFalse(via_dongle)
 
+    def test_other_variant_dongle_landing_is_recognized_too(self):
+        (dev, via_dongle), landed = self._run(constants.PID_DONGLE_TRIMODE)
+        self.assertIs(dev, landed)
+        self.assertTrue(via_dongle)
+
     def test_zzz_edition_landing_is_recognized_too(self):
         (dev, via_dongle), landed = self._run(constants.PID_VENDOR_ZZZ)
         self.assertIs(dev, landed)
@@ -224,6 +229,13 @@ class FindWritableDeviceTest(unittest.TestCase):
             dev, via_dongle = device.find_writable_device()
         self.assertIs(dev, target)
         self.assertFalse(via_dongle)
+
+    def test_finds_the_other_variant_dongle(self):
+        target = _vendor_personality(constants.PID_DONGLE_TRIMODE)
+        with self._patched({constants.PID_DONGLE_TRIMODE: target}):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIs(dev, target)
+        self.assertTrue(via_dongle)
 
     def test_finds_a_genuine_vendor_mode_device_at_the_zzz_edition_pid(self):
         # Regression target: xpad binding to interface 0 and Steam showing a
