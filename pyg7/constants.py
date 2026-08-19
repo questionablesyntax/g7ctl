@@ -29,8 +29,10 @@ PID_VENDOR_ZZZ = 0x105d   # vendor/config identity on a G7 Pro "Zenless Zone Zer
                       # edition, reported 2026-08-19 -- another community report, not
                       # this project's own hardware. Same story as PID_VENDOR_TRIMODE:
                       # interface 1's descriptor shape (isochronous alt-setting pair, no
-                      # HID keyboard/mouse) matches PID_VENDOR's exactly. UNCONFIRMED:
-                      # descriptor shape only, no round trip yet -- the reporter had
+                      # HID keyboard/mouse) matches PID_VENDOR's exactly. CONFIRMED
+                      # 2026-08-19: the reporter tested this branch directly and read
+                      # real config back over it end to end -- a genuine round trip, not
+                      # just a descriptor-shape match. The reporter had originally
                       # assumed this PID *was* the XInput identity (xpad binds to
                       # interface 0 and Steam shows a working pad regardless of which
                       # personality is present, which is not evidence either way -- see
