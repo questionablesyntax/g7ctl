@@ -257,6 +257,63 @@ def make_handshake_packets() -> list[bytes]:
     return packets
 
 
+# How long _find_stable_xinput_device() will keep re-checking before giving
+# up on a device that's found but never settles -- see that function's
+# docstring. Generous on purpose: rapid re-enumeration wedging this
+# controller's read path (see HANDSHAKE_MIN_INTERVAL above) has been
+# observed lasting several minutes in a bad stretch, and giving up early
+# just means the caller's own retry (the GUI watcher's poll loop, or the
+# user re-running the CLI) has to notice and try again anyway. A wait
+# longer than this without settling is itself useful information -- see
+# the caller's error message when this returns None.
+SETTLE_MAX_WAIT = 30.0
+
+
+def _find_stable_xinput_device(min_interval: float,
+                                max_wait_s: float = SETTLE_MAX_WAIT) -> Optional[usb.core.Device]:
+    """Find an XInput-personality device, but don't hand it back until it's
+    been sitting still -- re-finding it fresh on every check rather than
+    trusting one snapshot across the whole wait.
+
+    The previous approach found the device once, slept out
+    `_pace_handshake()`'s wait against that one snapshot's age, and then
+    used the same (possibly by-then-stale) `Device` object to
+    detach/claim/write. If the device re-enumerated again during the sleep,
+    every one of those calls was silently operating on a device that no
+    longer existed at that bus/address -- the handshake never actually
+    reached the device that *did* exist, and the whole attempt spent its
+    full `timeout_s` waiting for a vendor-mode re-enumeration nothing had
+    triggered. Confirmed against a real stuck-for-minutes incident: GameSir
+    Nexus's own successful recovery from the identical stuck state sent a
+    byte-for-byte identical handshake, but only after the device had
+    already been presenting a stable XInput report stream for ~550ms. This
+    re-finds the device on every check specifically so a re-enumeration
+    mid-wait is caught and re-paced, not silently missed.
+
+    Reuses `_pace_handshake()` unchanged (same tested single-sleep
+    contract) rather than reimplementing its logic -- this just loops it
+    against a freshly-found device each time instead of a single stale one.
+
+    Returns `None` if no device is ever found, or if one is found but never
+    settles within `max_wait_s` -- both cases the caller already
+    distinguishes for its own error message.
+    """
+    dev = find_xinput_device()
+    if dev is None or min_interval <= 0:
+        return dev
+    deadline = time.time() + max_wait_s
+    while True:
+        age = seconds_since_enumeration(dev)
+        if age is None or age >= min_interval:
+            return dev
+        if time.time() >= deadline:
+            return None
+        _pace_handshake(dev, min_interval)
+        dev = find_xinput_device()  # re-find fresh -- may have re-enumerated during that sleep
+        if dev is None:
+            return None
+
+
 def enter_vendor_mode(timeout_s: float = 10.0,
                        min_interval: float = HANDSHAKE_MIN_INTERVAL) -> tuple[Optional[usb.core.Device], bool]:
     """Handshake the controller out of XInput mode and into a vendor identity.
@@ -278,7 +335,12 @@ def enter_vendor_mode(timeout_s: float = 10.0,
     # Not find_device(PID_XINPUT): on firmware v2.4.4 the XInput personality
     # enumerates at PID_VENDOR, so looking for PID_XINPUT alone finds nothing
     # and this reports "no device" for a controller sitting right there.
-    dev = find_xinput_device()
+    #
+    # _find_stable_xinput_device(), not a bare find_xinput_device() + a
+    # single _pace_handshake(): see that function's docstring for why
+    # re-finding fresh on every check matters -- a stale snapshot silently
+    # breaks pacing if the device re-enumerates again during the wait.
+    dev = _find_stable_xinput_device(min_interval)
     if dev is None:
         if find_native_identity() is not None:
             log.error(
@@ -286,14 +348,16 @@ def enter_vendor_mode(timeout_s: float = 10.0,
                 "XInput mode -- this tool can't talk to it there yet. Hold "
                 "Menu+Share on the controller to switch back to XInput, then "
                 "try again.", VID, PID_NATIVE)
+        elif find_xinput_device() is not None:
+            log.error(
+                "Device is present but keeps re-enumerating -- it never settled "
+                "into a stable state within %.1fs. Not a missing device: it's "
+                "still cycling. Try again once it stops.", SETTLE_MAX_WAIT)
         else:
             log.error("No device found at %04x:%04x.", VID, PID_XINPUT)
         return None, False
 
-    log.info("Found XInput-mode device (bus=%s addr=%s).", dev.bus, dev.address)
-    # Before adding another re-enumeration, make sure the last one has had
-    # time to settle -- see HANDSHAKE_MIN_INTERVAL.
-    _pace_handshake(dev, min_interval)
+    log.info("Found stable XInput-mode device (bus=%s addr=%s).", dev.bus, dev.address)
     detached = False
     if dev.is_kernel_driver_active(IFACE):
         dev.detach_kernel_driver(IFACE)

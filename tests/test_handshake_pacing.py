@@ -98,6 +98,100 @@ class PacingTest(unittest.TestCase):
         self.assertEqual(self._pace(age=None), [])
 
 
+class FindStableXinputDeviceTest(unittest.TestCase):
+    """_find_stable_xinput_device() -- from a real incident where a stale
+    Device snapshot silently broke pacing during a device that kept
+    re-enumerating. See that function's own docstring in pyg7/device.py
+    for the full account, including the wire capture that confirmed
+    GameSir Nexus's own recovery used a byte-identical handshake and
+    differed only in waiting for a stable window first.
+    """
+
+    def test_returns_none_immediately_when_no_device_found(self):
+        """Must not wait at all -- EnterVendorModeMissingDeviceTest in
+        test_device.py depends on this being instant, same as the old
+        bare find_xinput_device() + immediate-return-None it replaced."""
+        with mock.patch.object(device, "find_xinput_device", return_value=None), \
+             mock.patch.object(device.time, "sleep") as sleep:
+            result = device._find_stable_xinput_device(min_interval=5.0)
+        self.assertIsNone(result)
+        sleep.assert_not_called()
+
+    def test_zero_min_interval_returns_whatever_was_found_with_no_check(self):
+        """--unsafe-no-wait passes 0; must not even read sysfs, same
+        contract _pace_handshake() already guarantees."""
+        dev = _FakeDev()
+        with mock.patch.object(device, "find_xinput_device", return_value=dev), \
+             mock.patch.object(device, "seconds_since_enumeration") as age:
+            result = device._find_stable_xinput_device(min_interval=0)
+        self.assertIs(result, dev)
+        age.assert_not_called()
+
+    def test_already_settled_device_returns_immediately(self):
+        dev = _FakeDev()
+        with mock.patch.object(device, "find_xinput_device", return_value=dev), \
+             mock.patch.object(device, "seconds_since_enumeration", return_value=60.0), \
+             mock.patch.object(device.time, "sleep") as sleep:
+            result = device._find_stable_xinput_device(min_interval=5.0)
+        self.assertIs(result, dev)
+        sleep.assert_not_called()
+
+    def test_unsettled_device_waits_then_returns_it(self):
+        """Same device both times (no re-enumeration). Three reads of
+        seconds_since_enumeration for one un-settled pass: this function's
+        own check, _pace_handshake()'s internal check (the one that decides
+        how long to sleep), then this function's re-check of the freshly
+        re-found device afterward -- which is what actually confirms it
+        settled, not just "we slept the planned amount"."""
+        dev = _FakeDev()
+        with mock.patch.object(device, "find_xinput_device", return_value=dev), \
+             mock.patch.object(device, "seconds_since_enumeration", side_effect=[1.0, 1.0, 5.0]), \
+             mock.patch.object(device.time, "sleep") as sleep:
+            result = device._find_stable_xinput_device(min_interval=5.0)
+        self.assertIs(result, dev)
+        sleep.assert_called_once_with(4.0)
+
+    def test_re_enumeration_during_the_wait_forces_a_fresh_repace(self):
+        """The actual regression this item exists for: the device found on
+        the first check is NOT the one still there after the pacing sleep
+        -- a re-enumeration happened mid-wait. The old code held onto the
+        first (by-then-stale) Device object regardless; this must notice
+        and return the NEW one, not the stale first one."""
+        first_dev = _FakeDev(address=7)
+        second_dev = _FakeDev(address=9)  # re-enumerated to a new address
+        with mock.patch.object(device, "find_xinput_device",
+                                side_effect=[first_dev, second_dev]), \
+             mock.patch.object(device, "seconds_since_enumeration", side_effect=[1.0, 1.0, 5.0]), \
+             mock.patch.object(device.time, "sleep") as sleep:
+            result = device._find_stable_xinput_device(min_interval=5.0)
+        # Settles on the SECOND device, not the stale first one -- this is
+        # the whole point: the caller now gets the device that actually
+        # exists, not a reference to one that may already be gone.
+        self.assertIs(result, second_dev)
+        self.assertEqual(sleep.call_count, 1)
+
+    def test_device_vanishing_mid_wait_returns_none(self):
+        dev = _FakeDev()
+        with mock.patch.object(device, "find_xinput_device", side_effect=[dev, None]), \
+             mock.patch.object(device, "seconds_since_enumeration", return_value=1.0), \
+             mock.patch.object(device.time, "sleep"):
+            result = device._find_stable_xinput_device(min_interval=5.0)
+        self.assertIsNone(result)
+
+    def test_never_settling_gives_up_after_max_wait_s(self):
+        """A device stuck re-enumerating forever (the real incident this
+        item is from) must not hang -- give up and report None once
+        max_wait_s of real time has passed."""
+        dev = _FakeDev()
+        times = iter([0.0, 0.05, 0.1, 100.0])  # jumps past a tiny max_wait_s
+        with mock.patch.object(device, "find_xinput_device", return_value=dev), \
+             mock.patch.object(device, "seconds_since_enumeration", return_value=0.1), \
+             mock.patch.object(device.time, "sleep"), \
+             mock.patch.object(device.time, "time", side_effect=lambda: next(times, 100.0)):
+            result = device._find_stable_xinput_device(min_interval=5.0, max_wait_s=1.0)
+        self.assertIsNone(result)
+
+
 class CliFlagTest(unittest.TestCase):
     def test_flag_maps_to_a_zero_interval(self):
         from g7ctl.main import _min_interval, build_parser
