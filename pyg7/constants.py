@@ -21,9 +21,10 @@ PID_VENDOR_TRIMODE = 0x1003   # vendor/config identity on at least one other G7 
                       # this project's own hardware. Same interface-1 signature
                       # is_xinput_personality() already uses for PID_VENDOR (an
                       # isochronous alt-setting pair, no HID keyboard/mouse), just under
-                      # a different PID. UNCONFIRMED: whether it actually answers the
-                      # register-read protocol -- descriptor shape matches, no round
-                      # trip has been run. See PROTOCOL.md "Device identities".
+                      # a different PID. CONFIRMED 2026-08-19: the reporter read real
+                      # config back over it (manually, before this constant existed) --
+                      # a genuine round trip, not just a descriptor-shape match. See
+                      # PROTOCOL.md "Device identities".
 PID_NATIVE = 0x1022   # the controller's own "default GameSir identity" -- reached by
                       # holding Menu+Share on the controller (documented in GameSir's
                       # manual as an XInput/native-identity toggle; also the same
