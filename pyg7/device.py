@@ -25,6 +25,7 @@ from .constants import (
     PID_NATIVE,
     PID_VENDOR,
     PID_VENDOR_TRIMODE,
+    PID_VENDOR_ZZZ,
     PID_XINPUT,
     VID,
 )
@@ -58,12 +59,18 @@ SYSFS_USB_ROOT = "/sys/bus/usb/devices"
 HANDSHAKE_MIN_INTERVAL = 5.0
 
 # Every PID the "gamesirapp" handshake is known (or reported) to land on,
-# paired with whether that PID means "via the dongle". PID_VENDOR_TRIMODE is
-# additive only -- it does not change behavior for any PID already in this
-# list, it just gives find_writable_device()/enter_vendor_mode() one more
-# place to look. A single source of truth so a future variant only needs
-# adding here, not in every loop that checks "is this a vendor identity".
-VENDOR_PID_CANDIDATES = ((PID_VENDOR, False), (PID_DONGLE, True), (PID_VENDOR_TRIMODE, False))
+# paired with whether that PID means "via the dongle". Every entry past the
+# first two is additive only -- it does not change behavior for any PID
+# already in this list, it just gives find_writable_device()/
+# enter_vendor_mode() one more place to look. A single source of truth so a
+# future variant only needs adding here, not in every loop that checks "is
+# this a vendor identity".
+VENDOR_PID_CANDIDATES = (
+    (PID_VENDOR, False),
+    (PID_DONGLE, True),
+    (PID_VENDOR_TRIMODE, False),
+    (PID_VENDOR_ZZZ, False),
+)
 
 
 def find_device(pid: int) -> Optional[usb.core.Device]:
