@@ -106,6 +106,11 @@ class EnterVendorModeLandingIdentityTest(unittest.TestCase):
         self.assertIs(dev, landed)
         self.assertFalse(via_dongle)
 
+    def test_zzz_edition_landing_is_recognized_too(self):
+        (dev, via_dongle), landed = self._run(constants.PID_VENDOR_ZZZ)
+        self.assertIs(dev, landed)
+        self.assertFalse(via_dongle)
+
     def test_no_landing_at_all_still_times_out(self):
         # Short timeout: time.sleep is mocked, so the poll loop spins on the
         # real clock and this is wall-time in the suite.
@@ -216,6 +221,18 @@ class FindWritableDeviceTest(unittest.TestCase):
     def test_finds_a_genuine_vendor_mode_device_at_the_other_variant_pid(self):
         target = _vendor_personality(constants.PID_VENDOR_TRIMODE)
         with self._patched({constants.PID_VENDOR_TRIMODE: target}):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIs(dev, target)
+        self.assertFalse(via_dongle)
+
+    def test_finds_a_genuine_vendor_mode_device_at_the_zzz_edition_pid(self):
+        # Regression target: xpad binding to interface 0 and Steam showing a
+        # working pad is not evidence this PID is the XInput personality --
+        # it happens regardless of which personality is present. Only
+        # interface 1's descriptor shape (checked by is_xinput_personality())
+        # tells the two apart, and this one reads as vendor mode.
+        target = _vendor_personality(constants.PID_VENDOR_ZZZ)
+        with self._patched({constants.PID_VENDOR_ZZZ: target}):
             dev, via_dongle = device.find_writable_device()
         self.assertIs(dev, target)
         self.assertFalse(via_dongle)

@@ -22,6 +22,12 @@ SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="109c", TAG+="uaccess
 # (added it by hand before this line existed) -- not a guess.
 SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="1003", TAG+="uaccess"
 
+# Vendor/config identity on a G7 Pro "Zenless Zone Zero" edition -- see
+# PID_VENDOR_ZZZ in pyg7/constants.py. Same reasoning as the 1003 line
+# above. Confirmed 2026-08-19: the reporter tested this rule with the
+# fix branch and read real config back over it, end to end.
+SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="105d", TAG+="uaccess"
+
 # The controller's on-device "default GameSir identity" -- reached via the
 # Menu+Share button combo (documented in GameSir's manual as an XInput/
 # native-identity toggle), distinct from both 100a and the 109b vendor/
