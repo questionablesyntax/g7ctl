@@ -18,7 +18,10 @@ inferred from the register block's shape -- see PROTOCOL.md "Motion" for
 the full field table and the three-pass history (an earlier session
 declared this implementation-ready off an inferred layout alone, which cost
 a booked VM slot; this time every field was captured individually before
-any code was written).
+any code was written). **The shipped module was then write->read->compare
+confirmed on real hardware** (seven fields across both sub-tabs, Profile 4
+scratch slot) -- the same bar every other category had to clear before
+counting as done, not just implemented.
 
 ### Added
 

@@ -964,6 +964,19 @@ Every field measured and implemented (`pyg7/motion.py`), 2026-08-18 evening
 right -- worth knowing the history because it explains why the module's own
 comments hedge where they do.
 
+**The shipped module itself was write->read->compare confirmed on
+hardware the same night**, Profile 4 (scratch, never actively configured):
+`motion-set` for seven fields spanning both sub-tabs and both the base
+fields and Button Binds' own set (Aim deadzone/curve/invert, Tilt
+sensitivity/output/overlap area/a direction bind), then `read-state`
+independently decoded every one back to the exact value written --
+including the curve preset's three interior points, decoded via a
+completely separate code path (`decode_curve_points()`) from the one that
+wrote them. No wedge, no surprises. Every unit test up to this point ran
+against `FakeSession`; this is the first real-hardware confirmation the
+category has had, closing the one gap that mattered before treating it as
+genuinely done rather than just implemented.
+
 **Structurally a Sticks config, confirmed by direct write+read-diff
 capture, not by resemblance.** Same category prefix `03 [PROFILE] 01`
 (page 1) as Sticks, same `SETTING_ID + STORAGE_BASE(0x100)` addressing.
