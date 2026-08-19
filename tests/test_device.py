@@ -97,6 +97,15 @@ class EnterVendorModeLandingIdentityTest(unittest.TestCase):
         self.assertIs(dev, landed)
         self.assertFalse(via_dongle)
 
+    def test_other_variant_landing_is_recognized_too(self):
+        # Regression target: a reported-but-unconfirmed other-variant vendor
+        # PID (see PID_VENDOR_TRIMODE's comment) must not be a wait this
+        # function can never win -- it needs to be in the candidate list the
+        # post-handshake loop actually checks, same as PID_VENDOR/PID_DONGLE.
+        (dev, via_dongle), landed = self._run(constants.PID_VENDOR_TRIMODE)
+        self.assertIs(dev, landed)
+        self.assertFalse(via_dongle)
+
     def test_no_landing_at_all_still_times_out(self):
         # Short timeout: time.sleep is mocked, so the poll loop spins on the
         # real clock and this is wall-time in the suite.
@@ -203,6 +212,13 @@ class FindWritableDeviceTest(unittest.TestCase):
             dev, via_dongle = device.find_writable_device()
         self.assertIs(dev, dongle)
         self.assertTrue(via_dongle)
+
+    def test_finds_a_genuine_vendor_mode_device_at_the_other_variant_pid(self):
+        target = _vendor_personality(constants.PID_VENDOR_TRIMODE)
+        with self._patched({constants.PID_VENDOR_TRIMODE: target}):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIs(dev, target)
+        self.assertFalse(via_dongle)
 
 
 class FindXinputDeviceTest(unittest.TestCase):

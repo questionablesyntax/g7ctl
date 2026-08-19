@@ -24,6 +24,7 @@ from .constants import (
     PID_DONGLE,
     PID_NATIVE,
     PID_VENDOR,
+    PID_VENDOR_TRIMODE,
     PID_XINPUT,
     VID,
 )
@@ -55,6 +56,14 @@ SYSFS_USB_ROOT = "/sys/bus/usb/devices"
 # takes seconds -- so this is roughly "be no faster than the app that is
 # known to be safe."
 HANDSHAKE_MIN_INTERVAL = 5.0
+
+# Every PID the "gamesirapp" handshake is known (or reported) to land on,
+# paired with whether that PID means "via the dongle". PID_VENDOR_TRIMODE is
+# additive only -- it does not change behavior for any PID already in this
+# list, it just gives find_writable_device()/enter_vendor_mode() one more
+# place to look. A single source of truth so a future variant only needs
+# adding here, not in every loop that checks "is this a vendor identity".
+VENDOR_PID_CANDIDATES = ((PID_VENDOR, False), (PID_DONGLE, True), (PID_VENDOR_TRIMODE, False))
 
 
 def find_device(pid: int) -> Optional[usb.core.Device]:
@@ -236,8 +245,11 @@ def find_writable_device() -> tuple[Optional[usb.core.Device], bool]:
     detached `xpad`, took the user's controller away mid-use, and then held a
     heartbeat loop on a device whose vendor endpoint answers nothing, which
     presents as a wedge without being one. See is_xinput_personality().
+
+    Checks every PID in VENDOR_PID_CANDIDATES, not just PID_VENDOR/
+    PID_DONGLE -- see that constant's comment.
     """
-    for pid, via_dongle in ((PID_VENDOR, False), (PID_DONGLE, True)):
+    for pid, via_dongle in VENDOR_PID_CANDIDATES:
         dev = find_device(pid)
         if dev is not None and not is_xinput_personality(dev):
             return dev, via_dongle
@@ -390,10 +402,11 @@ def enter_vendor_mode(timeout_s: float = 10.0,
     log.info("Handshake sent, waiting for re-enumeration to vendor mode...")
     deadline = time.time() + timeout_s
     while time.time() < deadline:
-        # Wired lands on PID_VENDOR, the dongle on PID_DONGLE. Checked in
-        # that order only because a wired controller is the more specific
-        # case; both are equally valid outcomes of the same handshake.
-        for pid, via_dongle in ((PID_VENDOR, False), (PID_DONGLE, True)):
+        # Checks every PID in VENDOR_PID_CANDIDATES, not just PID_VENDOR/
+        # PID_DONGLE -- see that constant's comment. Order doesn't encode
+        # priority; every candidate is an equally valid outcome of the same
+        # handshake, just on different hardware.
+        for pid, via_dongle in VENDOR_PID_CANDIDATES:
             vdev = find_device(pid)
             # The personality check is what makes this a wait at all on
             # firmware v2.4.4: the device is at PID_VENDOR both before and

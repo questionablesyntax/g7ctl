@@ -16,6 +16,14 @@ PID_DONGLE = 0x109c   # 2.4GHz wireless dongle in vendor/config mode -- the dong
                       # handshake-free always-on identity either -- an idle dongle
                       # enumerates as PID_XINPUT. See PROTOCOL.md "Device
                       # identities".
+PID_VENDOR_TRIMODE = 0x1003   # vendor/config identity on at least one other G7 Pro
+                      # variant -- reported 2026-08-19 from a community bug report, not
+                      # this project's own hardware. Same interface-1 signature
+                      # is_xinput_personality() already uses for PID_VENDOR (an
+                      # isochronous alt-setting pair, no HID keyboard/mouse), just under
+                      # a different PID. UNCONFIRMED: whether it actually answers the
+                      # register-read protocol -- descriptor shape matches, no round
+                      # trip has been run. See PROTOCOL.md "Device identities".
 PID_NATIVE = 0x1022   # the controller's own "default GameSir identity" -- reached by
                       # holding Menu+Share on the controller (documented in GameSir's
                       # manual as an XInput/native-identity toggle; also the same
