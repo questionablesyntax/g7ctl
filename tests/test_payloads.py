@@ -13,7 +13,17 @@ produces, so these tests can actually disagree with the implementation.
 import unittest
 from unittest import mock
 
-from pyg7 import buttons, curves, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
+from pyg7 import (
+    buttons,
+    curves,
+    dock_settings,
+    dpad_options,
+    motion,
+    report_rate,
+    sticks,
+    triggers,
+    vibration,
+)
 from pyg7.constants import CMD_WRITE, prefix_sticks, prefix_triggers_vibration
 from pyg7.curves import curve_preset_payload
 from pyg7.session import SHIFT_CATEGORY, profile_layer_byte
@@ -339,6 +349,117 @@ class TriggerWriteTest(unittest.TestCase):
     def test_unknown_hair_trigger_mode_rejected(self):
         with self.assertRaises(ValueError):
             triggers.set_value(FakeSession(), "left", "hair_trigger_mode", "hairy")
+
+
+class MotionWriteTest(unittest.TestCase):
+    """See pyg7/motion.py -- every address here traces back to a live
+    capture (test72-test77), not to the +0x22 stride alone; the two
+    fields that break the stride (invert_yaw's Tilt offset, invert_roll's
+    Aim-only existence) are exercised explicitly below."""
+
+    def test_tilt_shifts_setting_id_by_0x22(self):
+        aim, tilt = FakeSession(), FakeSession()
+        motion.set_value(aim, "aim", "invert_y", True, profile=1)
+        motion.set_value(tilt, "tilt", "invert_y", True, profile=1)
+        self.assertEqual(tilt.only_payload()[3] - aim.only_payload()[3], 0x22)
+
+    def test_invert_yaw_tilt_offset_is_0x20_not_0x22(self):
+        # The one off-stride field in the category -- see motion.py's
+        # module docstring. Pinned explicitly so a future "helpfully"
+        # generalises the stride" refactor breaks a test, not hardware.
+        aim, tilt = FakeSession(), FakeSession()
+        motion.set_value(aim, "aim", "invert_yaw", True, profile=1)
+        motion.set_value(tilt, "tilt", "invert_yaw", True, profile=1)
+        self.assertEqual(tilt.only_payload()[3] - aim.only_payload()[3], 0x20)
+
+    def test_invert_roll_is_aim_only(self):
+        motion.set_value(FakeSession(), "aim", "invert_roll", True, profile=1)  # must not raise
+        with self.assertRaises(ValueError):
+            motion.set_value(FakeSession(), "tilt", "invert_roll", True, profile=1)
+
+    def test_output_encoding_matches_sticks(self):
+        # Same OUTPUT_MODES enum as sticks.py, reused not duplicated --
+        # see motion.py's import.
+        sess = FakeSession()
+        motion.set_value(sess, "aim", "output", "directional", profile=1)
+        self.assertEqual(sess.only_payload(), bytes([0x03, 0x01, 0x01, 0xB7, 0x01, 0x03]))
+
+    def test_x_axis_output_mode_encoding(self):
+        for value, expected in (("yaw", 0x01), ("yaw_roll", 0x03)):
+            sess = FakeSession()
+            motion.set_value(sess, "aim", "x_axis_output_mode", value, profile=1)
+            self.assertEqual(sess.only_payload()[-1], expected)
+
+    def test_unknown_x_axis_output_mode_rejected(self):
+        with self.assertRaises(ValueError):
+            motion.set_value(FakeSession(), "aim", "x_axis_output_mode", "pitch", profile=1)
+
+    def test_activate_method_is_bounded_0_to_3(self):
+        motion.set_value(FakeSession(), "aim", "activate_method", 3, profile=1)  # must not raise
+        with self.assertRaises(ValueError):
+            motion.set_value(FakeSession(), "aim", "activate_method", 4, profile=1)
+
+    def test_activate_button_accepts_a_keycode_name(self):
+        sess = FakeSession()
+        motion.set_value(sess, "aim", "activate_button", "native_l5", profile=1)
+        self.assertEqual(sess.only_payload()[-1], 0x1F)
+
+    def test_direction_bindings_are_four_independent_writes_not_bulk(self):
+        # Unlike sticks.py's direction_bindings (one 5-byte bulk write),
+        # Motion's four directions are four separate single-byte settings --
+        # confirmed on the wire, one write per direction, no "ring" zone.
+        for setting, addr in (("direction_up", 0xB9), ("direction_down", 0xBA),
+                               ("direction_left", 0xBB), ("direction_right", 0xBC)):
+            sess = FakeSession()
+            motion.set_value(sess, "aim", setting, "native_dpad_up", profile=1)
+            self.assertEqual(sess.only_payload(), bytes([0x03, 0x01, 0x01, addr, 0x01, 0x01]))
+
+    def test_curve_preset_payloads_match_the_captured_bytes(self):
+        # Motion's own shape data -- numerically different from sticks'/
+        # triggers' (see motion.py's _CURVE_SHAPE_DATA), same structure.
+        cases = {
+            "standard": bytes.fromhex("0a0064000028288081d7d7"),
+            "concave": bytes.fromhex("0a016400005e17ae4fe8a2"),
+            "s_curve": bytes.fromhex("0a0264000028 4c 80 81 d7 b3".replace(" ", "")),
+        }
+        for preset, expected_tail in cases.items():
+            with self.subTest(preset=preset):
+                sess = FakeSession()
+                motion.set_value(sess, "aim", "curve", preset, profile=1)
+                self.assertEqual(sess.only_payload(), bytes([0x03, 0x01, 0x01, 0xA5]) + expected_tail)
+
+    def test_curve_custom_is_short_form_no_trailing_byte(self):
+        # Motion's own measured Custom write is 2 payload bytes (LEN=1,
+        # index=3) -- not sticks.py's 3-byte custom form with a trailing
+        # 0x00 (see motion.py's module docstring for why they differ).
+        sess = FakeSession()
+        motion.set_value(sess, "aim", "curve", "custom", profile=1)
+        self.assertEqual(sess.only_payload(), bytes([0x03, 0x01, 0x01, 0xA5, 0x01, 0x03]))
+
+    def test_unknown_curve_preset_rejected(self):
+        with self.assertRaises(ValueError):
+            motion.set_value(FakeSession(), "aim", "curve", "banana", profile=1)
+
+    def test_deadzone_initial_suffix_comes_from_the_live_read(self):
+        # Same regression class as DeadzoneLiveSuffixTest below -- pinned
+        # separately here because motion.py computes its own marker/suffix
+        # constants from its own captures, not sticks.py's.
+        blob = bytes(range(256)) * 4
+        sess = FakeSession(blob)
+        motion.set_value(sess, "aim", "deadzone_initial", 17, profile=1)
+        payload = sess.only_payload()
+        storage_offset = 0xA0 + motion.STORAGE_BASE
+        suffix = payload[6:]
+        self.assertEqual(suffix, blob[storage_offset + 1:storage_offset + 1 + len(suffix)])
+        self.assertEqual(payload[5], 17)
+
+    def test_bad_side_rejected(self):
+        with self.assertRaises(ValueError):
+            motion.set_value(FakeSession(), "middle", "invert_y", True)
+
+    def test_unknown_setting_rejected(self):
+        with self.assertRaises(ValueError):
+            motion.set_value(FakeSession(), "aim", "invert_z", True)
 
 
 class DpadOptionsTest(unittest.TestCase):

@@ -317,6 +317,28 @@ class DpadDockSetCommandTest(unittest.TestCase):
                 cli_main.build_parser().parse_args(sys.argv[1:])
         self.assertNotEqual(ctx.exception.code, 0)
 
+    def test_motion_set_aim_deadzone(self):
+        payload = self._run(["motion-set", "aim", "deadzone_initial", "17", "--profile", "1"])
+        self.assertEqual(payload[3], 0xA0)   # SETTING_ID
+        self.assertEqual(payload[5], 17)     # value byte
+
+    def test_motion_set_tilt_uses_the_0x22_shifted_address(self):
+        payload = self._run(["motion-set", "tilt", "output", "directional", "--profile", "1"])
+        self.assertEqual(payload, bytes([0x03, 0x01, 0x01, 0xD9, 0x01, 0x03]))
+
+    def test_motion_set_invert_roll_on_tilt_is_rejected(self):
+        sys.argv = ["g7ctl", "motion-set", "tilt", "invert_roll", "on", "--interval", "0"]
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                cli_main.main()
+
+    def test_motion_set_rejects_unknown_setting_via_argparse(self):
+        sys.argv = ["g7ctl", "motion-set", "aim", "not_a_real_setting", "1"]
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as ctx:
+                cli_main.build_parser().parse_args(sys.argv[1:])
+        self.assertNotEqual(ctx.exception.code, 0)
+
 
 class NonExitingArgumentParserTest(unittest.TestCase):
     """The parser class batch/REPL mode reparses each line with -- a bad

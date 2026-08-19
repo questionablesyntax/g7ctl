@@ -8,7 +8,7 @@ fails rather than the GUI quietly displaying the wrong setting.
 """
 import unittest
 
-from pyg7 import buttons, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
+from pyg7 import buttons, dock_settings, dpad_options, motion, report_rate, sticks, triggers, vibration
 
 from .fakes import UNBOUND_RECORD, blob_with, button_record
 
@@ -162,6 +162,63 @@ class StickDecodeTest(unittest.TestCase):
 
     def test_short_blob_yields_none_rather_than_raising(self):
         decoded = sticks.decode_settings(b"\x00" * 8, "left")
+        self.assertIsNone(decoded["deadzone"]["initial"])
+
+
+class MotionDecodeTest(unittest.TestCase):
+    def test_settings_decode_from_setting_id_plus_storage_base(self):
+        base = motion.STORAGE_BASE
+        blob = blob_with({
+            base + 0x9E: 0x03,   # x_axis_output_mode -> yaw_roll
+            base + 0xA0: 17,     # deadzone initial
+            base + 0xA1: 93,     # deadzone max
+            base + 0xB3: 0x01,   # invert_y
+            base + 0xB5: 42,     # sensitivity_scale
+        })
+        decoded = motion.decode_settings(blob, "aim")
+        self.assertEqual(decoded["x_axis_output_mode"], "yaw_roll")
+        self.assertEqual(decoded["deadzone"], {"initial": 17, "max": 93})
+        self.assertTrue(decoded["invert_y"])
+        self.assertEqual(decoded["sensitivity_scale"], 42)
+
+    def test_tilt_reads_the_0x22_shifted_offsets(self):
+        base = motion.STORAGE_BASE
+        blob = blob_with({base + 0xA0: 11, base + 0xA0 + 0x22: 22})
+        self.assertEqual(motion.decode_settings(blob, "aim")["deadzone"]["initial"], 11)
+        self.assertEqual(motion.decode_settings(blob, "tilt")["deadzone"]["initial"], 22)
+
+    def test_invert_yaw_tilt_reads_the_0x20_shifted_offset_not_0x22(self):
+        base = motion.STORAGE_BASE
+        blob = blob_with({base + 0xB4: 0x01, base + 0xB4 + 0x20: 0x01})
+        self.assertTrue(motion.decode_settings(blob, "tilt")["invert_yaw"])
+        # The naive +0x22 address must NOT be where this reads from.
+        blob2 = blob_with({base + 0xB4 + 0x22: 0x01})
+        self.assertFalse(motion.decode_settings(blob2, "tilt")["invert_yaw"])
+
+    def test_invert_roll_is_none_on_tilt(self):
+        base = motion.STORAGE_BASE
+        blob = blob_with({base + 0xB2: 0x01})
+        self.assertTrue(motion.decode_settings(blob, "aim")["invert_roll"])
+        self.assertIsNone(motion.decode_settings(blob, "tilt")["invert_roll"])
+
+    def test_direction_bindings_treat_0xff_as_unbound_and_have_no_ring(self):
+        base = motion.STORAGE_BASE + 0xB9
+        blob = blob_with({base: 0x01, base + 1: 0xFF, base + 2: 0x03, base + 3: 0xFF})
+        db = motion.decode_settings(blob, "aim")["direction_bindings"]
+        self.assertEqual(db["up"], "native_dpad_up")
+        self.assertIsNone(db["down"])
+        self.assertNotIn("ring", db)
+
+    def test_curve_custom_index_decodes(self):
+        blob = blob_with({motion.STORAGE_BASE + 0xA5: 0x03})
+        self.assertEqual(motion.decode_settings(blob, "aim")["curve"]["preset"], "custom")
+
+    def test_output_decodes_using_the_same_enum_as_sticks(self):
+        blob = blob_with({motion.STORAGE_BASE + 0xB7: 0x03})
+        self.assertEqual(motion.decode_settings(blob, "aim")["output"], "directional")
+
+    def test_short_blob_yields_none_rather_than_raising(self):
+        decoded = motion.decode_settings(b"\x00" * 8, "aim")
         self.assertIsNone(decoded["deadzone"]["initial"])
 
 

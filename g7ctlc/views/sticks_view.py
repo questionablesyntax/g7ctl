@@ -29,19 +29,15 @@ from ..widgets import (
     percent_spin,
     select_by_data,
 )
+from ..widgets import (
+    set_row_visible as _set_row_visible,
+)
 
 TRAJECTORY_OPTIONS = ["circle", "raw"]
 OUTPUT_MODE_OPTIONS = [
     ("left_stick", "Left Stick"), ("right_stick", "Right Stick"),
     ("directional", "Directional Buttons"), ("mouse", "Simulate Mouse"),
 ]
-
-
-def _set_row_visible(form: QFormLayout, widget: QWidget, visible: bool) -> None:
-    widget.setVisible(visible)
-    label = form.labelForField(widget)
-    if label is not None:
-        label.setVisible(visible)
 
 
 class _StickSideWidget(CategorySideWidget):

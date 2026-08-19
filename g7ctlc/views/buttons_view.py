@@ -10,7 +10,7 @@ diagram layout closer to GameSir Nexus's own controller-image UI.
 import logging
 from typing import Optional
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -122,6 +122,12 @@ class ButtonsView(QWidget):
         header.addWidget(self.column_header, 1)
         self.continuous_header = self._muted_label("Continuous Trigger")
         self.continuous_header.setFixedWidth(_CONTINUOUS_COL_WIDTH)
+        # The label is wider than the checkbox column beneath it (unlike
+        # every other header here) -- word-wrap it onto two lines instead
+        # of letting it overflow the column's right edge into whatever sits
+        # next to it.
+        self.continuous_header.setWordWrap(True)
+        self.continuous_header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.continuous_header.setToolTip(_CONTINUOUS_TOOLTIP)
         header.addWidget(self.continuous_header)
         rows.addLayout(header)

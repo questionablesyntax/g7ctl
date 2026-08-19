@@ -55,7 +55,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
-from . import buttons, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
+from . import buttons, dock_settings, dpad_options, motion, report_rate, sticks, triggers, vibration
 from .constants import DOCK_READ_CATEGORY, FULL_BLOB_LENGTH
 from .curves import CURVE_PRESETS as _CURVE_PRESETS
 from .curves import parse_points as _parse_points
@@ -67,6 +67,7 @@ SCHEMA_VERSION = 1
 
 _HAIR_TRIGGER_MODES = set(triggers.HAIR_TRIGGER_MODES)
 _OUTPUT_MODES = set(sticks.OUTPUT_MODES)
+_MOTION_X_AXIS_MODES = set(motion.X_AXIS_OUTPUT_MODES)
 
 # Default heartbeat pacing used while applying a state dict, matching the
 # observed app cadence (see g7ctl/main.py's _wrapped_write).
@@ -113,6 +114,27 @@ def _default_trigger_settings() -> dict:
     }
 
 
+def _default_motion_settings(side: str) -> dict:
+    """`side`-dependent only in one field: `invert_roll` is Aim-only (see
+    motion.py's module docstring) -- `False` (a real, settable default) on
+    Aim, `None` (not applicable) on Tilt."""
+    return {
+        "activate_method": 0,
+        "activate_button": None,
+        "x_axis_output_mode": "yaw",
+        "curve": {"preset": "standard", "points": None},
+        "deadzone": {"initial": 0, "max": 100},
+        "anti_deadzone": {"initial": 0, "max": 100},
+        "invert_roll": False if side == "aim" else None,
+        "invert_y": False,
+        "invert_yaw": False,
+        "sensitivity_scale": 50,
+        "output": "left_stick",
+        "overlap_area": 50,
+        "direction_bindings": {"up": None, "down": None, "left": None, "right": None},
+    }
+
+
 def default_state_dict(name: str = "New State") -> dict:
     """A brand-new state dict with sensible defaults, ready to hand-edit or feed to a GUI."""
     now = datetime.now(timezone.utc).isoformat()
@@ -137,6 +159,11 @@ def default_state_dict(name: str = "New State") -> dict:
         "dock_auto_on_off": True,
         "sticks": {"left": _default_stick_settings(), "right": _default_stick_settings()},
         "triggers": {"left": _default_trigger_settings(), "right": _default_trigger_settings()},
+        # Additive, same reasoning as report_rate_hz/continuous_trigger above:
+        # added well after schema_version 1 shipped, so a state dict missing
+        # this section entirely (an older export) still validates -- see
+        # validate_state() below, where "motion" is checked only if present.
+        "motion": {"aim": _default_motion_settings("aim"), "tilt": _default_motion_settings("tilt")},
         "vibration": {
             "left_grip": 50, "right_grip": 50,
             "left_trigger": 50, "right_trigger": 50,
@@ -237,6 +264,15 @@ def validate_state(data: dict) -> None:
         if side_name not in ("left", "right"):
             raise StateError(f"unknown trigger side {side_name!r}")
         _validate_trigger_settings(side_data)
+
+    # Additive, same reasoning as report_rate_hz/continuous_trigger above --
+    # older state JSON exported before this section existed still validates.
+    motion_data = data.get("motion")
+    if motion_data is not None:
+        for side_name, side_data in motion_data.items():
+            if side_name not in ("aim", "tilt"):
+                raise StateError(f"unknown motion side {side_name!r}")
+            _validate_motion_settings(side_name, side_data or {})
 
     # 0-100, NOT vibration.LEVELS. The five-value restriction is a rule about
     # what is worth *writing* (see vibration.LEVELS), not about what the
@@ -340,6 +376,45 @@ def _validate_stick_settings(s: dict) -> None:
                 raise StateError(f"direction_bindings missing zone {zone!r}")
             if db[zone] is not None and not _is_valid_keycode_value(db[zone]):
                 raise StateError(f"unknown keycode {db[zone]!r} for direction_bindings.{zone}")
+
+
+def _validate_motion_settings(side: str, s: dict) -> None:
+    am = s.get("activate_method")
+    if am is not None and not (isinstance(am, int) and 0 <= am <= 3):
+        raise StateError(f"motion.{side}.activate_method must be 0-3 (observed range, name "
+                          f"unconfirmed) or null, got {am!r}")
+    ab = s.get("activate_button")
+    if ab is not None and not _is_valid_keycode_value(ab):
+        raise StateError(f"unknown keycode {ab!r} for motion.{side}.activate_button")
+    xom = s.get("x_axis_output_mode")
+    if xom is not None and xom not in _MOTION_X_AXIS_MODES:
+        raise StateError(f"unknown x_axis_output_mode {xom!r}")
+    _validate_curve(s.get("curve") or {}, f"motion.{side}")
+    for field_name in ("deadzone", "anti_deadzone"):
+        block = s.get(field_name) or {}
+        _validate_percent(block.get("initial"), f"motion.{side}.{field_name}.initial")
+        _validate_percent(block.get("max"), f"motion.{side}.{field_name}.max")
+    ir = s.get("invert_roll")
+    if side == "tilt" and ir is not None:
+        raise StateError("motion.tilt.invert_roll must be null -- Tilt has no equivalent control")
+    if ir is not None and not isinstance(ir, bool):
+        raise StateError(f"motion.{side}.invert_roll must be a bool or null, got {ir!r}")
+    for field_name in ("invert_y", "invert_yaw"):
+        v = s.get(field_name)
+        if v is not None and not isinstance(v, bool):
+            raise StateError(f"motion.{side}.{field_name} must be a bool or null, got {v!r}")
+    out = s.get("output")
+    if out is not None and out not in _OUTPUT_MODES:
+        raise StateError(f"unknown motion output {out!r}")
+    _validate_percent(s.get("sensitivity_scale"), f"motion.{side}.sensitivity_scale")
+    _validate_percent(s.get("overlap_area"), f"motion.{side}.overlap_area")
+    db = s.get("direction_bindings")
+    if db is not None:
+        for zone in ("up", "down", "left", "right"):
+            if zone not in db:
+                raise StateError(f"motion.{side}.direction_bindings missing zone {zone!r}")
+            if db[zone] is not None and not _is_valid_keycode_value(db[zone]):
+                raise StateError(f"unknown keycode {db[zone]!r} for motion.{side}.direction_bindings.{zone}")
 
 
 def _validate_trigger_settings(s: dict) -> None:
@@ -510,6 +585,10 @@ def read_state(session: VendorSession, slot: int = 1, interval: float = 0.05,
         "triggers": {
             "left": triggers.decode_settings(default_blob, "left"),
             "right": triggers.decode_settings(default_blob, "right"),
+        },
+        "motion": {
+            "aim": motion.decode_settings(default_blob, "aim"),
+            "tilt": motion.decode_settings(default_blob, "tilt"),
         },
         "vibration": vibration.decode_settings(default_blob),
     }
@@ -716,6 +795,17 @@ def _build_steps(state: dict, baseline: Optional[dict] = None) -> tuple[list[Ste
         steps.extend(side_steps)
         skipped += side_skipped
 
+    # Additive section (see validate_state()) -- state.get() rather than
+    # state[...] since an older state dict may not have "motion" at all.
+    baseline_motion = (baseline or {}).get("motion", {})
+    for side in ("aim", "tilt"):
+        m = (state.get("motion") or {}).get(side)
+        if not m:
+            continue
+        side_steps, side_skipped = _motion_steps(side, m, baseline_motion.get(side), profile=slot)
+        steps.extend(side_steps)
+        skipped += side_skipped
+
     vib_steps, vib_skipped = _vibration_steps(state["vibration"], baseline_vibration, profile=slot)
     steps.extend(vib_steps)
     skipped += vib_skipped
@@ -905,6 +995,87 @@ def _trigger_steps(side: str, t: dict, baseline: Optional[dict] = None, profile:
     _add(anti_deadzone.get("max"), baseline_adz.get("max"),
          f"{label}: anti_deadzone.max={anti_deadzone.get('max')}",
          lambda sess, v: triggers.set_value(sess, side, "anti_deadzone_max", v, profile=profile))
+    return steps, skipped
+
+
+def _motion_steps(side: str, s: dict, baseline: Optional[dict] = None, profile: int = 1) -> tuple[list[Step], int]:
+    """Returns (steps, skipped) -- see _stick_steps()'s docstring for the
+    baseline-diffing approach. `side` is "aim" or "tilt"; `invert_roll` is
+    skipped entirely on Tilt (see motion.py's module docstring -- Tilt has
+    no equivalent control, and motion.set_value() raises if asked)."""
+    baseline = baseline or {}
+    steps = []
+    skipped = 0
+    label = f"Motion {side.capitalize()}"
+
+    def _add(value, baseline_value, write_label, fn):
+        """See _stick_steps()'s `_add()` docstring -- same fix, same reason."""
+        nonlocal skipped
+        if value is None:
+            return
+        if baseline_value == value:
+            skipped += 1
+            return
+        steps.append((write_label, lambda sess, _fn=fn, _v=value: _fn(sess, _v)))
+
+    _add(s.get("activate_method"), baseline.get("activate_method"),
+         f"{label}: activate_method={s.get('activate_method')}",
+         lambda sess, v: motion.set_value(sess, side, "activate_method", v, profile=profile))
+    _add(s.get("activate_button"), baseline.get("activate_button"),
+         f"{label}: activate_button={s.get('activate_button')}",
+         lambda sess, v: motion.set_value(sess, side, "activate_button", v, profile=profile))
+    _add(s.get("x_axis_output_mode"), baseline.get("x_axis_output_mode"),
+         f"{label}: x_axis_output_mode={s.get('x_axis_output_mode')}",
+         lambda sess, v: motion.set_value(sess, side, "x_axis_output_mode", v, profile=profile))
+    curve = s.get("curve") or {}
+    baseline_curve = baseline.get("curve") or {}
+    _add(curve.get("preset"), baseline_curve.get("preset"),
+         f"{label}: curve={curve.get('preset')}",
+         lambda sess, v: motion.set_value(sess, side, "curve", v, profile=profile))
+    # Deadzone/anti-deadzone after the curve preset, same reasoning as
+    # _stick_steps(): a preset selection rewrites the whole curve block.
+    deadzone = s.get("deadzone") or {}
+    baseline_dz = baseline.get("deadzone") or {}
+    _add(deadzone.get("initial"), baseline_dz.get("initial"),
+         f"{label}: deadzone.initial={deadzone.get('initial')}",
+         lambda sess, v: motion.set_value(sess, side, "deadzone_initial", v, profile=profile))
+    _add(deadzone.get("max"), baseline_dz.get("max"),
+         f"{label}: deadzone.max={deadzone.get('max')}",
+         lambda sess, v: motion.set_value(sess, side, "deadzone_max", v, profile=profile))
+    anti_deadzone = s.get("anti_deadzone") or {}
+    baseline_adz = baseline.get("anti_deadzone") or {}
+    _add(anti_deadzone.get("initial"), baseline_adz.get("initial"),
+         f"{label}: anti_deadzone.initial={anti_deadzone.get('initial')}",
+         lambda sess, v: motion.set_value(sess, side, "anti_deadzone_initial", v, profile=profile))
+    _add(anti_deadzone.get("max"), baseline_adz.get("max"),
+         f"{label}: anti_deadzone.max={anti_deadzone.get('max')}",
+         lambda sess, v: motion.set_value(sess, side, "anti_deadzone_max", v, profile=profile))
+    if side == "aim":
+        _add(s.get("invert_roll"), baseline.get("invert_roll"),
+             f"{label}: invert_roll={s.get('invert_roll')}",
+             lambda sess, v: motion.set_value(sess, side, "invert_roll", v, profile=profile))
+    _add(s.get("invert_y"), baseline.get("invert_y"),
+         f"{label}: invert_y={s.get('invert_y')}",
+         lambda sess, v: motion.set_value(sess, side, "invert_y", v, profile=profile))
+    _add(s.get("invert_yaw"), baseline.get("invert_yaw"),
+         f"{label}: invert_yaw={s.get('invert_yaw')}",
+         lambda sess, v: motion.set_value(sess, side, "invert_yaw", v, profile=profile))
+    _add(s.get("sensitivity_scale"), baseline.get("sensitivity_scale"),
+         f"{label}: sensitivity_scale={s.get('sensitivity_scale')}",
+         lambda sess, v: motion.set_value(sess, side, "sensitivity_scale", v, profile=profile))
+    _add(s.get("output"), baseline.get("output"),
+         f"{label}: output={s.get('output')}",
+         lambda sess, v: motion.set_value(sess, side, "output", v, profile=profile))
+    _add(s.get("overlap_area"), baseline.get("overlap_area"),
+         f"{label}: overlap_area={s.get('overlap_area')}",
+         lambda sess, v: motion.set_value(sess, side, "overlap_area", v, profile=profile))
+    db = s.get("direction_bindings") or {}
+    baseline_db = baseline.get("direction_bindings") or {}
+    for zone in ("up", "down", "left", "right"):
+        setting_name = f"direction_{zone}"
+        _add(db.get(zone), baseline_db.get(zone),
+             f"{label}: direction_bindings.{zone}={db.get(zone)}",
+             lambda sess, v, sn=setting_name: motion.set_value(sess, side, sn, v, profile=profile))
     return steps, skipped
 
 

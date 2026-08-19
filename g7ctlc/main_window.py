@@ -26,6 +26,7 @@ from pyg7 import state as state_mod
 from . import help_content
 from .tray import _state_icon
 from .views.buttons_view import ButtonsView
+from .views.motion_view import MotionView
 from .views.settings_view import SettingsView
 from .views.sticks_view import SticksView
 from .views.triggers_view import TriggersView
@@ -227,12 +228,14 @@ class MainWindow(QMainWindow):
         self.buttons_view = ButtonsView()
         self.sticks_view = SticksView()
         self.triggers_view = TriggersView()
+        self.motion_view = MotionView()
         self.vibration_view = VibrationView()
         self.settings_view = SettingsView()
         for view, label in (
             (self.buttons_view, "Buttons"),
             (self.sticks_view, "Sticks"),
             (self.triggers_view, "Triggers"),
+            (self.motion_view, "Motion"),
             (self.vibration_view, "Vibration"),
             (self.settings_view, "Settings"),
         ):
@@ -709,6 +712,10 @@ class MainWindow(QMainWindow):
         # Buttons needed above.
         self._state["sticks"] = device_state["sticks"]
         self._state["triggers"] = device_state["triggers"]
+        # Additive section (see pyg7/state.py's validate_state()) -- always
+        # present in a fresh read_state(), unlike dock settings below, so no
+        # None-guard needed here.
+        self._state["motion"] = device_state["motion"]
         self._state["vibration"] = device_state["vibration"]
         self._state["report_rate_hz"] = device_state["report_rate_hz"]
         # None means "not read this call" (the watcher skips this
@@ -724,6 +731,7 @@ class MainWindow(QMainWindow):
         self._sync_report_rate_combo()
         self.sticks_view.load_state(self._state)
         self.triggers_view.load_state(self._state)
+        self.motion_view.load_state(self._state)
         self.vibration_view.load_state(self._state)
         self.settings_view.load_state(self._state)
 
@@ -735,6 +743,7 @@ class MainWindow(QMainWindow):
         self.buttons_view.load_state(self._state)
         self.sticks_view.load_state(self._state)
         self.triggers_view.load_state(self._state)
+        self.motion_view.load_state(self._state)
         self.vibration_view.load_state(self._state)
         self.settings_view.load_state(self._state)
         self._set_dirty(False)
