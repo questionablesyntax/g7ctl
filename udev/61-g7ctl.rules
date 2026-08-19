@@ -13,6 +13,15 @@ SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="100a", TAG+="uaccess
 SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="109b", TAG+="uaccess"
 SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="109c", TAG+="uaccess"
 
+# Vendor/config identity on at least one other G7 Pro variant -- see
+# PID_VENDOR_TRIMODE in pyg7/constants.py and PROTOCOL.md "Device
+# identities". Without this line, a user on that hardware who follows
+# this file's own setup instructions still needs root: the Python side
+# recognizes the PID, but raw USB access to it is denied without this
+# rule too. Confirmed 2026-08-19 by a user who found that the hard way
+# (added it by hand before this line existed) -- not a guess.
+SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="1003", TAG+="uaccess"
+
 # The controller's on-device "default GameSir identity" -- reached via the
 # Menu+Share button combo (documented in GameSir's manual as an XInput/
 # native-identity toggle), distinct from both 100a and the 109b vendor/
