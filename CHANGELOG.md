@@ -9,17 +9,19 @@ adheres to [semantic versioning](https://semver.org/).
 ### Fixed
 
 - **At least two other G7 Pro variants couldn't enter vendor mode at
-  all.** Reported by community members testing a "Tri-mode" G7 Pro
-  (pre-production unit) and a G7 Pro "Zenless Zone Zero" edition: the
-  handshake was sent successfully, but `enter_vendor_mode()` only ever
-  checked two vendor-identity PIDs, and each of these variants uses a
-  different one. No timeout, however long, was ever going to help -- it
-  was watching the wrong addresses. `g7ctl` now also recognizes
-  `3537:1003` and `3537:105d`, both confirmed on the reporters' own
-  hardware (real config round trips, not just matching USB descriptor
-  shapes). The `udev` rules needed for raw access without root didn't
-  list either PID -- added. Purely additive: no behavior change for the
-  standard `109b`/`109c` identities.
+  all, wired or wireless.** Reported by community members testing a
+  "Tri-mode" G7 Pro (pre-production unit) and a G7 Pro "Zenless Zone
+  Zero" edition: the handshake was sent successfully, but
+  `enter_vendor_mode()` only ever checked two vendor-identity PIDs, and
+  each of these variants uses a different one. No timeout, however
+  long, was ever going to help -- it was watching the wrong addresses.
+  `g7ctl` now also recognizes `3537:1003` and `3537:105d` (wired vendor
+  mode) and `3537:1004` (the Tri-mode variant's 2.4GHz dongle), all
+  confirmed on the reporters' own hardware -- real config round trips,
+  not just matching USB descriptor shapes. The `udev` rules needed for
+  raw access without root didn't list any of them -- added. Purely
+  additive: no behavior change for the standard `109b`/`109c`
+  identities.
 
 - **Entering vendor mode could time out repeatedly against a controller
   that was actually right there, just still re-enumerating.** The
