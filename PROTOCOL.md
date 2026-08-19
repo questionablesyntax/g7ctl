@@ -957,36 +957,119 @@ strongest available evidence that this is the hardware's design and not a
 shortcoming of this project's approach: if a workaround existed, the app
 written by the people who made the firmware would use it.
 
-## Motion / gyro
+## Motion
 
-Located 2026-08-08 (`test61`), layout known, individual settings not
-decoded. Nothing in `pyg7/` touches it.
+Every field measured and implemented (`pyg7/motion.py`), 2026-08-18 evening
+(`test72`-`test77`), closing out a category that took three passes to get
+right -- worth knowing the history because it explains why the module's own
+comments hedge where they do.
 
-Nexus's Motion tab is **structurally a stick config**: X-Axis Output Mode,
-Activate Method, Activate Button, Output, Deadzone, Anti-Deadzone, Curve
-Adjustment, X/Y Sensitivity Scale, and Invert toggles. It stores its
-settings the same way, in a record with the same shape as a stick's, at
-**stick offset + `0x61`**:
+**Structurally a Sticks config, confirmed by direct write+read-diff
+capture, not by resemblance.** Same category prefix `03 [PROFILE] 01`
+(page 1) as Sticks, same `SETTING_ID + STORAGE_BASE(0x100)` addressing.
+`SETTING_ID` below is for **Aim**; add `0x22` for **Tilt** (NOT Sticks'
+`0x20` -- confirmed per-category, same as Triggers' own different offset)
+-- except the two fields called out below, which don't follow it.
 
-| Setting | Stick | Motion |
-|---|---|---|
-| deadzone initial | `0x13F` | `0x1A0` |
-| anti-deadzone initial | `0x141` | `0x1A2` |
-| first invert | `0x151` | `0x1B2` |
-| sensitivity | `0x153` | `0x1B5` |
+| Setting | `SETTING_ID` | Payload after prefix | Notes |
+|---|---|---|---|
+| Activate Method | `0x9C` | `[id] 01 [0-3]` | Raw value -- Nexus's names for these aren't confirmed except that `0x00` is believed, not confirmed, to be "Off" (this protocol's convention elsewhere, e.g. Triggers' Hair Trigger Mode) |
+| Activate Button | `0x9D` | `[id] 01 [KEYCODE]` | Which button, held/pressed, activates motion input |
+| X-Axis Output Mode | `0x9E` | `[id] 01 [01=Yaw\|03=Yaw+Roll]` | Gates whether an invert control exists at all -- see below |
+| Deadzone Initial | `0xA0` | long form, **suffix must be read live -- same reasoning as Sticks** | |
+| Deadzone Max | `0xA1` | same note | |
+| Anti-Deadzone Initial | `0xA2` | same note | |
+| Anti-Deadzone Max | `0xA3` | same note | |
+| Curve preset | `0xA5` | Motion's own shape data (below) -- structurally identical to Sticks'/Triggers' but numerically different | |
+| Invert Roll | `0xB2` | `[id] 01 [00\|01]` | **Aim only.** Shown by Nexus only when X-Axis Output Mode is Yaw+Roll AND Output is Button Binds |
+| Invert Y | `0xB3` | `[id] 01 [00\|01]` | |
+| Invert Yaw | `0xB4` | `[id] 01 [00\|01]` | Tilt's address is `0xB4 + 0x20`, the one field that breaks the `0x22` stride -- see below |
+| X/Y Sensitivity Scale | `0xB5` | `[id] 01 [0-100]` | Single slider (Horizontal<->Vertical balance), like Sticks' Sensitivity -- not two handles like Deadzone |
+| Output | `0xB7` | `[id] 01 [01=L Stick\|02=R Stick\|03=Button Binds\|04=Mouse]` | Same enum as Sticks' Output mode, same order |
+| Overlap Area | `0xB8` | `[id] 01 [0-100]` | Output=Button Binds only |
+| Direction Bindings: Up | `0xB9` | `[id] 01 [KEYCODE]` | Output=Button Binds only. **Four independent single-byte settings, NOT one bulk write** the way Sticks' `direction_bindings` is -- confirmed on the wire, one write per direction. No "ring" zone (motion has no stick click) |
+| Direction Bindings: Down | `0xBA` | same shape | |
+| Direction Bindings: Left | `0xBB` | same shape | |
+| Direction Bindings: Right | `0xBC` | same shape | |
 
-Everything from the inverts onward shifts by one extra byte because motion
-has **three** invert toggles (Roll, Yaw, Y) where a stick has two (X, Y).
+### Two gates, mistaken for one during the capture session
 
-Motion edits wrote `0x19C`-`0x1B7` (page 1, prefix `03 [PROFILE] 01`),
-which is exactly the region previously catalogued as "a stick-shaped block
-nothing ever writes". It is not unwritten; it is the motion config.
+`Output`'s Button Binds setting does NOT decide whether an invert control
+exists -- `X-Axis Output Mode` does. Only **"Yaw + Roll"** shows an invert
+toggle at all; plain **"Yaw"** shows none. `Output`'s Button Binds setting
+then decides *which* byte/label shows once that gate is open: `0xB4`
+labelled "Invert Yaw" outside Button Binds, `0xB2` labelled "Invert Roll"
+inside it (Aim only -- Tilt shows no equivalent control under Button
+Binds). Both bytes are real, independently addressed, and were confirmed
+in the same evening's capture without needing a raw blob read -- the owner
+found the actual gate by hand, live in Nexus, once the address arithmetic
+alone produced a contradiction (see below).
 
-**There are two such blocks**, at roughly `0x19D` and `0x1BF`, byte-identical
-to each other in a factory profile. Nexus's Motion tab has two sub-tabs,
-**Aim** and **Tilt**, so one block per sub-tab is the obvious reading --
-but only one was exercised in `test61`, so which block is which, and
-whether Tilt really owns the second, is **not confirmed**.
+### Aim/Tilt are `0x22` apart, not the `0x20` a stick's Left/Right uses
+
+Established over three passes:
+
+- **`test61` (2026-08-08):** motion edits write `0x19C`-`0x1B7`, so the
+  block is the motion config and gyro stopped being a guess. Layout was
+  read as "stick record at `+0x61`" from the block's *shape* alone -- only
+  one sub-tab was exercised, which is what left the real stride unknown.
+- **`test65` (2026-08-18 morning):** one boolean toggled per sub-tab
+  ("Invert Yaw"), giving two real addresses (`0x1B4` Aim, `0x1D4` Tilt) --
+  a `0x20` gap. Reading the raw blob the same day showed the *whole
+  record* is `0x22` apart (23/30 bytes identical against a next-best of
+  7/30), contradicting those two writes. One measured field per record
+  wasn't enough to resolve which was right, and an earlier session had
+  already declared the category implementation-ready off the `+0x61`
+  layout alone -- an error that cost a booked VM slot, recorded here so it
+  isn't repeated.
+- **`test72`-`test77` (2026-08-18 evening): closed.** Every control in the
+  table above, clicked one at a time with pauses, Aim then Tilt. Ten base
+  fields landed exactly `0x22` apart with no exceptions. The `0x1B4`/`0x1D4`
+  pair turned out to be real too -- just gated by a *different* mode than
+  assumed (see "Two gates" above), which is why it looked contradictory
+  before the live UI settled it.
+
+### Curve preset payload (Motion's own shape data)
+
+```
+Custom (mode-select only):  [SETTING_ID] 01 03
+Standard/Concave/S-Curve:   [SETTING_ID] 0A [preset_index] [9 bytes shape data]
+```
+
+Same framing as Sticks'/Triggers' curve payload (`preset_index`:
+Standard=`00`, Concave=`01`, S-Curve=`02`; `0A` is the length of index+9
+shape bytes), but the **shape bytes themselves are numerically different**
+-- Motion has its own curve, tuned for gyro sensitivity rather than a
+stick's:
+
+```
+Standard: 64 00 00 28 28 80 81 d7 d7
+Concave:  64 00 00 5e 17 ae 4f e8 a2
+S-Curve:  64 00 00 28 4c 80 81 d7 b3
+```
+
+Custom's write is `[id] 01 03` (2 bytes after the ID) -- **not** Sticks'
+4-byte form (`[id] 01 03 00`, with a trailing `0x00` this project's own
+`curves.py` carries but never fully explained). Motion's own captured
+Custom write never had that extra byte, so `pyg7/motion.py` doesn't send
+one.
+
+Custom curve **point dragging was never captured** -- only the three named
+presets and Custom's mode-select flag. `decode_curve_points()` will still
+decode a configured Custom block's points (same 10-byte structure as
+Sticks'), but there's no `curve_points` setting to *write* individual
+points yet.
+
+### What's still open
+
+- **`0x1B4`'s name on Tilt.** The address (`0x1B4 + 0x20`) is confirmed;
+  whether Nexus still calls it "Invert Yaw" there, or something else, is
+  not -- cosmetic, not a blocker (see `pyg7/motion.py`).
+- **Mouse output mode may have its own extra field**, the way Sticks' Mouse
+  mode has DPI. Never captured, no capture attempted.
+- **`activate_method`'s named enum.** Only the raw 0-3 range is confirmed;
+  Nexus's names for values other than the believed-but-unconfirmed `0x00`
+  ("Off") are unknown.
 
 ## The `CMD_READ` wedge, and what it costs
 
@@ -1209,13 +1292,17 @@ software):
 
 ## Not implemented / out of scope
 
-- Curve control-point editing -- **decoded, not implemented.** See "Curve
-  payload" above for the block layout and per-point addresses; nothing in
-  `pyg7/` writes them, and the interpolation used to render a curve between
-  the points is not established.
-- Motion/gyro: the register block is located and its layout is known (see
-  "Motion / gyro" below), but the individual settings are not decoded and
-  nothing in `pyg7/` reads or writes them.
+- Curve control-point editing (Sticks/Triggers) -- **decoded, not
+  implemented.** See "Curve payload" above for the block layout and
+  per-point addresses; nothing in `pyg7/` writes them, and the
+  interpolation used to render a curve between the points is not
+  established. Motion's own curve has the same gap for the same reason
+  (never captured on the wire), plus its presets are the only part of
+  Motion that IS implemented -- see "Motion" below.
+- Motion's `activate_method` enum names, and whatever extra field(s) its
+  Mouse output mode may have (the way Sticks' Mouse mode has DPI) -- see
+  "Motion" below for what's confirmed and implemented; this is what's
+  left.
 - 4 of the 5 spare bytes in each button-table record. Byte 4 is Continuous
   Trigger (see "Buttons"); bytes 2, 3, 5 and 6 remain unknown, and byte 6
   is demonstrably in use -- one profile carries `0x0A` there on every slot,

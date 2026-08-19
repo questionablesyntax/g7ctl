@@ -178,6 +178,42 @@ class ValidateStateTest(unittest.TestCase):
         with self.assertRaises(state_mod.StateError):
             state_mod.validate_state(self.state)
 
+    def test_motion_is_optional(self):
+        # Additive section, same reasoning as report_rate_hz -- an older
+        # exported state file predates it entirely.
+        del self.state["motion"]
+        state_mod.validate_state(self.state)  # must not raise
+
+    def test_rejects_bad_motion_activate_method(self):
+        self.state["motion"]["aim"]["activate_method"] = 4
+        with self.assertRaises(state_mod.StateError):
+            state_mod.validate_state(self.state)
+
+    def test_rejects_unknown_motion_x_axis_output_mode(self):
+        self.state["motion"]["aim"]["x_axis_output_mode"] = "pitch"
+        with self.assertRaises(state_mod.StateError):
+            state_mod.validate_state(self.state)
+
+    def test_rejects_motion_tilt_invert_roll(self):
+        # Tilt has no equivalent control -- see motion.py's module docstring.
+        self.state["motion"]["tilt"]["invert_roll"] = False
+        with self.assertRaises(state_mod.StateError):
+            state_mod.validate_state(self.state)
+
+    def test_allows_motion_aim_invert_roll(self):
+        self.state["motion"]["aim"]["invert_roll"] = True
+        state_mod.validate_state(self.state)
+
+    def test_rejects_unknown_motion_output(self):
+        self.state["motion"]["aim"]["output"] = "sideways"
+        with self.assertRaises(state_mod.StateError):
+            state_mod.validate_state(self.state)
+
+    def test_rejects_unknown_motion_side(self):
+        self.state["motion"]["diagonal"] = {}
+        with self.assertRaises(state_mod.StateError):
+            state_mod.validate_state(self.state)
+
 
 class LiveFixtureTest(unittest.TestCase):
     """Real read_state() output must survive validation and re-writing."""
@@ -279,6 +315,9 @@ class BuildStepsTest(unittest.TestCase):
             (["swap_stick_dpad"], True, "Swap Left Stick and D-pad=True"),
             (["dock_led_brightness"], 25, "Dock LED Brightness=25%"),
             (["dock_auto_on_off"], False, "Dock Auto On/Off=False"),
+            (["motion", "aim", "deadzone", "initial"], 23, "Motion Aim: deadzone.initial=23"),
+            (["motion", "tilt", "sensitivity_scale"], 77, "Motion Tilt: sensitivity_scale=77"),
+            (["motion", "aim", "invert_roll"], True, "Motion Aim: invert_roll=True"),
         ]
         for path, new_value, expected_label in cases:
             with self.subTest(setting=".".join(str(p) for p in path)):
@@ -465,6 +504,32 @@ class SparseSubsectionTest(unittest.TestCase):
         steps, _skipped = state_mod._build_steps(state, baseline=None)
         labels = [label for label, _fn in steps]
         self.assertIn("Left Stick: resolution_bits=10", labels)
+        for _label, write_fn in steps:
+            write_fn(FakeSession(bytes(512)))  # must not raise end to end
+
+    def test_missing_motion_section_entirely_does_not_crash(self):
+        # "motion" is additive (see ValidateStateTest.test_motion_is_optional)
+        # -- absent entirely, not just individual sub-fields, is the shape an
+        # older exported state file actually has.
+        state = self._state_missing(["motion"])
+        state_mod.validate_state(state)
+        state_mod._build_steps(state, baseline=None)
+
+    def test_missing_motion_curve_and_direction_bindings_does_not_crash(self):
+        state = self._state_missing(
+            ["motion", "aim", "curve"],
+            ["motion", "tilt", "direction_bindings"],
+        )
+        state_mod.validate_state(state)
+        state_mod._build_steps(state, baseline=None)
+
+    def test_present_motion_settings_still_write_when_siblings_are_missing(self):
+        from .fakes import FakeSession
+        state = self._state_missing(["motion", "aim", "curve"])
+        state["motion"]["aim"]["sensitivity_scale"] = 30
+        steps, _skipped = state_mod._build_steps(state, baseline=None)
+        labels = [label for label, _fn in steps]
+        self.assertIn("Motion Aim: sensitivity_scale=30", labels)
         for _label, write_fn in steps:
             write_fn(FakeSession(bytes(512)))  # must not raise end to end
 

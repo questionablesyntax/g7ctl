@@ -51,7 +51,7 @@ from typing import Callable, Optional
 
 import usb.core
 
-from pyg7 import buttons, dock_settings, dpad_options, report_rate, sticks, triggers, vibration
+from pyg7 import buttons, dock_settings, dpad_options, motion, report_rate, sticks, triggers, vibration
 from pyg7 import state as state_mod
 from pyg7.device import HANDSHAKE_MIN_INTERVAL, enter_vendor_mode, find_writable_device
 from pyg7.session import VendorSession
@@ -193,6 +193,16 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
                           help="Target profile 1-4 (default 1) -- confirmed genuinely profile-scoped, "
                                "same as Buttons.")
     _add_heartbeat_args(p_stick)
+
+    p_motion = sub.add_parser("motion-set", help="Set a Motion-tab setting (device must already be in vendor mode).")
+    p_motion.add_argument("side", choices=["aim", "tilt"])
+    p_motion.add_argument("setting", choices=sorted(motion.SETTINGS))
+    p_motion.add_argument("value", help="Value: number, on/off, or preset/mode name depending on the setting "
+                                         "-- invert_roll is Aim-only, Tilt has no equivalent control")
+    p_motion.add_argument("--profile", type=int, default=1, choices=[1, 2, 3, 4],
+                           help="Target profile 1-4 (default 1) -- confirmed genuinely profile-scoped, "
+                                "same as Buttons.")
+    _add_heartbeat_args(p_motion)
 
     p_trig = sub.add_parser("trigger-set", help="Set a Triggers-tab setting (device must already be in vendor mode).")
     p_trig.add_argument("side", choices=["left", "right"])
@@ -359,6 +369,8 @@ def _handle_setting_write(sess: VendorSession, args: argparse.Namespace) -> bool
             s, buttons.resolve_button_id(args.button), profile=args.profile, shift=args.shift),
         "stick-set": lambda s: sticks.set_value(
             s, args.side, args.setting, args.value, profile=args.profile),
+        "motion-set": lambda s: motion.set_value(
+            s, args.side, args.setting, args.value, profile=args.profile),
         "trigger-set": lambda s: triggers.set_value(
             s, args.side, args.setting, args.value, profile=args.profile),
         "vibration-set": lambda s: vibration.set_value(
@@ -486,6 +498,24 @@ def _print_state(state: dict, slot: int) -> None:
         print(f"  {side} trigger: hair={t['hair_trigger_mode']} curve={t['curve']['preset']}{tp_str} "
               f"deadzone={t['deadzone']['initial']}-{t['deadzone']['max']} "
               f"anti={t['anti_deadzone']['initial']}-{t['anti_deadzone']['max']}")
+    # Additive section -- absent from state read/exported before it existed,
+    # see pyg7/state.py's validate_state() note on "motion".
+    motion_state = state.get("motion")
+    if motion_state:
+        for side in ("aim", "tilt"):
+            m = motion_state.get(side)
+            if not m:
+                continue
+            mp = m["curve"].get("points")
+            mp_str = " points=" + ",".join(f"({x},{y})" for x, y in mp) if mp else ""
+            inverts = f"y={m['invert_y']},yaw={m['invert_yaw']}"
+            if side == "aim":
+                inverts += f",roll={m['invert_roll']}"
+            print(f"  motion {side}: activate={m['activate_method']}/{m['activate_button']} "
+                  f"x_axis={m['x_axis_output_mode']} curve={m['curve']['preset']}{mp_str} "
+                  f"deadzone={m['deadzone']['initial']}-{m['deadzone']['max']} "
+                  f"anti={m['anti_deadzone']['initial']}-{m['anti_deadzone']['max']} "
+                  f"scale={m['sensitivity_scale']} output={m['output']} invert=({inverts})")
     v = state["vibration"]
     print(f"  vibration: grips={v['left_grip']}/{v['right_grip']} "
           f"triggers={v['left_trigger']}/{v['right_trigger']}")

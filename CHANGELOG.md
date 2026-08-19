@@ -6,6 +6,54 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+**Motion (Aim/Tilt gyro) is implemented -- the last tab GameSir Nexus
+exposes that this project didn't yet.** `pyg7/motion.py`, CLI (`motion-set`),
+GUI (a new Motion tab), and full state-schema coverage: Deadzone/
+Anti-Deadzone, Curve preset, X/Y Sensitivity Scale, Invert Y, Activate
+Method/Button, X-Axis Output Mode, and Output -- including Output's Button
+Binds mode, which turned out to have its own field set (Overlap Area, four
+directional keycode binds) not on any earlier capture plan, discovered live
+while confirming the rest. Every address is measured off the wire, not
+inferred from the register block's shape -- see PROTOCOL.md "Motion" for
+the full field table and the three-pass history (an earlier session
+declared this implementation-ready off an inferred layout alone, which cost
+a booked VM slot; this time every field was captured individually before
+any code was written).
+
+### Added
+
+- **Motion tab: Deadzone, Anti-Deadzone, Curve preset, X/Y Sensitivity
+  Scale, Invert Y, Activate Method, Activate Button, X-Axis Output Mode,
+  and Output** (L Stick/R Stick/Button Binds/Mouse -- same enum as the
+  Sticks tab's own Output mode), on both Aim and Tilt sub-tabs.
+- **Output's Button Binds mode**, its own field set found live rather than
+  from a capture plan: Overlap Area and four directional keycode bindings
+  (Up/Down/Left/Right -- no "ring" zone, motion has no stick click), each a
+  genuinely independent single-byte write rather than one bulk write the
+  way the Sticks tab's own direction bindings are.
+- **A second invert toggle, Invert Roll (Aim only)**, distinct from Invert
+  Yaw -- gated by a different setting (X-Axis Output Mode's Yaw+Roll
+  option) than the one that first looked like it controlled it (Output's
+  Button Binds setting), which is what made the two look like a
+  contradiction before the live UI settled it. See PROTOCOL.md "Motion"
+  for the full account.
+- Motion's own Curve Adjustment presets (Standard/Concave/S-Curve), with
+  shape data specific to Motion -- numerically different from the Sticks/
+  Triggers curve, same underlying structure.
+
+### Known gaps, stated rather than silently absent
+
+- Motion's Curve Adjustment presets are implemented; dragging individual
+  Custom curve points is not -- never captured on the wire (same gap the
+  Sticks/Triggers tabs already have for their own curves).
+- `activate_method`'s values beyond a believed-but-unconfirmed `0x00`
+  ("Off") have no confirmed names, only a raw 0-3 range.
+- Mouse output mode may have its own extra field the way the Sticks tab's
+  Mouse mode has DPI -- never captured, no capture attempted.
+- The Tilt-side address for the byte labelled "Invert Yaw" outside Button
+  Binds mode is confirmed; whether Nexus still calls it that on Tilt
+  specifically is not.
+
 ## [0.1.10] - 2026-08-18
 
 **One fix, for a controller you just plugged in.** g7ctl decided whether the

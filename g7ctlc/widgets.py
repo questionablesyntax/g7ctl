@@ -28,6 +28,20 @@ def percent_spin() -> QSpinBox:
     return sb
 
 
+def set_row_visible(form: QFormLayout, widget: QWidget, visible: bool) -> None:
+    """Show/hide a QFormLayout row (widget + its label together).
+
+    Used by any tab whose fields only apply under some other field's
+    current value (Sticks'/Motion's Output mode gating Sensitivity/Overlap
+    Area/DPI/Direction Bindings differently, Motion's X-Axis Output Mode
+    additionally gating which invert checkbox shows). Lived as a private
+    copy in sticks_view.py before Motion needed the exact same thing."""
+    widget.setVisible(visible)
+    label = form.labelForField(widget)
+    if label is not None:
+        label.setVisible(visible)
+
+
 class CategorySideWidget(QWidget):
     """Shared scaffolding for a per-side category widget (Sticks'
     `_StickSideWidget`, Triggers' `_TriggerSideWidget`): a loading guard and

@@ -20,8 +20,9 @@ Reading the modules in this order makes the protocol easiest to follow:
   buttons.py    button remap/unbind + the shared keycode table
   sticks.py     \\
   triggers.py    | one module per settings category, each following the same
-  vibration.py   | decode_settings()/set_value() shape
-  report_rate.py |
+  motion.py      | decode_settings()/set_value() shape -- motion.py reuses
+  vibration.py   | sticks.py's own category prefix and storage convention,
+  report_rate.py | see its module docstring
   dpad_options.py|
   dock_settings.py /
   curves.py     curve preset payloads shared by sticks and triggers
