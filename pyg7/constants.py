@@ -25,6 +25,16 @@ PID_VENDOR_TRIMODE = 0x1003   # vendor/config identity on at least one other G7 
                       # config back over it (manually, before this constant existed) --
                       # a genuine round trip, not just a descriptor-shape match. See
                       # PROTOCOL.md "Device identities".
+PID_VENDOR_ZZZ = 0x105d   # vendor/config identity on a G7 Pro "Zenless Zone Zero"
+                      # edition, reported 2026-08-19 -- another community report, not
+                      # this project's own hardware. Same story as PID_VENDOR_TRIMODE:
+                      # interface 1's descriptor shape (isochronous alt-setting pair, no
+                      # HID keyboard/mouse) matches PID_VENDOR's exactly. UNCONFIRMED:
+                      # descriptor shape only, no round trip yet -- the reporter had
+                      # assumed this PID *was* the XInput identity (xpad binds to
+                      # interface 0 and Steam shows a working pad regardless of which
+                      # personality is present, which is not evidence either way -- see
+                      # is_xinput_personality()). See PROTOCOL.md "Device identities".
 PID_NATIVE = 0x1022   # the controller's own "default GameSir identity" -- reached by
                       # holding Menu+Share on the controller (documented in GameSir's
                       # manual as an XInput/native-identity toggle; also the same
