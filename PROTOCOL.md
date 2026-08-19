@@ -1305,13 +1305,15 @@ software):
 
 ## Not implemented / out of scope
 
-- Curve control-point editing (Sticks/Triggers) -- **decoded, not
-  implemented.** See "Curve payload" above for the block layout and
-  per-point addresses; nothing in `pyg7/` writes them, and the
-  interpolation used to render a curve between the points is not
-  established. Motion's own curve has the same gap for the same reason
-  (never captured on the wire), plus its presets are the only part of
-  Motion that IS implemented -- see "Motion" below.
+- **Motion's Custom curve point editing** -- decoded, not implemented.
+  Never captured on the wire; only Motion's four presets (Standard/
+  Concave/S-Curve/Custom-as-mode-select) are implemented -- see "Motion"
+  below. This bullet used to also claim Sticks/Triggers curve-point
+  editing was unimplemented; that was stale and wrong -- it shipped in
+  `v0.1.6` with a graphical editor (`pyg7.sticks`/`pyg7.triggers`'
+  `curve_points` setting, `g7ctlc`'s `CurveEditor`) and has real test
+  coverage. The interpolation drawn *between* a curve's stored points is
+  still not established for any category -- see "Curve payload" above.
 - Whatever extra field(s) Motion's Mouse output mode may have (the way
   Sticks' Mouse mode has DPI) -- see "Motion" below for what's confirmed
   and implemented; this is what's left there.
