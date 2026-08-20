@@ -33,6 +33,12 @@ SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="1004", TAG+="uaccess
 # fix branch and read real config back over it, end to end.
 SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="105d", TAG+="uaccess"
 
+# EXPERIMENTAL -- a G7 SE, genuinely different hardware (3 USB interfaces,
+# not 2). See PID_VENDOR_G7SE in pyg7/constants.py for the full caveat.
+# Added so a tester isn't blocked by a permission wall before we even know
+# if this PID behaves like the others.
+SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="1010", TAG+="uaccess"
+
 # The controller's on-device "default GameSir identity" -- reached via the
 # Menu+Share button combo (documented in GameSir's manual as an XInput/
 # native-identity toggle), distinct from both 100a and the 109b vendor/

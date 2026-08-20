@@ -249,6 +249,19 @@ class FindWritableDeviceTest(unittest.TestCase):
         self.assertIs(dev, target)
         self.assertFalse(via_dongle)
 
+    def test_finds_a_genuine_vendor_mode_device_at_the_g7se_pid(self):
+        # EXPERIMENTAL (see PID_VENDOR_G7SE's comment): this only tests
+        # that the candidate-list plumbing works the same way for a 3-
+        # interface device once wrapped in the same 2-interface fixture
+        # shape every other PersonalityTest/FindWritableDeviceTest case
+        # uses -- it says nothing about whether real G7 SE hardware
+        # actually presents this way or speaks the same protocol.
+        target = _vendor_personality(constants.PID_VENDOR_G7SE)
+        with self._patched({constants.PID_VENDOR_G7SE: target}):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIs(dev, target)
+        self.assertFalse(via_dongle)
+
 
 class FindXinputDeviceTest(unittest.TestCase):
     def _patched(self, table):

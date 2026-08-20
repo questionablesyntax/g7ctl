@@ -48,6 +48,20 @@ PID_DONGLE_TRIMODE = 0x1004   # the Tri-mode variant's 2.4GHz dongle in vendor/c
                       # worth testing as a real pattern before more variants get their
                       # own hardcoded pair, but not assumed here yet. See PROTOCOL.md
                       # "Device identities".
+PID_VENDOR_G7SE = 0x1010   # EXPERIMENTAL, reported 2026-08-20 -- a G7 SE
+                      # ("GameSir-G7 SE Controller for Xbox"), genuinely different hardware
+                      # from every PID above it, not just another variant of the same shape.
+                      # bNumInterfaces=3, not 2: alongside the usual interrupt (interface 0)
+                      # and the isochronous alt-pair (interface 1, matching every other
+                      # PID_VENDOR_* entry's signature), there is a THIRD interface with a
+                      # bulk endpoint pair nothing else in this codebase has. No handshake
+                      # was sent to reach this state -- it is how the device idles by
+                      # default, unlike every other vendor-mode sighting on record. UNKNOWN:
+                      # whether this hardware speaks the same register-read protocol at
+                      # all, or reads config the same way. Added here only to test
+                      # find_writable_device() against it -- read-only, no write path
+                      # touches this PID. See PROTOCOL.md "Device identities" and
+                      # VARIANT_PIDS.md (private notes) for the full caveat.
 PID_NATIVE = 0x1022   # the controller's own "default GameSir identity" -- reached by
                       # holding Menu+Share on the controller (documented in GameSir's
                       # manual as an XInput/native-identity toggle; also the same

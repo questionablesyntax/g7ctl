@@ -25,6 +25,7 @@ from .constants import (
     PID_DONGLE_TRIMODE,
     PID_NATIVE,
     PID_VENDOR,
+    PID_VENDOR_G7SE,
     PID_VENDOR_TRIMODE,
     PID_VENDOR_ZZZ,
     PID_XINPUT,
@@ -72,6 +73,7 @@ VENDOR_PID_CANDIDATES = (
     (PID_VENDOR_TRIMODE, False),
     (PID_DONGLE_TRIMODE, True),
     (PID_VENDOR_ZZZ, False),
+    (PID_VENDOR_G7SE, False),
 )
 
 
