@@ -577,8 +577,19 @@ class UnconfirmedStateDisplayTest(unittest.TestCase):
     disabled -- everything else about the screen looked exactly like a
     confirmed reading, which is what made a real bug (Continuous Trigger
     dropped by set_read_finished(), see ContinuousTriggerReachesTheViewTest)
-    look believable instead of obviously broken. These tests check the tabs
-    themselves go inert, not just Sync Now.
+    look believable instead of obviously broken. These tests check the
+    actual controls go inert, not just Sync Now.
+
+    Corrected 2026-08-19: this used to assert on `w.tabs.isEnabled()`
+    directly, from when _refresh_confirmed_display() disabled the whole
+    tab widget. That took every QScrollArea's scrollbar down with it --
+    a user couldn't even scroll to see an unconfirmed tab's full content,
+    reported as a real usability complaint (Reddit, u/Rokofur). The fix
+    disables each QScrollArea's contained widget instead, leaving
+    self.tabs (and scrolling) always interactive -- browsing isn't
+    editing. `w.tabs.isEnabled()` is now always True and no longer means
+    anything; _content_locked() below checks the thing that actually
+    matters now.
     """
     app = None
 
@@ -590,9 +601,21 @@ class UnconfirmedStateDisplayTest(unittest.TestCase):
         from g7ctlc.main_window import MainWindow
         return MainWindow()
 
+    def _content_locked(self, w) -> bool:
+        """True iff every scroll area's actual content is disabled --
+        the real "is this confirmed" signal now. Also asserts scrolling
+        itself is never a casualty, every time this is checked, so no
+        test needs to remember to check that part separately."""
+        from PyQt6.QtWidgets import QScrollArea
+        scrolls = w.tabs.findChildren(QScrollArea)
+        self.assertTrue(scrolls, "expected at least one QScrollArea under the tabs")
+        for scroll in scrolls:
+            self.assertTrue(scroll.isEnabled(), "a QScrollArea itself must never be disabled")
+        return all(not s.widget().isEnabled() for s in scrolls if s.widget() is not None)
+
     def test_freshly_launched_window_is_unconfirmed(self):
         w = self._window()
-        self.assertFalse(w.tabs.isEnabled())
+        self.assertTrue(self._content_locked(w))
         self.assertTrue(w.unconfirmed_banner.isVisibleTo(w))
 
     def test_successful_read_confirms_the_display(self):
@@ -600,7 +623,7 @@ class UnconfirmedStateDisplayTest(unittest.TestCase):
         w.set_connection_state("connected")
         state = state_mod.default_state_dict("read")
         w.set_read_finished(True, "read ok", state)
-        self.assertTrue(w.tabs.isEnabled())
+        self.assertFalse(self._content_locked(w))
         self.assertFalse(w.unconfirmed_banner.isVisibleTo(w))
 
     def test_failed_read_leaves_the_display_inert(self):
@@ -608,7 +631,7 @@ class UnconfirmedStateDisplayTest(unittest.TestCase):
         w.set_connection_state("connected")
         with mock.patch("g7ctlc.main_window.QMessageBox.warning"):
             w.set_read_finished(False, "Read failed: timeout", None)
-        self.assertFalse(w.tabs.isEnabled())
+        self.assertTrue(self._content_locked(w))
         self.assertTrue(w.unconfirmed_banner.isVisibleTo(w))
 
     def test_import_confirms_the_display(self):
@@ -620,7 +643,7 @@ class UnconfirmedStateDisplayTest(unittest.TestCase):
             return_value=("/tmp/snapshot.json", ""),
         ):
             w._on_import()
-        self.assertTrue(w.tabs.isEnabled())
+        self.assertFalse(self._content_locked(w))
         self.assertFalse(w.unconfirmed_banner.isVisibleTo(w))
 
     def test_switching_profile_un_confirms_immediately_even_before_the_read_returns(self):
@@ -631,12 +654,12 @@ class UnconfirmedStateDisplayTest(unittest.TestCase):
         w = self._window()
         w.set_connection_state("connected")
         w.set_read_finished(True, "read ok", state_mod.default_state_dict("read"))
-        self.assertTrue(w.tabs.isEnabled())  # sanity: confirmed for Profile 1
+        self.assertFalse(self._content_locked(w))  # sanity: confirmed for Profile 1
 
         w.profile_combo.setCurrentIndex(w.profile_combo.findData(2))
 
         self.assertFalse(w._state_confirmed)
-        self.assertFalse(w.tabs.isEnabled())
+        self.assertTrue(self._content_locked(w))
         self.assertTrue(w.unconfirmed_banner.isVisibleTo(w))
 
     def test_a_declined_read_after_switching_profile_stays_unconfirmed(self):
@@ -653,4 +676,20 @@ class UnconfirmedStateDisplayTest(unittest.TestCase):
             w.profile_combo.setCurrentIndex(w.profile_combo.findData(2))
 
         self.assertFalse(w._state_confirmed)
-        self.assertFalse(w.tabs.isEnabled())
+        self.assertTrue(self._content_locked(w))
+
+    def test_scrollbars_stay_usable_while_unconfirmed(self):
+        # The exact complaint (Reddit, u/Rokofur): a user should be able to
+        # scroll through an unconfirmed tab's full content -- browsing isn't
+        # editing, and Sticks/Triggers/Motion specifically have per-side
+        # sub-tabs a user may well want to check before a controller's even
+        # connected. Named separately from _content_locked's built-in check
+        # so this exact regression has its own obvious label if it recurs.
+        from PyQt6.QtWidgets import QScrollArea
+        w = self._window()
+        self.assertFalse(w._state_confirmed)  # freshly launched -- the reported state
+        scrolls = w.tabs.findChildren(QScrollArea)
+        self.assertGreaterEqual(len(scrolls), 6)  # at least one per tab, several tabs have two
+        for scroll in scrolls:
+            self.assertTrue(scroll.isEnabled())
+            self.assertTrue(scroll.verticalScrollBar().isEnabled())
