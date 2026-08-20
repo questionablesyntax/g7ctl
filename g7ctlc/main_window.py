@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QTabWidget,
     QToolButton,
     QVBoxLayout,
@@ -216,8 +217,8 @@ class MainWindow(QMainWindow):
         # values with nothing distinguishing them from a confirmed reading.
         # Sync Now being disabled was the only signal, and it is easy to
         # miss since nobody is trying to sync yet. This banner plus the
-        # disabled-tabs styling from _refresh_confirmed_display() puts the
-        # same fact where it can't be missed: on the values themselves.
+        # disabled-control styling from _refresh_confirmed_display() puts
+        # the same fact where it can't be missed: on the values themselves.
         self.unconfirmed_banner = QLabel(
             "Not yet confirmed against the device -- these are placeholder "
             "values. Read from Device once connected."
@@ -557,12 +558,22 @@ class MainWindow(QMainWindow):
     def _refresh_confirmed_display(self) -> None:
         """Make an unconfirmed self._state look inert, not just un-syncable.
 
-        Disabling the whole tab widget cascades Qt's disabled state to every
-        control inside it, so this reuses the greyed-out styling every input
-        already has for QComboBox/QSpinBox/QCheckBox/etc (see theme.py) --
-        one flag, not a per-view "is this real" plumbing job. The banner
-        above the tabs (built in _build_tabs()) covers the case a user
-        never hovers or tries to interact, which "just disabled" would miss.
+        Disables every QScrollArea's *contained widget*, not self.tabs and
+        not the QScrollAreas themselves -- Qt's disabled state cascades
+        downward with no way for a child to opt back out (confirmed: a
+        QScrollArea explicitly re-enabled still reports its own scrollbar
+        as disabled if any ancestor is disabled), so disabling self.tabs
+        directly, as this used to do, took the scrollbars down with every
+        actual control. Scrolling and switching tabs are navigation, not an
+        edit -- a user should be able to look at an unconfirmed tab's full
+        content without that being mistaken for permission to change it.
+        Every category view wraps its real content in a QScrollArea now
+        (see TriggersView/VibrationView/SettingsView's own comments), so
+        this still reaches every control with one flag, not a per-view "is
+        this real" plumbing job -- just aimed one level deeper than before.
+        The banner above the tabs (built in _build_tabs()) covers the case
+        a user never hovers or tries to interact, which "just disabled"
+        would miss.
 
         Must be called every time self._state_confirmed changes: on
         construction, after every read attempt (success or failure), on
@@ -571,7 +582,10 @@ class MainWindow(QMainWindow):
         resulting read comes back).
         """
         confirmed = self._state_confirmed
-        self.tabs.setEnabled(confirmed)
+        for scroll in self.tabs.findChildren(QScrollArea):
+            content = scroll.widget()
+            if content is not None:
+                content.setEnabled(confirmed)
         self.unconfirmed_banner.setVisible(not confirmed)
 
     def _on_release_clicked(self) -> None:
