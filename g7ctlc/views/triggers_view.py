@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QFormLayout,
     QGroupBox,
+    QScrollArea,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -178,8 +179,18 @@ class TriggersView(QWidget):
         self.tabs = QTabWidget()
         self.sides = {"left": _TriggerSideWidget(), "right": _TriggerSideWidget()}
         for side, widget in self.sides.items():
+            # Unlike SticksView (which this otherwise mirrors), this was
+            # missing the QScrollArea wrap -- each side holds a CurveEditor
+            # with a hardcoded 200px minimum height plus a full form above
+            # it, uncapped. QTabWidget sizes its window to fit the LARGEST
+            # tab page's minimum, not just whichever one is visible, so this
+            # alone was dragging the whole main window's minimum height up
+            # regardless of which tab a user was actually looking at.
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(widget)
             widget.changed.connect(self._on_edit)
-            self.tabs.addTab(widget, f"{side.capitalize()} Trigger")
+            self.tabs.addTab(scroll, f"{side.capitalize()} Trigger")
         layout.addWidget(self.tabs)
 
     def load_state(self, state: dict) -> None:

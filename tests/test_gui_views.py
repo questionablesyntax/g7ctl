@@ -224,6 +224,48 @@ class SettingsViewRoundTripTest(unittest.TestCase):
         self.assertEqual(state["dock_auto_on_off"], before["dock_auto_on_off"])
 
 
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class MainWindowMinimumHeightTest(unittest.TestCase):
+    """QTabWidget sizes the whole window's minimum height to fit the
+    LARGEST tab page, not just whichever one is visible -- a user
+    reported a real, un-resizable-enough window (Reddit, 2026-08-19)
+    traced to TriggersView (two CurveEditor widgets, hardcoded 200px
+    minimum height each, un-scrolled) alone setting a ~675px floor,
+    with VibrationView a secondary contributor (~396px). Measured before
+    this fix: the combined QTabWidget's minimumSizeHint was 395x704.
+    Regression coverage, not a pixel-exact assertion (fragile across Qt/
+    font versions) -- just that nothing drags the floor back up there.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_no_single_tab_forces_a_tall_window(self):
+        from PyQt6.QtWidgets import QScrollArea
+
+        from g7ctlc.views.buttons_view import ButtonsView
+        from g7ctlc.views.motion_view import MotionView
+        from g7ctlc.views.settings_view import SettingsView
+        from g7ctlc.views.sticks_view import SticksView
+        from g7ctlc.views.triggers_view import TriggersView
+        from g7ctlc.views.vibration_view import VibrationView
+
+        views = [ButtonsView(), SticksView(), TriggersView(), MotionView(),
+                 VibrationView(), SettingsView()]
+        for view in views:
+            self.assertTrue(
+                view.findChild(QScrollArea) is not None,
+                f"{type(view).__name__} has no QScrollArea anywhere in its "
+                "tree -- its content can drag the whole window's minimum "
+                "height up regardless of which tab is actually visible.")
+            self.assertLess(
+                view.minimumSizeHint().height(), 300,
+                f"{type(view).__name__}'s own minimumSizeHint is unexpectedly "
+                "tall -- was it un-wrapped from its QScrollArea?")
+
+
 if __name__ == "__main__":
     unittest.main()
 
