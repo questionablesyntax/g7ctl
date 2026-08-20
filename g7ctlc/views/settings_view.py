@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QFormLayout,
     QGroupBox,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -25,7 +26,13 @@ class SettingsView(QWidget):
         super().__init__(parent)
         self._loading = False
         self._state = None
-        outer = QVBoxLayout(self)
+        # Modest content today, but QTabWidget sizes the whole main window's
+        # minimum height to fit the LARGEST tab page, not just whichever is
+        # visible -- wrapped for consistency with every other tab so this
+        # can't quietly become the new bottleneck as it grows. See
+        # TriggersView's __init__ for the incident that made this explicit.
+        page = QWidget()
+        outer = QVBoxLayout(page)
         outer.setContentsMargins(14, 12, 14, 12)
         outer.setSpacing(12)
 
@@ -54,6 +61,14 @@ class SettingsView(QWidget):
 
         outer.addWidget(dock_box)
         outer.addStretch(1)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(page)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(scroll)
 
     def load_state(self, state: dict) -> None:
         self._state = state
