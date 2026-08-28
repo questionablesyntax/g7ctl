@@ -258,25 +258,43 @@ a configuration you synced, which is the main reason "Read from Device" exists.
 
 ## Hardware support
 
-**The GameSir G7 Pro, because that's the controller on the desk.** That's what
-this was reverse-engineered against and the only hardware any of it has ever
-run on.
+**The GameSir G7 Pro and its confirmed color/special editions — White
+Trimode, Shadow Ember, Zenless Zone.** Confirmed on real hardware, each
+its own USB product ID (see `pyg7/constants.py`) — this is not one
+signature that happens to cover three colorways, it's three separately
+reverse-engineered identities. These are the only hardware this has
+actually run on.
 
-It may work on more than that. What's implemented here is the GameSir Nexus
-app's protocol rather than anything G7 Pro-specific: the vendor ID is GameSir's,
-and the mode-switch handshake sends the string `"gamesirapp"`, naming the app
-rather than a device. GameSir's own listing for Nexus says it covers the **G7,
-Kaleid, and T7 / Tarantula Pro Xbox** families, so those are the plausible
-candidates — each with model variants of its own. **None of them has ever been
-tested here, and none is claimed to work.**
+Two more G7 Pro editions are believed compatible but unconfirmed for lack
+of product-ID data: **Dragon's Dogma 2** and **WUCHANG**. If you own one,
+the process is the same as it's always been — find the product ID and
+report it, either result is useful.
 
-If you have one and want to try, start at `pyg7/constants.py`: it hard-codes the
-G7 Pro's four USB product IDs and device discovery matches on them, so another
-model isn't merely untested, it won't be detected at all. Add its product IDs
-there and see how far you get. A report either way — including "the handshake
-works but the setting IDs are different" — would be genuinely useful, and is the
-only way this question gets answered. Support for other models isn't planned at
-this time.
+**Everything else is explicitly out of scope, not merely untested: G7 Pro
+8K, G7 SE, T7 Pro Floral, T7 Pro Sugar Whirl, Tarantula Pro for Xbox, T7
+Kaleid, Kaleid Flux.** Two separate reasons keep these off this project's
+support line, and they don't apply the same way to every model on it:
+
+- **The G7 Pro 8K loses by default — it doesn't run through GameSir
+  Nexus at all**, the app this protocol was reverse-engineered against.
+  Even where the wire format looks compatible on paper, that's
+  inference, not anything actually captured — the gap isn't "untested,"
+  it's "outside what was ever observed."
+- **The rest are covered by GameSir's own Nexus listing** — same vendor
+  ID, same `"gamesirapp"` handshake — but adding support without the
+  hardware in hand means walking a volunteer through changes over text
+  chat with no way to verify device state directly. That failure mode
+  isn't "doesn't work" — it's a bricked controller on someone else's
+  desk, and that's not a trade worth making on their behalf.
+
+The scope here was always G7 Pro support, and that's done soundly.
+Widening it to the rest of the Nexus-controlled family turned out to be
+real scope creep, not a natural extension, so the line is drawn on
+purpose rather than left open indefinitely.
+
+**Forks are welcome.** `pyg7/` is Apache-2.0 specifically so the protocol
+groundwork is buildable on, and support is available for anyone taking
+one of the unsupported models further on their own fork.
 
 ## Protocol reference
 
