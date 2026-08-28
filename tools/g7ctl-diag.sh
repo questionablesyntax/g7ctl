@@ -72,6 +72,14 @@ echo
 echo "Found ${#LINES[@]} GameSir-VID device(s). Paste this whole block into"
 echo "your bug report -- it's read-only, nothing was written to the device."
 echo
+echo "**This is one snapshot, not the full picture.** A USB device can only"
+echo "present one identity at a time -- it physically can't be in vendor"
+echo "mode, XInput, and its native GameSir identity all at once -- so a"
+echo "single run only ever shows whichever one it's in right now. See"
+echo "\"Getting the full picture\" at the end of this report for how to"
+echo "capture the others in separate runs; even just this one is a real,"
+echo "useful data point on its own, so send it either way."
+echo
 
 # --- known variant table -------------------------------------------------
 # Mirrors pyg7/constants.py's VARIANT_NAMES -- kept in sync by hand, this
@@ -192,3 +200,24 @@ echo
 echo '```'
 dmesg 2>/dev/null | grep -iE "usb|gamesir|3537" | tail -40 || echo "(dmesg not readable without sudo -- try: sudo dmesg | grep -iE 'usb|gamesir|3537' | tail -40)"
 echo '```'
+echo
+echo "## Getting the full picture"
+echo
+echo "This run only found the personality/personalities listed above. A"
+echo "controller (or dongle) can be in exactly one identity at a time, so"
+echo "capturing all four this project tracks (native / XInput / vendor /"
+echo "dongle -- see VARIANT_PIDS.md) takes separate runs, one per physical"
+echo "state. Each is optional and safe -- only ever a read, same as this"
+echo "run -- but the more of these you can include, the more useful the"
+echo "report:"
+echo
+echo "- **Unplug the controller, wait a few seconds, plug it back in, and"
+echo "  re-run this script immediately.** Catches the idle/XInput state"
+echo "  before anything switches it into vendor mode."
+echo "- **Hold Menu+Share on the controller** (per GameSir's own manual),"
+echo "  then re-run. Catches its native GameSir identity."
+echo "- **If you have the 2.4GHz dongle**, unplug the wired cable, plug in"
+echo "  the dongle instead with the controller powered on and paired, then"
+echo "  re-run. Catches the dongle's own PID."
+echo
+echo "Paste the output from every run you're able to do, not just one."
