@@ -97,6 +97,24 @@ class EnterVendorModeLandingIdentityTest(unittest.TestCase):
         self.assertIs(dev, landed)
         self.assertFalse(via_dongle)
 
+    def test_landing_on_a_known_variant_names_it_in_the_log(self):
+        # Real payoff of identify_variant() (roadmap item 36): a user
+        # connecting a confirmed variant sees which one, not just a PID.
+        with self.assertLogs(device.log, level="INFO") as logs:
+            self._run(constants.PID_VENDOR_TRIMODE)
+        self.assertTrue(any("White Trimode" in line for line in logs.output),
+                         logs.output)
+
+    def test_landing_on_an_unconfirmed_pid_omits_the_name_not_a_placeholder(self):
+        # PID_DONGLE is a real, working vendor identity -- just not one
+        # identify_variant() maps to a name (dongle PIDs aren't looked up
+        # directly, see its own docstring). Must not print "None" or crash.
+        with self.assertLogs(device.log, level="INFO") as logs:
+            self._run(constants.PID_DONGLE)
+        landing_lines = [line for line in logs.output if "Now in vendor mode" in line]
+        self.assertEqual(len(landing_lines), 1)
+        self.assertNotIn("None", landing_lines[0])
+
     def test_other_variant_landing_is_recognized_too(self):
         # Regression target: a reported-but-unconfirmed other-variant vendor
         # PID (see PID_VENDOR_TRIMODE's comment) must not be a wait this

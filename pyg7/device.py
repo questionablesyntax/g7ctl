@@ -29,6 +29,7 @@ from .constants import (
     PID_VENDOR_ZZZ,
     PID_XINPUT,
     VID,
+    identify_variant,
 )
 
 log = logging.getLogger(__name__)
@@ -424,8 +425,16 @@ def enter_vendor_mode(timeout_s: float = 10.0,
             # fails. Waiting for interface 1 to stop being HID waits for the
             # thing that actually changes.
             if vdev is not None and not is_xinput_personality(vdev):
-                log.info("Now in vendor mode (%04x:%04x, bus=%s addr=%s).",
-                         VID, pid, vdev.bus, vdev.address)
+                # Real answer to roadmap item 36's original question --
+                # which G7 Pro colourway is this -- via the vendor PID
+                # itself, not a CMD=0x01 sweep. variant is None for a PID
+                # this project hasn't had a confirmed report on yet (e.g.
+                # Dragon's Dogma 2/WUCHANG); that's an honest "don't know
+                # yet", not a bug. See constants.identify_variant().
+                variant = identify_variant(pid)
+                suffix = f" -- {variant}" if variant else ""
+                log.info("Now in vendor mode (%04x:%04x, bus=%s addr=%s)%s.",
+                         VID, pid, vdev.bus, vdev.address, suffix)
                 return vdev, via_dongle
         time.sleep(0.3)
     log.error("Timed out waiting for vendor-mode re-enumeration.")

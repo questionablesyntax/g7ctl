@@ -4,6 +4,24 @@ Notable changes to this project. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Entering vendor mode now names the connected G7 Pro variant, when it's
+  one this project has a confirmed report on.** `pyg7.constants.identify_variant()`
+  looks up the vendor-mode PID against the three confirmed editions
+  (Shadow Ember, White Trimode, Zenless Zone Zero) and the log line says
+  which one landed, e.g. `Now in vendor mode (3537:1003, ...) -- White
+  Trimode`. Real answer to a question this project spent six live sessions
+  trying to answer a harder way (a `CMD=0x01` selector sweep, all 256
+  values now behaviorally mapped, none of them ever carried a colourway
+  value) -- the vendor PID itself turned out to already be the per-variant
+  identifier, confirmed on 3 SKUs with zero counterexamples once the
+  v0.2.1 PID reports came in. An unconfirmed PID (a working vendor
+  identity this project just hasn't matched to a name yet) logs with no
+  suffix, not a placeholder.
+
 ## [0.2.1] - 2026-08-28
 
 ### Fixed

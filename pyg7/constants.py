@@ -1,5 +1,7 @@
 """USB identities and low-level protocol constants. See PROTOCOL.md."""
 
+from typing import Optional
+
 VID = 0x3537
 PID_XINPUT = 0x100a   # default runtime identity ("Xbox 360 Controller for Windows").
                       # Where the hardware idles on BOTH transports -- the dongle
@@ -59,6 +61,39 @@ PID_NATIVE = 0x1022   # the controller's own "default GameSir identity" -- reach
                       # Recognized here only so a user in this identity gets a clear
                       # "press Menu+Share to switch back" message instead of "no
                       # device found". See PROTOCOL.md "Device identities".
+# Vendor-mode PID -> human-readable variant name. Real answer to roadmap
+# item 36's original question ("how does software know which G7 Pro
+# colourway is attached") -- not via the CMD=0x01 selector sweep that item
+# spent six sessions mapping (all 256 selectors now behaviorally known;
+# none carries a colourway value anywhere in the space, see ROADMAP.md),
+# but via the vendor-mode PID itself: three SKUs, three distinct PIDs,
+# zero counterexamples (n=3, 2026-08-19 -- see VARIANT_PIDS.md). The
+# original "it cannot be coming from USB descriptors" framing that started
+# the sweep checked product string/bcdDevice/serial on this project's own
+# single unit; it never had a second PID to compare against, because at
+# the time there was only one. Deliberately keyed on the *vendor* PID, not
+# XInput/native/dongle -- those aren't independently confirmed to vary
+# per-variant the same way (see VARIANT_PIDS.md's "Gaps" section), and a
+# dongle's vendor PID is its own wired counterpart + 1 wherever confirmed,
+# not looked up here separately.
+VARIANT_NAMES = {
+    PID_VENDOR: "Shadow Ember",
+    PID_VENDOR_TRIMODE: "White Trimode",
+    PID_VENDOR_ZZZ: "Zenless Zone Zero",
+}
+
+
+def identify_variant(vendor_pid: int) -> Optional[str]:
+    """Human-readable colourway/edition name for a known vendor-mode PID,
+    or None for one this project hasn't seen a confirmed report on yet
+    (e.g. Dragon's Dogma 2 and WUCHANG editions -- see README.md "Hardware
+    support"). None is a real, expected answer here, not a bug: this is a
+    lookup against confirmed reports, not a formula that covers every PID
+    GameSir might ever assign.
+    """
+    return VARIANT_NAMES.get(vendor_pid)
+
+
 EP_OUT = 0x02
 EP_IN = 0x82
 IFACE = 0
