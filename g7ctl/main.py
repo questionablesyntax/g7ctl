@@ -43,6 +43,7 @@ import contextlib
 import importlib.metadata
 import logging
 import shlex
+import subprocess
 import sys
 import time
 from collections.abc import Iterable
@@ -50,10 +51,19 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import usb.core
+import usb.util
 
 from pyg7 import buttons, dock_settings, dpad_options, motion, report_rate, sticks, triggers, vibration
 from pyg7 import state as state_mod
-from pyg7.device import HANDSHAKE_MIN_INTERVAL, enter_vendor_mode, find_writable_device
+from pyg7.constants import PID_NATIVE, VID, identify_variant
+from pyg7.device import (
+    HANDSHAKE_MIN_INTERVAL,
+    enter_vendor_mode,
+    find_native_identity,
+    find_writable_device,
+    find_xinput_device,
+    is_xinput_personality,
+)
 from pyg7.session import VendorSession
 
 from . import __version__
@@ -169,6 +179,12 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
     sub = ap.add_subparsers(dest="action", required=True)
 
     sub.add_parser("enter-vendor", help="Switch the controller from XInput mode into vendor/config mode.")
+
+    sub.add_parser(
+        "diag",
+        help="Diagnostic capture for a bug report -- finds the controller, switches it into "
+             "vendor mode to also capture its vendor-mode PID (the same handshake enter-vendor "
+             "sends), and prints a report to paste into an issue. No config writes.")
 
     p_remap = sub.add_parser("remap", help="Send a button remap command (device must already be in vendor mode).")
     p_remap.add_argument("button", help=f"Button ID: name ({', '.join(buttons.KNOWN_BUTTON_IDS)}) or raw hex bytes")
@@ -739,6 +755,153 @@ def _handle_batch(args: argparse.Namespace) -> None:
                 sys.exit(1)
 
 
+def _format_bcd(value: int) -> str:
+    """bcdDevice is packed BCD, not a plain binary number -- each hex
+    nibble is its own decimal digit (standard USB descriptor convention).
+    0x0244 means "2.44", not the raw integer value of the low byte (68,
+    decimal) -- a real bug an earlier draft of this feature shipped and
+    caught by testing against this project's own reference hardware,
+    whose firmware is independently documented elsewhere (FINDINGS.md,
+    PROTOCOL.md) as "2.44"."""
+    high, low = (value >> 8) & 0xff, value & 0xff
+    major = (high >> 4) * 10 + (high & 0xf)
+    minor = (low >> 4) * 10 + (low & 0xf)
+    return f"{major}.{minor:02d}"
+
+
+def _diag_describe(dev: usb.core.Device) -> dict:
+    """Real, structured facts about one device via direct pyusb descriptor
+    access -- same fields VARIANT_PIDS.md tracks."""
+    try:
+        iproduct = usb.util.get_string(dev, dev.iProduct) if dev.iProduct else None
+    except Exception:
+        iproduct = None
+    return {
+        "pid": dev.idProduct,
+        "bus": dev.bus,
+        "address": dev.address,
+        "iproduct": iproduct,
+        "bcddevice": _format_bcd(dev.bcdDevice),
+        "personality": "XInput (gamepad-ready)" if is_xinput_personality(dev) else "vendor/config",
+    }
+
+
+def _diag_print_report(info: dict) -> None:
+    name = identify_variant(info["pid"])
+    variant_line = (f"{name} (confirmed)" if name else
+                     "not yet confirmed by this project -- if you know which G7 Pro "
+                     "edition this is, that's exactly the report to file")
+    print(f"## Bus {info['bus']:03d} Device {info['address']:03d}: ID {VID:04x}:{info['pid']:04x}")
+    print()
+    print("| Field | Value |")
+    print("|---|---|")
+    print(f"| PID | `{info['pid']:04x}` |")
+    print(f"| iProduct | {info['iproduct'] or '(unknown)'} |")
+    print(f"| bcdDevice | {info['bcddevice']} |")
+    print(f"| Interface 1 shape | {info['personality']} |")
+    print(f"| Known variant | {variant_line} |")
+    print()
+
+
+def _handle_diag(min_interval: float) -> None:
+    """Diagnostic capture for a community bug report -- roadmap item 46.
+
+    A USB device can only present one identity at a time, so a purely
+    passive read only ever shows whichever *one* personality a controller
+    is in right now -- for a first-time reporter, almost always XInput,
+    never the vendor-mode PID that actually matters for extending
+    support. So this sends the real handshake -- exactly what
+    `enter-vendor` sends, reusing enter_vendor_mode() directly rather
+    than a second copy of that logic -- when it finds a controller in
+    XInput mode, specifically to also capture that PID. Nothing else is
+    written: no config, no per-setting protocol traffic.
+    """
+    print("# g7ctl diagnostic capture")
+    print()
+
+    reports = []
+
+    native = find_native_identity()
+    if native is not None:
+        print(f"Found in its native GameSir identity (PID {PID_NATIVE:04x}) -- "
+              "hold Menu+Share on the controller to switch to XInput mode, "
+              "then run this again to capture more.")
+        print()
+
+    xdev = find_xinput_device()
+    vdev = None
+    via_dongle = False
+    if xdev is not None:
+        info = _diag_describe(xdev)
+        reports.append(info)
+        print("Found in XInput mode -- sending the real vendor-mode handshake "
+              "to also capture its vendor PID (the same one `enter-vendor` "
+              "sends; nothing else is written):")
+        vdev, via_dongle = enter_vendor_mode(min_interval=min_interval)
+        if vdev is not None:
+            reports.append(_diag_describe(vdev))
+        else:
+            print("(handshake sent but no vendor-mode re-enumeration seen -- "
+                  "reporting the XInput state only)")
+        print()
+    else:
+        # Not in XInput -- but a previous session (this tool's own, or
+        # GameSir Nexus) may have already left it switched into vendor
+        # mode, which find_writable_device() checks for directly rather
+        # than assuming XInput is the only starting state worth handling.
+        already, via_dongle = find_writable_device()
+        if already is not None:
+            reports.append(_diag_describe(already))
+            vdev = already
+            print("Found already in vendor/config mode (left there by an "
+                  "earlier session) -- no handshake needed.")
+            print()
+        elif native is None:
+            print("No device found in XInput mode either.")
+            print()
+
+    if not reports:
+        if native is None:
+            print("No GameSir-VID device found at all. Make sure it's plugged in "
+                  "(or its dongle is, with the controller powered on).")
+        return
+
+    for info in reports:
+        _diag_print_report(info)
+
+    if vdev is not None:
+        try:
+            with VendorSession(vdev, via_dongle=via_dongle) as sess:
+                fw = sess.read_firmware_version()
+                label = fw.controller or f"unrecognised format, raw={fw.raw!r}"
+                print(f"Firmware version: {label}")
+        except Exception as e:
+            print(f"(couldn't open a session to read the firmware version: {e})")
+        print()
+
+    print("---")
+    print()
+    print("Recent kernel log lines mentioning USB (helps spot re-enumeration")
+    print("churn -- if the controller disconnects/reconnects a lot right around")
+    print("when something goes wrong, that's worth including):")
+    print()
+    print("```")
+    dmesg_shown = False
+    try:
+        result = subprocess.run(["dmesg"], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            lines = [ln for ln in result.stdout.splitlines()
+                     if "usb" in ln.lower() or "gamesir" in ln.lower() or "3537" in ln]
+            print("\n".join(lines[-40:]))
+            dmesg_shown = True
+    except Exception:
+        pass
+    if not dmesg_shown:
+        print("(dmesg not readable without sudo -- try: "
+              "sudo dmesg | grep -iE 'usb|gamesir|3537' | tail -40)")
+    print("```")
+
+
 def main() -> None:
     args = build_parser().parse_args()
 
@@ -767,6 +930,10 @@ def main() -> None:
     try:
         if args.action == "enter-vendor":
             enter_vendor_mode(min_interval=_min_interval(args))
+            return
+
+        if args.action == "diag":
+            _handle_diag(_min_interval(args))
             return
 
         if args.action == "batch":

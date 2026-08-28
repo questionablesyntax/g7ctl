@@ -270,17 +270,22 @@ of product-ID data: **Dragon's Dogma 2** and **WUCHANG**. If you own one,
 the process is the same as it's always been — find the product ID and
 report it, either result is useful.
 
-**Reporting one doesn't need a git checkout.** Run:
+**Reporting one is one command.** Check out the repo, install it (see
+Installation above), and run:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/questionablesyntax/g7ctl/main/tools/g7ctl-diag.sh | bash
+g7ctl diag
 ```
 
-and paste the output into an issue or the Reddit thread. It only reads USB
-descriptors already sitting there to be read — no config writes, no
-handshake sent, nothing installed beyond `lsusb` (already on most desktop
-Linux systems). See `tools/g7ctl-diag.sh`'s own header for exactly what it
-does and doesn't do.
+and paste the output into an issue or the Reddit thread. This is the only
+way to actually capture a vendor-mode PID this project hasn't seen yet: a
+controller sitting in its default XInput personality won't show one on its
+own (a USB device can only present one identity at a time), so `diag` sends
+the real, ordinary mode-switch handshake — the exact same one
+`g7ctl enter-vendor` sends, through the same `pyg7` protocol code the rest
+of this tool uses, not a second copy of that logic — then reports what it
+finds. No config writes, no per-setting protocol traffic, just that one
+switch. Run `g7ctl diag --help` for details.
 
 **Everything else is explicitly out of scope, not merely untested: G7 Pro
 8K, G7 SE, T7 Pro Floral, T7 Pro Sugar Whirl, Tarantula Pro for Xbox, T7

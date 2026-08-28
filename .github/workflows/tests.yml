@@ -39,12 +39,3 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m unittest discover -s tests -t . -v
-
-      # tools/g7ctl-diag.sh has its own test file, on purpose -- it's bash,
-      # not Python, so it can't run through unittest discovery above. No
-      # new dependency: Ubuntu runners ship bash already, matching the
-      # script's own "curl and run, nothing else installed" floor. Only
-      # needs to run once, not once per Python version in the matrix.
-      - name: Run g7ctl-diag.sh tests
-        if: matrix.python-version == '3.13'
-        run: bash tests/test_g7ctl_diag.sh

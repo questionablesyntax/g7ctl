@@ -22,21 +22,49 @@ adheres to [semantic versioning](https://semver.org/).
   identity this project just hasn't matched to a name yet) logs with no
   suffix, not a placeholder.
 
-- **A standalone diagnostic script for community bug reports**
-  (`tools/g7ctl-diag.sh`, roadmap item 46) — `curl | bash` and paste the
-  output, no `git clone`, no `pip install`, no Python. The v0.2.1 PID
-  fixes happened because two reporters were unusually capable and
-  patient (one hand-edited `constants.py` and a `udev` rule from a
-  Reddit-DM'd script); this is meant to lower that bar for the next
-  report, not raise the bar on what this project will build a fix from.
-  Read-only, always — classifying which personality a controller is in
-  only needs its USB descriptors, no handshake or session required.
+- **`g7ctl diag`: a diagnostic subcommand for community bug reports**
+  (roadmap item 46). The v0.2.1 PID fixes happened because two reporters
+  were unusually capable and patient (one hand-edited `constants.py` and
+  a `udev` rule from a Reddit-DM'd script); this is meant to lower that
+  bar for the next report, not raise the bar on what this project will
+  build a fix from. Reporting one now needs a checkout of this (tiny)
+  repo and one command — `g7ctl diag` — rather than deep git/Python
+  setup.
+
+  Sends the real, ordinary vendor-mode handshake — the exact same
+  `enter_vendor_mode()` call `g7ctl enter-vendor` makes, through this
+  project's own `pyg7` protocol code rather than a separate reimplementation
+  of it — when it finds a controller sitting in its default XInput
+  personality, specifically so it can also capture the vendor-mode PID.
+  That's not optional: a USB device can only present one identity at a
+  time, so a purely passive read can only ever show whichever *one*
+  personality a controller happens to be in at the moment, and for a
+  first-time reporter that's almost always XInput -- the vendor PID
+  being the one thing missing is exactly the gap that made the v0.2.1
+  fixes need two unusually capable volunteers in the first place. Also
+  recognizes a controller already left in vendor/config mode by an
+  earlier session and reports that directly, with no handshake needed.
+  No config writes, no per-setting protocol traffic beyond that one
+  switch.
+
   Reports the same shape of info `VARIANT_PIDS.md` tracks (variant name
-  if known, PID, `bcdDevice`, interface 1's shape) for every GameSir-VID
-  device found, not just PIDs this project already recognizes — the
-  whole point is surfacing ones it doesn't yet. Scoped deliberately to
-  diagnostic capture only; testing an actual code fix is a real step up
-  in what's needed and this script doesn't pretend otherwise.
+  if known, PID, `bcdDevice`, interface 1's shape, firmware version) for
+  every GameSir-VID device found, not just PIDs this project already
+  recognizes — the whole point is surfacing ones it doesn't yet. Scoped
+  deliberately to diagnostic capture only; testing an actual code fix is
+  a real step up in what's needed and this subcommand doesn't pretend
+  otherwise.
+
+  This went through two earlier, now-abandoned shapes before landing
+  here: first a standalone `curl | bash` script using only `lsusb`
+  (read-only, so it could never actually capture a vendor-mode PID
+  unless the device happened to already be in that state), then a
+  standalone `curl | python3` script using `pyusb` directly (could send
+  the handshake, but duplicated protocol logic `pyg7` already has,
+  tested, and maintains). Landing it as a real subcommand trades away
+  the original "no checkout needed" goal — a reporter now needs this
+  repo, not one curl'd file — for reusing `pyg7`'s actual, proven
+  protocol functions instead of a second copy of them.
 
 ## [0.2.1] - 2026-08-28
 
