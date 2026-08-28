@@ -4,7 +4,7 @@ Notable changes to this project. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [semantic versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.1] - 2026-08-28
 
 ### Fixed
 
@@ -41,6 +41,22 @@ adheres to [semantic versioning](https://semver.org/).
   increasingly stale snapshot across the whole wait. If the device
   never settles, the error message now says so plainly (still cycling,
   not missing) rather than a generic timeout.
+
+- **An unconfirmed tab's scrollbars were locked along with everything
+  else, so a user couldn't even scroll to see its full content before
+  connecting.** Reported on Reddit (u/Rokofur). Disabling the whole tab
+  widget to show "this isn't real data yet" took the scrollbars down
+  with every actual control -- browsing isn't editing. Now disables
+  each tab's content specifically, leaving the tab widget itself (and
+  scrolling) always interactive.
+
+- **Triggers, Vibration, and Settings could force the whole main window
+  taller than it needed to be**, regardless of which tab was actually
+  visible -- Qt sizes a tab widget's minimum height to fit its *largest*
+  page. Triggers was the main offender (two curve editors with a fixed
+  200px minimum height each, unscrolled); Vibration a secondary
+  contributor. All three now scroll their own content instead of
+  forcing the window to fit it.
 
 ## [0.2.0] - 2026-08-18
 
