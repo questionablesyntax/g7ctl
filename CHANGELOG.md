@@ -41,19 +41,27 @@ adheres to [semantic versioning](https://semver.org/).
   personality a controller happens to be in at the moment, and for a
   first-time reporter that's almost always XInput -- the vendor PID
   being the one thing missing is exactly the gap that made the v0.2.1
-  fixes need two unusually capable volunteers in the first place. Also
-  recognizes a controller already left in vendor/config mode by an
-  earlier session and reports that directly, with no handshake needed.
-  No config writes, no per-setting protocol traffic beyond that one
-  switch.
+  fixes need two unusually capable volunteers in the first place. When
+  the controller already answers a vendor-mode read without needing the
+  handshake at all, reports that directly rather than guessing why: not
+  "already in vendor mode," which a real test found is not something
+  this tool can actually verify -- a controller can accept a vendor read
+  right at a moment it's also genuinely, functionally sitting in XInput
+  (kernel driver bound, working in-game). No config writes, no
+  per-setting protocol traffic beyond that one switch.
 
   Reports the same shape of info `VARIANT_PIDS.md` tracks (variant name
-  if known, PID, `bcdDevice`, interface 1's shape, firmware version) for
-  every GameSir-VID device found, not just PIDs this project already
-  recognizes — the whole point is surfacing ones it doesn't yet. Scoped
-  deliberately to diagnostic capture only; testing an actual code fix is
-  a real step up in what's needed and this subcommand doesn't pretend
-  otherwise.
+  if known, PID, `bcdDevice`, whether interface 1 shows a HID
+  alt-setting, whether a kernel driver is bound to interface 0, firmware
+  version) for every GameSir-VID device found, not just PIDs this
+  project already recognizes — the whole point is surfacing ones it
+  doesn't yet. Deliberately reports both of those last two as separate,
+  raw facts rather than collapsing them into one confident "personality"
+  label, for the same reason: either one can be misleading alone for a
+  given firmware/unit, and a bug report is more useful with the raw
+  signals than with a wrong conclusion. Scoped deliberately to
+  diagnostic capture only; testing an actual code fix is a real step up
+  in what's needed and this subcommand doesn't pretend otherwise.
 
   This went through two earlier, now-abandoned shapes before landing
   here: first a standalone `curl | bash` script using only `lsusb`

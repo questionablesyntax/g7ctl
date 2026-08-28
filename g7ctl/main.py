@@ -55,7 +55,7 @@ import usb.util
 
 from pyg7 import buttons, dock_settings, dpad_options, motion, report_rate, sticks, triggers, vibration
 from pyg7 import state as state_mod
-from pyg7.constants import PID_NATIVE, VID, identify_variant
+from pyg7.constants import IFACE, PID_NATIVE, VID, identify_variant
 from pyg7.device import (
     HANDSHAKE_MIN_INTERVAL,
     enter_vendor_mode,
@@ -771,18 +771,34 @@ def _format_bcd(value: int) -> str:
 
 def _diag_describe(dev: usb.core.Device) -> dict:
     """Real, structured facts about one device via direct pyusb descriptor
-    access -- same fields VARIANT_PIDS.md tracks."""
+    access -- same fields VARIANT_PIDS.md tracks.
+
+    Reports is_xinput_personality()'s raw answer and the kernel-driver-bound
+    state as separate facts rather than collapsing them into one confident
+    "personality" label -- confirmed real case (2026-08-28, this project's
+    own reference hardware): is_xinput_personality() reads False (interface
+    1 shows no HID alt-setting) while the controller is genuinely,
+    functionally a live XInput gamepad (xpad bound, working in-game). Either
+    signal alone can be wrong for a given firmware/unit; showing both lets a
+    report actually be useful for narrowing down why, instead of asserting
+    an answer this tool cannot reliably give.
+    """
     try:
         iproduct = usb.util.get_string(dev, dev.iProduct) if dev.iProduct else None
     except Exception:
         iproduct = None
+    try:
+        driver_bound = dev.is_kernel_driver_active(IFACE)
+    except Exception:
+        driver_bound = None
     return {
         "pid": dev.idProduct,
         "bus": dev.bus,
         "address": dev.address,
         "iproduct": iproduct,
         "bcddevice": _format_bcd(dev.bcdDevice),
-        "personality": "XInput (gamepad-ready)" if is_xinput_personality(dev) else "vendor/config",
+        "xinput_shape": is_xinput_personality(dev),
+        "driver_bound": driver_bound,
     }
 
 
@@ -798,7 +814,11 @@ def _diag_print_report(info: dict) -> None:
     print(f"| PID | `{info['pid']:04x}` |")
     print(f"| iProduct | {info['iproduct'] or '(unknown)'} |")
     print(f"| bcdDevice | {info['bcddevice']} |")
-    print(f"| Interface 1 shape | {info['personality']} |")
+    print(f"| Interface 1 shows a HID alt-setting | {info['xinput_shape']} |")
+    driver_bound = info["driver_bound"]
+    driver_label = ("yes (likely `xpad`)" if driver_bound is True else
+                     "no" if driver_bound is False else "(couldn't check)")
+    print(f"| Kernel driver bound to interface 0 | {driver_label} |")
     print(f"| Known variant | {variant_line} |")
     print()
 
@@ -845,16 +865,30 @@ def _handle_diag(min_interval: float) -> None:
                   "reporting the XInput state only)")
         print()
     else:
-        # Not in XInput -- but a previous session (this tool's own, or
-        # GameSir Nexus) may have already left it switched into vendor
-        # mode, which find_writable_device() checks for directly rather
-        # than assuming XInput is the only starting state worth handling.
+        # is_xinput_personality() (interface 1's descriptor shape) said no
+        # here, so find_xinput_device() didn't find it above -- but that
+        # check is not the same thing as "was actually idle in XInput a
+        # moment ago," and diag has no reliable way to know the controller's
+        # personality *before* this run touched it. find_writable_device()
+        # answers a narrower, verifiable question instead: does this
+        # interface accept a vendor-mode read right now. Report exactly
+        # that, not a guess about how it got that way -- claiming "already
+        # in vendor mode" here was a real, confirmed-wrong overclaim: a
+        # controller can enumerate with is_xinput_personality()-false
+        # descriptors while still genuinely, functionally acting as a live
+        # XInput gamepad (xpad bound, working in-game) the moment before
+        # this ran.
         already, via_dongle = find_writable_device()
         if already is not None:
             reports.append(_diag_describe(already))
             vdev = already
-            print("Found already in vendor/config mode (left there by an "
-                  "earlier session) -- no handshake needed.")
+            print("This interface accepts vendor-mode reads right now, so "
+                  "no handshake was sent -- reading it directly. If a "
+                  "kernel driver (xpad) had it claimed as a live gamepad, "
+                  "that was briefly detached to do this read and is "
+                  "reattached immediately after; this does not mean the "
+                  "controller was already sitting in vendor mode before "
+                  "this ran.")
             print()
         elif native is None:
             print("No device found in XInput mode either.")

@@ -33,13 +33,14 @@ class _FakeConfig(list):
 
 class _FakeDevice:
     def __init__(self, pid, hid_on_iface1, bus=3, address=7,
-                 bcddevice=0x0244, iproduct="GameSir-G7 Pro"):
+                 bcddevice=0x0244, iproduct="GameSir-G7 Pro", driver_bound=False):
         self.idProduct = pid
         self.bus = bus
         self.address = address
         self.bcdDevice = bcddevice
         self.iProduct = 3  # a string-descriptor index; real value irrelevant here
         self._iproduct_str = iproduct
+        self._driver_bound = driver_bound
         iface1_class = HID_INTERFACE_CLASS if hid_on_iface1 else 0xFF
         self._config = _FakeConfig([
             _FakeInterface(0, 0xFF),
@@ -48,6 +49,9 @@ class _FakeDevice:
 
     def get_active_configuration(self):
         return self._config
+
+    def is_kernel_driver_active(self, iface):
+        return self._driver_bound
 
 
 class _FirmwareSession(FakeSession):
@@ -141,7 +145,7 @@ class DiagTest(unittest.TestCase):
         self.assertIn(f"{0x100a:04x}", report)
         self.assertNotIn("Firmware version:", report)
 
-    def test_already_in_vendor_mode_is_reported_without_a_handshake(self):
+    def test_readable_without_a_handshake_sends_no_handshake(self):
         already = _FakeDevice(PID_VENDOR, hid_on_iface1=False)
         cli_main.find_writable_device = lambda: (already, False)
         handshake_calls = []
@@ -149,9 +153,28 @@ class DiagTest(unittest.TestCase):
 
         report = self._run()
 
-        self.assertIn("already in vendor/config mode", report)
+        self.assertIn("accepts vendor-mode reads right now", report)
         self.assertIn(f"{PID_VENDOR:04x}", report)
         self.assertEqual(handshake_calls, [])
+
+    def test_readable_state_does_not_claim_it_was_already_left_that_way(self):
+        # Regression target: a real, confirmed-wrong report -- this exact
+        # branch used to claim "left there by an earlier session" and
+        # "already in vendor/config mode" when nothing of the sort could
+        # actually be verified. A controller can accept a vendor read here
+        # while it was, a moment before, genuinely and functionally sitting
+        # in XInput (xpad bound, working in-game) -- see g7ctl/main.py's
+        # _handle_diag() docstring on this branch for the real incident.
+        already = _FakeDevice(PID_VENDOR, hid_on_iface1=False, driver_bound=True)
+        cli_main.find_writable_device = lambda: (already, False)
+
+        report = self._run()
+
+        self.assertNotIn("already in vendor/config mode", report)
+        self.assertNotIn("left there by an earlier session", report)
+        self.assertIn("does not mean the controller was already sitting in "
+                       "vendor mode before this ran", report)
+        self.assertIn("Kernel driver bound to interface 0 | yes", report)
 
     def test_unconfirmed_pid_says_so_honestly_not_a_guess(self):
         xdev = _FakeDevice(0x100a, hid_on_iface1=True)
