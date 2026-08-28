@@ -332,6 +332,13 @@ if PyQt6 isn't installed.
 Please keep them passing; they exist because a wrong byte here doesn't raise an
 error, it writes something unintended to a device's persistent config.
 
+## Contributors
+
+v0.2.1 exists because people on Reddit reported bugs on hardware this project
+had never seen and helped test the fixes against their own controllers —
+[@tyrohellion](https://github.com/tyrohellion), GenderGambler, Ninja_Daemon117,
+OuTou, and Rokofur. Thank you.
+
 ## License
 
 Copyright 2026 J Whittington (questionablesyntax).
