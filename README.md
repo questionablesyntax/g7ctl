@@ -270,6 +270,18 @@ of product-ID data: **Dragon's Dogma 2** and **WUCHANG**. If you own one,
 the process is the same as it's always been — find the product ID and
 report it, either result is useful.
 
+**Reporting one doesn't need a git checkout.** Run:
+
+```
+curl -fsSL https://raw.githubusercontent.com/questionablesyntax/g7ctl/main/tools/g7ctl-diag.sh | bash
+```
+
+and paste the output into an issue or the Reddit thread. It only reads USB
+descriptors already sitting there to be read — no config writes, no
+handshake sent, nothing installed beyond `lsusb` (already on most desktop
+Linux systems). See `tools/g7ctl-diag.sh`'s own header for exactly what it
+does and doesn't do.
+
 **Everything else is explicitly out of scope, not merely untested: G7 Pro
 8K, G7 SE, T7 Pro Floral, T7 Pro Sugar Whirl, Tarantula Pro for Xbox, T7
 Kaleid, Kaleid Flux.** Two separate reasons keep these off this project's

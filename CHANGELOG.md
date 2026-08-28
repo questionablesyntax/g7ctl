@@ -22,6 +22,22 @@ adheres to [semantic versioning](https://semver.org/).
   identity this project just hasn't matched to a name yet) logs with no
   suffix, not a placeholder.
 
+- **A standalone diagnostic script for community bug reports**
+  (`tools/g7ctl-diag.sh`, roadmap item 46) — `curl | bash` and paste the
+  output, no `git clone`, no `pip install`, no Python. The v0.2.1 PID
+  fixes happened because two reporters were unusually capable and
+  patient (one hand-edited `constants.py` and a `udev` rule from a
+  Reddit-DM'd script); this is meant to lower that bar for the next
+  report, not raise the bar on what this project will build a fix from.
+  Read-only, always — classifying which personality a controller is in
+  only needs its USB descriptors, no handshake or session required.
+  Reports the same shape of info `VARIANT_PIDS.md` tracks (variant name
+  if known, PID, `bcdDevice`, interface 1's shape) for every GameSir-VID
+  device found, not just PIDs this project already recognizes — the
+  whole point is surfacing ones it doesn't yet. Scoped deliberately to
+  diagnostic capture only; testing an actual code fix is a real step up
+  in what's needed and this script doesn't pretend otherwise.
+
 ## [0.2.1] - 2026-08-28
 
 ### Fixed
