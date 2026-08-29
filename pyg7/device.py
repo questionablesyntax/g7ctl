@@ -216,6 +216,38 @@ def is_xinput_personality(dev: usb.core.Device) -> bool:
     Answers **False when the descriptors can't be read**, so an unreadable
     device keeps this module's previous behaviour rather than becoming
     invisible to it.
+
+    **CORRECTION, 2026-08-28: this discriminator is confirmed wrong on at
+    least one real unit, on real hardware, across two different firmware
+    versions -- not the v2.4.4-specific case above.** This project's own
+    reference controller, tested live at both `bcdDevice` 0207 and 0249,
+    sits at `3537:109b` with interface 1 showing **Vendor Specific class on
+    every alt-setting, never HID** -- while genuinely, functionally
+    presenting a live gamepad the whole time (`xpad` bound,
+    `/dev/input/js0` live, confirmed via a real `usbmon` capture: report
+    `0x20` streaming continuously, byte 4 flipping `00`->`10` in exact sync
+    with a real, timed button press/hold and back). This function answers
+    `False` (vendor) for that live, working state -- the opposite of
+    correct. Confirmed not firmware-specific: identical result at both
+    firmware versions tested.
+
+    **Not yet understood, and deliberately not guessed at here:** what
+    actually distinguishes the two states on this hardware generation, if
+    interface 1's shape doesn't. Kernel-driver-bound state
+    (`is_kernel_driver_active`) is not a safe substitute -- this module's
+    own `find_writable_device()` tests already cover a confirmed case (the
+    ZZZ edition) where a bound driver coexists with genuine vendor mode.
+    Report `0x20`'s content is a validated real signal (see above) but
+    requires an active, invasive read to check and hasn't been confirmed
+    across other variant PIDs -- not something this function can cheaply
+    do from a passive descriptor read. Every consumer of this function
+    (`find_writable_device()`, `find_xinput_device()`, `enter_vendor_mode()`)
+    still behaves *safely* despite the wrong label -- the vendor protocol
+    and live input channel were confirmed to coexist throughout, so no
+    write went to the wrong place and no session got stuck -- but the
+    label itself, surfaced directly by `g7ctl diag`, is not trustworthy on
+    this hardware. See `FINDINGS.md`, 2026-08-28, for the full capture
+    evidence.
     """
     return HID_INTERFACE_CLASS in _interface_classes(dev, PERSONALITY_INTERFACE)
 
@@ -258,6 +290,17 @@ def find_writable_device() -> tuple[Optional[usb.core.Device], bool]:
 
     Checks every PID in VENDOR_PID_CANDIDATES, not just PID_VENDOR/
     PID_DONGLE -- see that constant's comment.
+
+    **CORRECTION, 2026-08-28: "a previous session usually left it there" is
+    not the only real case anymore either.** This project's own reference
+    controller now idles at `PID_VENDOR` directly, with no prior session --
+    confirmed live, across two firmware versions. See
+    `is_xinput_personality()`'s own 2026-08-28 correction for the full
+    evidence: this function still finds a genuinely-writable interface
+    correctly (the vendor protocol answers real reads/writes there, confirmed
+    live), but do not read a positive result here as evidence the controller
+    was "already switched" by something else -- it may never have needed
+    switching on this hardware generation at all.
     """
     for pid, via_dongle in VENDOR_PID_CANDIDATES:
         dev = find_device(pid)

@@ -821,6 +821,20 @@ def _diag_print_report(info: dict) -> None:
     print(f"| Kernel driver bound to interface 0 | {driver_label} |")
     print(f"| Known variant | {variant_line} |")
     print()
+    if info["xinput_shape"] is False and driver_bound is True:
+        print("**Known-ambiguous combination, confirmed 2026-08-28:** a "
+              "kernel driver is bound (usually meaning a live, working "
+              "gamepad) at the same time interface 1 shows no HID "
+              "alt-setting (usually read as vendor/config mode). This "
+              "project has confirmed, on real hardware across two "
+              "firmware versions, that this combination can mean the "
+              "controller is genuinely, functionally live as a gamepad "
+              "*and* the vendor protocol answers real reads/writes at the "
+              "same time -- neither signal alone tells you which. See "
+              "`pyg7/device.py`'s `is_xinput_personality()` docstring and "
+              "`FINDINGS.md` (2026-08-28) for the evidence. Worth including "
+              "in a bug report if you're seeing this.")
+        print()
 
 
 def _handle_diag(min_interval: float) -> None:

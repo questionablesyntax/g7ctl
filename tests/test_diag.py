@@ -176,6 +176,28 @@ class DiagTest(unittest.TestCase):
                        "vendor mode before this ran", report)
         self.assertIn("Kernel driver bound to interface 0 | yes", report)
 
+    def test_flags_the_known_ambiguous_combination(self):
+        # Real, confirmed case (2026-08-28): interface 1 shows no HID
+        # alt-setting (usually read as vendor mode) while a kernel driver
+        # is bound (usually read as a live gamepad) -- neither signal alone
+        # tells you which is true here. A bug report benefits from being
+        # told this combination is known-ambiguous, not just shown the two
+        # raw facts side by side with no context.
+        already = _FakeDevice(PID_VENDOR, hid_on_iface1=False, driver_bound=True)
+        cli_main.find_writable_device = lambda: (already, False)
+
+        report = self._run()
+
+        self.assertIn("Known-ambiguous combination", report)
+
+    def test_does_not_flag_when_the_driver_is_not_bound(self):
+        already = _FakeDevice(PID_VENDOR, hid_on_iface1=False, driver_bound=False)
+        cli_main.find_writable_device = lambda: (already, False)
+
+        report = self._run()
+
+        self.assertNotIn("Known-ambiguous combination", report)
+
     def test_unconfirmed_pid_says_so_honestly_not_a_guess(self):
         xdev = _FakeDevice(0x100a, hid_on_iface1=True)
         vdev = _FakeDevice(PID_DONGLE, hid_on_iface1=False)  # not a variant PID
