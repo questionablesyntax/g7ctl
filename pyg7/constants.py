@@ -3,44 +3,70 @@
 from typing import Optional
 
 VID = 0x3537
-PID_XINPUT = 0x100a   # default runtime identity ("Xbox 360 Controller for Windows").
-                      # Where the hardware idles on BOTH transports -- the dongle
-                      # sits here too once nothing is heartbeating it.
-PID_VENDOR = 0x109b   # vendor/config identity ("GameSir-G7 Pro")
-PID_DONGLE = 0x109c   # 2.4GHz wireless dongle in vendor/config mode -- the dongle's
-                      # counterpart to PID_VENDOR, with the same endpoints. Reached
-                      # by the same "gamesirapp" handshake from PID_XINPUT, and
-                      # reverts there when heartbeats stop. Not usable as a gamepad
-                      # while a session is open, exactly like PID_VENDOR.
-                      # Twice-corrected, both times because this was only ever
-                      # observed mid-session: 2026-07-31, it does not keep working
-                      # as a pad (xpad is not bound); 2026-08-01, it is not a
-                      # handshake-free always-on identity either -- an idle dongle
-                      # enumerates as PID_XINPUT. See PROTOCOL.md "Device
-                      # identities".
-PID_VENDOR_TRIMODE = 0x1003   # vendor/config identity on at least one other G7 Pro
-                      # variant -- reported 2026-08-19 from a community bug report, not
-                      # this project's own hardware. Same interface-1 signature
-                      # is_xinput_personality() already uses for PID_VENDOR (an
-                      # isochronous alt-setting pair, no HID keyboard/mouse), just under
-                      # a different PID. CONFIRMED 2026-08-19: the reporter read real
+# CORRECTED, 2026-08-29 -- read this before touching either PID below.
+# PID_XINPUT/PID_VENDOR are misnomers this project is retiring (see
+# PROTOCOL.md "Device identities" for the full account): both PIDs are,
+# and always were, fully working XInput identities -- neither is a
+# "vendor/config mode" a gamepad has to leave. The only real difference is
+# whether a second HID interface (keyboard+mouse, for remapped key/mouse
+# events) is presented -- confirmed 2026-08-29 to track the *active
+# profile's own bind content* (any keyboard/mouse remap -> present; all
+# native -> absent), not a switchable device "personality". Both PIDs
+# equally answer the config/telemetry protocol this whole package speaks.
+# Planned rename for the codebase phase: PID_XINPUT -> PID_HID (has the
+# extra interface), PID_VENDOR -> PID_XID (baseline, does not) -- not done
+# in this pass, which is docs/comments only; every callsite below still
+# uses the current names deliberately.
+PID_XINPUT = 0x100a   # "Xbox 360 Controller for Windows" -- presents the extra
+                      # HID keyboard/mouse interface. Reached from PID_VENDOR by
+                      # the "gamesirapp" handshake when the active profile needs
+                      # that interface; see PROTOCOL.md "The handshake" for what
+                      # is and isn't established about that transition.
+PID_VENDOR = 0x109b   # "GameSir-G7 Pro" -- baseline XInput identity, no extra HID
+                      # interface. Presented whenever the active profile's bindings
+                      # are all-native. Fully playable as a gamepad, and answers
+                      # this project's whole config/telemetry protocol -- there is
+                      # no gate between the two.
+PID_DONGLE = 0x109c   # 2.4GHz wireless dongle counterpart to PID_VENDOR, same
+                      # endpoints. Historically documented as reached by the same
+                      # "gamesirapp" handshake from an idle PID_XINPUT dongle state,
+                      # falling back there once heartbeats stop -- that framing
+                      # predates the 2026-08-29 correction above and has not been
+                      # re-verified under it (the bind-content trigger has only
+                      # been confirmed wired). Twice-corrected before that, both
+                      # times because this was only ever observed mid-session:
+                      # 2026-07-31, it does not keep working as a pad (xpad is not
+                      # bound); 2026-08-01, it is not a handshake-free always-on
+                      # identity either -- an idle dongle enumerates as PID_XINPUT.
+                      # See PROTOCOL.md "Device identities".
+PID_VENDOR_TRIMODE = 0x1003   # baseline (no-HID-interface) identity on at least
+                      # one other G7 Pro variant -- reported 2026-08-19 from a
+                      # community bug report, not this project's own hardware. Same
+                      # interface-1 descriptor shape as PID_VENDOR (isochronous
+                      # alt-setting pair, no HID keyboard/mouse), just under a
+                      # different PID. CONFIRMED 2026-08-19: the reporter read real
                       # config back over it (manually, before this constant existed) --
-                      # a genuine round trip, not just a descriptor-shape match. See
-                      # PROTOCOL.md "Device identities".
-PID_VENDOR_ZZZ = 0x105d   # vendor/config identity on a G7 Pro "Zenless Zone Zero"
-                      # edition, reported 2026-08-19 -- another community report, not
-                      # this project's own hardware. Same story as PID_VENDOR_TRIMODE:
-                      # interface 1's descriptor shape (isochronous alt-setting pair, no
-                      # HID keyboard/mouse) matches PID_VENDOR's exactly. CONFIRMED
-                      # 2026-08-19: the reporter tested this branch directly and read
-                      # real config back over it end to end -- a genuine round trip, not
-                      # just a descriptor-shape match. The reporter had originally
-                      # assumed this PID *was* the XInput identity (xpad binds to
-                      # interface 0 and Steam shows a working pad regardless of which
-                      # personality is present, which is not evidence either way -- see
-                      # is_xinput_personality()). See PROTOCOL.md "Device identities".
-PID_DONGLE_TRIMODE = 0x1004   # the Tri-mode variant's 2.4GHz dongle in vendor/config
-                      # mode -- PID_VENDOR_TRIMODE's counterpart, exactly one PID higher,
+                      # a genuine round trip, not just a descriptor-shape match. The
+                      # bind-content trigger (see PID_XINPUT/PID_VENDOR above) is not
+                      # independently reconfirmed on this variant. See PROTOCOL.md
+                      # "Device identities".
+PID_VENDOR_ZZZ = 0x105d   # baseline (no-HID-interface) identity on a G7 Pro
+                      # "Zenless Zone Zero" edition, reported 2026-08-19 -- another
+                      # community report, not this project's own hardware. Same
+                      # story as PID_VENDOR_TRIMODE: interface 1's descriptor shape
+                      # matches PID_VENDOR's exactly. CONFIRMED 2026-08-19: the
+                      # reporter tested this branch directly and read real config
+                      # back over it end to end -- a genuine round trip, not just a
+                      # descriptor-shape match. The reporter initially took `xpad`
+                      # binding and a working Steam pad here as evidence this PID was
+                      # the "XInput identity" -- reasonably, under the pre-2026-08-29
+                      # model, but not actually surprising at all once you know both
+                      # PIDs are always-XInput (see is_xinput_personality(), now
+                      # itself slated for renaming/reframing -- it isn't evidence of
+                      # a "personality" either way). See PROTOCOL.md "Device
+                      # identities".
+PID_DONGLE_TRIMODE = 0x1004   # the Tri-mode variant's 2.4GHz dongle counterpart --
+                      # PID_VENDOR_TRIMODE's counterpart, exactly one PID higher,
                       # same relationship PID_VENDOR (109b) has to PID_DONGLE (109c).
                       # Reported and CONFIRMED 2026-08-19 by the same reporter as
                       # PID_VENDOR_TRIMODE: found by hand ("vendor ID for white Tri-mode
@@ -50,32 +76,41 @@ PID_DONGLE_TRIMODE = 0x1004   # the Tri-mode variant's 2.4GHz dongle in vendor/c
                       # worth testing as a real pattern before more variants get their
                       # own hardcoded pair, but not assumed here yet. See PROTOCOL.md
                       # "Device identities".
-PID_NATIVE = 0x1022   # the controller's own "default GameSir identity" -- reached by
-                      # holding Menu+Share on the controller (documented in GameSir's
-                      # manual as an XInput/native-identity toggle; also the same
-                      # combo that clears a rare CMD_READ wedge). Two plain HID-class
-                      # interfaces (no vendor-specific class 255 interface at all),
-                      # neither one answers the standard CMD_HEARTBEAT payload or
-                      # streams anything unprompted -- found 2026-07-30, not the same
-                      # protocol as PID_VENDOR/PID_DONGLE and not reverse-engineered.
-                      # Recognized here only so a user in this identity gets a clear
-                      # "press Menu+Share to switch back" message instead of "no
-                      # device found". See PROTOCOL.md "Device identities".
-# Vendor-mode PID -> human-readable variant name. Real answer to roadmap
-# item 36's original question ("how does software know which G7 Pro
-# colourway is attached") -- not via the CMD=0x01 selector sweep that item
-# spent six sessions mapping (all 256 selectors now behaviorally known;
-# none carries a colourway value anywhere in the space, see ROADMAP.md),
-# but via the vendor-mode PID itself: three SKUs, three distinct PIDs,
-# zero counterexamples (n=3, 2026-08-19 -- see VARIANT_PIDS.md). The
-# original "it cannot be coming from USB descriptors" framing that started
-# the sweep checked product string/bcdDevice/serial on this project's own
-# single unit; it never had a second PID to compare against, because at
-# the time there was only one. Deliberately keyed on the *vendor* PID, not
-# XInput/native/dongle -- those aren't independently confirmed to vary
-# per-variant the same way (see VARIANT_PIDS.md's "Gaps" section), and a
-# dongle's vendor PID is its own wired counterpart + 1 wherever confirmed,
-# not looked up here separately.
+PID_NATIVE = 0x1022   # the controller's own "default GameSir identity" -- a genuinely
+                      # different, third identity, not affected by the PID_XINPUT/
+                      # PID_VENDOR correction above. Reached by holding Menu+Share
+                      # (GameSir's own manual calls this "Xbox button + Share",
+                      # switching between "GIP (Xbox Gaming Device)" -- this PID --
+                      # and "XInput"; also the same combo that clears a rare CMD_READ
+                      # wedge). Two plain HID-class interfaces (no vendor-specific
+                      # class 255 interface at all), confirmed via Steam's own
+                      # controller test to lack vibration, unlike PID_XINPUT/
+                      # PID_VENDOR which both have it. Neither interface answers the
+                      # standard CMD_HEARTBEAT payload or streams anything unprompted
+                      # -- found 2026-07-30, not the same protocol as PID_VENDOR/
+                      # PID_DONGLE and not reverse-engineered. Recognized here only so
+                      # a user in this identity gets a clear "press Menu+Share to
+                      # switch back" message instead of "no device found". See
+                      # PROTOCOL.md "Device identities".
+# PID_VENDOR (and its per-variant equivalents) -> human-readable variant
+# name. Real answer to roadmap item 36's original question ("how does
+# software know which G7 Pro colourway is attached") -- not via the
+# CMD=0x01 selector sweep that item spent six sessions mapping (all 256
+# selectors now behaviorally known; none carries a colourway value anywhere
+# in the space, see ROADMAP.md), but via this specific PID itself: three
+# SKUs, three distinct PIDs, zero counterexamples (n=3, 2026-08-19 -- see
+# VARIANT_PIDS.md). The original "it cannot be coming from USB descriptors"
+# framing that started the sweep checked product string/bcdDevice/serial on
+# this project's own single unit; it never had a second PID to compare
+# against, because at the time there was only one. Deliberately keyed on
+# PID_VENDOR specifically (not PID_XINPUT/PID_NATIVE/PID_DONGLE) purely
+# because *that* PID is the one confirmed to vary per-variant with a real
+# round trip on each -- not because it's any more "vendor" than PID_XINPUT
+# is (see the correction at the top of this file: neither PID is). The
+# other PIDs aren't independently confirmed to vary per-variant the same
+# way (see VARIANT_PIDS.md's "Gaps" section), and a dongle's own per-variant
+# PID is its wired counterpart + 1 wherever confirmed, not looked up here
+# separately.
 VARIANT_NAMES = {
     PID_VENDOR: "Shadow Ember",
     PID_VENDOR_TRIMODE: "White Trimode",
@@ -84,8 +119,9 @@ VARIANT_NAMES = {
 
 
 def identify_variant(vendor_pid: int) -> Optional[str]:
-    """Human-readable colourway/edition name for a known vendor-mode PID,
-    or None for one this project hasn't seen a confirmed report on yet
+    """Human-readable colourway/edition name for a known PID_VENDOR-style
+    (baseline, no-HID-interface) PID, or None for one this project hasn't
+    seen a confirmed report on yet
     (e.g. Dragon's Dogma 2 and WUCHANG editions -- see README.md "Hardware
     support"). None is a real, expected answer here, not a bug: this is a
     lookup against confirmed reports, not a formula that covers every PID
@@ -144,8 +180,8 @@ BATTERY_MAX = 100
 # anywhere in the capture corpus, because they are the only two Nexus asks
 # for.
 #
-# WARNING: unknown selectors drop the device out of vendor mode within
-# seconds (a clean revert to PID_XINPUT, not the CMD_READ wedge). A control
+# WARNING: unknown selectors cause an unprompted re-enumeration within
+# seconds (landing on PID_XINPUT, not the CMD_READ wedge). A control
 # of 32 commands using only these two, at the same rate, survives fine. Do
 # not sweep the selector space casually -- see PROTOCOL.md "Device info".
 CMD_DEVICE_INFO = 0x01

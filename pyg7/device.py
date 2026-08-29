@@ -1,4 +1,17 @@
-"""Finding the controller and switching it into vendor/config mode.
+"""Finding the controller and, when needed, moving it off PID_XINPUT.
+
+CORRECTED, 2026-08-29 -- read PROTOCOL.md's "Device identities" before
+touching this module. PID_XINPUT and PID_VENDOR are NOT an "XInput
+personality" vs. a "vendor/config mode" -- both are fully working XInput
+identities; the only real difference is whether a second HID interface
+(keyboard+mouse, for remapped key/mouse events) is presented, which tracks
+the active profile's own bind content, not a switchable device state. The
+whole `is_xinput_personality()`/"vendor mode" framing this module used to
+build on was a real, careful correlation observed correctly and explained
+incorrectly -- see PROTOCOL.md for the full account. Docstrings below have
+been corrected; function/constant names (`is_xinput_personality`,
+`PID_VENDOR`, `enter_vendor_mode`) have NOT yet -- that's a separate,
+tracked codebase-phase rename, not done in this pass.
 
 Progress here goes through `logging`, not print(): this module is imported
 by the GUI as well as the CLI, and a bare print() from a background watcher
@@ -167,8 +180,11 @@ def find_native_identity() -> Optional[usb.core.Device]:
     return find_device(PID_NATIVE)
 
 
-# Interface 1 is what actually distinguishes the two personalities, and on
-# firmware v2.4.4 it is the ONLY thing that does -- see is_xinput_personality().
+# Interface 1's descriptor shape is what varies between PID_XINPUT and
+# PID_VENDOR -- see is_xinput_personality()'s corrected docstring below for
+# what this does and doesn't tell you now. `PERSONALITY_INTERFACE` is a
+# planned rename to something like `KEYBOARD_MOUSE_INTERFACE`, not done in
+# this pass (docs/comments only).
 HID_INTERFACE_CLASS = 0x03
 PERSONALITY_INTERFACE = 1
 
@@ -188,78 +204,73 @@ def _interface_classes(dev: usb.core.Device, number: int) -> list:
 
 
 def is_xinput_personality(dev: usb.core.Device) -> bool:
-    """Is this device presenting the XInput personality (a working gamepad),
-    rather than the vendor/config one?
+    """Does this device currently present the extra HID keyboard/mouse
+    interface (i.e. is it at PID_XINPUT or its equivalent), rather than the
+    baseline identity (PID_VENDOR or equivalent) without it?
 
-    **PID is not a reliable answer to this, and stopped being one.** The
-    identity model in this project was built on firmware v2.0.9, where
-    XInput was `PID_XINPUT` and vendor/config was `PID_VENDOR`. On v2.4.4
-    (`bcdDevice` 0244) the controller enumerates the **XInput personality at
-    PID_VENDOR**: measured 2026-08-18 on a freshly-plugged controller
-    reporting `3537:109b` with iProduct "Xbox 360 Controller for Windows",
-    `xpad` bound, `/dev/input/js0` live, and 2531 XInput report frames
-    (`00 14 00 04 ...`) in 6s on EP 0x82. `find_device(PID_XINPUT)` finds
-    nothing at all on that firmware.
+    **FULLY CORRECTED, 2026-08-29 -- this is not a "personality" question,
+    and the name/framing here is scheduled for a rename** (see the module
+    docstring). Both PID_XINPUT and PID_VENDOR are, and always were, fully
+    working XInput identities -- neither is a "vendor/config mode" a
+    gamepad has to leave, and the config/telemetry protocol this package
+    speaks answers identically on either. The only real difference is
+    whether interface 1 presents the second HID interface, and **that
+    tracks the active profile's own button bindings**: any button bound to
+    a keyboard/mouse key -> present (PID_XINPUT); every binding native ->
+    absent (PID_VENDOR). Confirmed end to end, wired, 2026-08-29: a
+    firmware flash had reset the reference controller's keyboard/mouse
+    binds to native defaults, which is why it sat at PID_VENDOR for an
+    entire investigation that (wrongly, at the time) suspected a broken
+    "personality" mechanism; restoring those binds and releasing the
+    session flipped it straight to PID_XINPUT; switching to all-native
+    profiles flipped it back on their own, repeatably, six for six.
 
-    Interface 1 still separates them cleanly, and is the discriminator used
-    here because it describes function rather than labelling:
+    What this function actually checks, and why that's still a fine thing
+    to check: interface 1 genuinely does differ in descriptor shape
+    between the two --
 
-    - XInput personality: interface 1 is **HID** (class 0x03), the composite
-      keyboard+mouse device that emits remapped key/mouse events.
-    - Vendor/config personality: interface 1 is not HID -- vendor class or
+    - PID_XINPUT (or equivalent): interface 1 is **HID** (class 0x03), the
+      composite keyboard+mouse device that emits the remapped events.
+    - PID_VENDOR (or equivalent): interface 1 is not HID -- vendor class or
       the isochronous audio pair, depending on identity and alt setting.
 
-    iProduct ("Xbox 360 Controller for Windows" vs "GameSir-G7 Pro") tracks
-    the same split, but a descriptor class is a stronger thing to branch on
-    than a marketing string.
+    That's a real, still-accurate descriptor check for "does this specific
+    interface exist right now" -- what's retired is treating the answer as
+    telling you whether the device is "playable" or "in config mode". It
+    doesn't; both states are equally playable and equally configurable.
 
     Answers **False when the descriptors can't be read**, so an unreadable
     device keeps this module's previous behaviour rather than becoming
     invisible to it.
 
-    **CORRECTION, 2026-08-28: this discriminator is confirmed wrong on at
-    least one real unit, on real hardware, across two different firmware
-    versions -- not the v2.4.4-specific case above.** This project's own
-    reference controller, tested live at both `bcdDevice` 0207 and 0249,
-    sits at `3537:109b` with interface 1 showing **Vendor Specific class on
-    every alt-setting, never HID** -- while genuinely, functionally
-    presenting a live gamepad the whole time (`xpad` bound,
-    `/dev/input/js0` live, confirmed via a real `usbmon` capture: report
-    `0x20` streaming continuously, byte 4 flipping `00`->`10` in exact sync
-    with a real, timed button press/hold and back). This function answers
-    `False` (vendor) for that live, working state -- the opposite of
-    correct. Confirmed not firmware-specific: identical result at both
-    firmware versions tested.
-
-    **Not yet understood, and deliberately not guessed at here:** what
-    actually distinguishes the two states on this hardware generation, if
-    interface 1's shape doesn't. Kernel-driver-bound state
-    (`is_kernel_driver_active`) is not a safe substitute -- this module's
-    own `find_writable_device()` tests already cover a confirmed case (the
-    ZZZ edition) where a bound driver coexists with genuine vendor mode.
-    Report `0x20`'s content is a validated real signal (see above) but
-    requires an active, invasive read to check and hasn't been confirmed
-    across other variant PIDs -- not something this function can cheaply
-    do from a passive descriptor read. Every consumer of this function
-    (`find_writable_device()`, `find_xinput_device()`, `enter_vendor_mode()`)
-    still behaves *safely* despite the wrong label -- the vendor protocol
-    and live input channel were confirmed to coexist throughout, so no
-    write went to the wrong place and no session got stuck -- but the
-    label itself, surfaced directly by `g7ctl diag`, is not trustworthy on
-    this hardware. See `FINDINGS.md`, 2026-08-28, for the full capture
-    evidence.
+    History, kept because it shows real work, not because it's still the
+    right model: this function used to read as "XInput personality vs.
+    vendor/config personality", built on a real 2026-08-18 finding that a
+    v2.4.4-firmware controller could present the HID interface at
+    `PID_VENDOR`'s own PID rather than `PID_XINPUT`'s. A 2026-08-28
+    follow-up found the SAME reference unit, on two different firmware
+    versions, sitting at `PID_VENDOR` with interface 1 never HID at all --
+    while a real `usbmon` capture proved it was genuinely, functionally
+    live as a gamepad the whole time (report `0x20` streaming, byte 4
+    tracking a real timed button press) -- and flagged the discriminator
+    as "confirmed wrong, root cause not yet understood." The 2026-08-29
+    session that finally found the root cause (this docstring's current
+    text) is recorded in `FINDINGS.md` and `PROTOCOL.md`'s own dated
+    corrections, not repeated here in full.
     """
     return HID_INTERFACE_CLASS in _interface_classes(dev, PERSONALITY_INTERFACE)
 
 
 def find_xinput_device() -> Optional[usb.core.Device]:
-    """The controller in its XInput personality, at whichever PID this
-    firmware puts it behind.
+    """The controller currently presenting the extra HID keyboard/mouse
+    interface (see is_xinput_personality()'s corrected docstring), at
+    whichever PID this firmware puts it behind.
 
-    PID_XINPUT first (v2.0.9 and, presumably, anything that still uses it),
-    then the vendor PIDs filtered by personality (v2.4.4, where the XInput
-    personality lives at PID_VENDOR). Returns None if the controller isn't
-    present in that personality at all.
+    PID_XINPUT first (the common case), then the PID_VENDOR-family PIDs
+    filtered by is_xinput_personality() (some firmware/variant combinations
+    present the HID interface at what's otherwise the baseline PID -- see
+    PROTOCOL.md "Device identities"). Returns None if no candidate PID is
+    currently presenting that interface.
     """
     dev = find_device(PID_XINPUT)
     if dev is not None:
@@ -276,31 +287,30 @@ def find_writable_device() -> tuple[Optional[usb.core.Device], bool]:
     controller at PID_VENDOR or the dongle at PID_DONGLE. Returns
     (device, via_dongle) or (None, False).
 
-    Neither personality is where the hardware idles: the vendor ones are
-    reached by enter_vendor_mode()'s handshake, and fall back once heartbeats
-    stop. This finds the ones already switched, which in practice is most of
-    the time -- a previous session usually left it there.
+    **FULLY CORRECTED, 2026-08-29.** PID_VENDOR was never a distinct
+    "vendor mode" the controller gets switched into and falls back out of
+    -- see the module docstring and PROTOCOL.md "Device identities" for
+    the corrected model. What this function actually finds is: whichever
+    known PID currently lacks the extra HID keyboard/mouse interface,
+    which answers `0x0f` writes regardless of how it got there -- because
+    every PID answers them, always; there's no separate identity to reach
+    for config access at all. In practice this is often "wherever the
+    active profile's own bind content already put it" (see
+    `is_xinput_personality()`), not evidence of a prior session -- a
+    controller can sit here indefinitely with nothing having "switched" it.
 
-    **The PID alone is not enough to decide this.** On firmware v2.4.4 the
-    XInput personality -- a working gamepad, `xpad` bound and `js0` live --
-    also enumerates at PID_VENDOR. Matching on PID alone claimed it, which
-    detached `xpad`, took the user's controller away mid-use, and then held a
-    heartbeat loop on a device whose vendor endpoint answers nothing, which
-    presents as a wedge without being one. See is_xinput_personality().
+    **The PID alone is not enough to decide this**, still true: on some
+    firmware/variant combinations the HID interface is presented at what's
+    otherwise the baseline PID instead (a working gamepad, `xpad` bound and
+    `js0` live, at `PID_VENDOR`'s own PID). Matching on PID alone would
+    claim it, detach `xpad`, take the controller away mid-use, and hold a
+    heartbeat loop on an interface that's actually busy being a gamepad,
+    which presents as a wedge without being one. See
+    is_xinput_personality() for the interface-1 check this guards against
+    that specifically.
 
     Checks every PID in VENDOR_PID_CANDIDATES, not just PID_VENDOR/
     PID_DONGLE -- see that constant's comment.
-
-    **CORRECTION, 2026-08-28: "a previous session usually left it there" is
-    not the only real case anymore either.** This project's own reference
-    controller now idles at `PID_VENDOR` directly, with no prior session --
-    confirmed live, across two firmware versions. See
-    `is_xinput_personality()`'s own 2026-08-28 correction for the full
-    evidence: this function still finds a genuinely-writable interface
-    correctly (the vendor protocol answers real reads/writes there, confirmed
-    live), but do not read a positive result here as evidence the controller
-    was "already switched" by something else -- it may never have needed
-    switching on this hardware generation at all.
     """
     for pid, via_dongle in VENDOR_PID_CANDIDATES:
         dev = find_device(pid)
@@ -336,9 +346,10 @@ SETTLE_MAX_WAIT = 30.0
 
 def _find_stable_xinput_device(min_interval: float,
                                 max_wait_s: float = SETTLE_MAX_WAIT) -> Optional[usb.core.Device]:
-    """Find an XInput-personality device, but don't hand it back until it's
-    been sitting still -- re-finding it fresh on every check rather than
-    trusting one snapshot across the whole wait.
+    """Find a device presenting the HID keyboard/mouse interface (see
+    is_xinput_personality()'s corrected docstring), but don't hand it back
+    until it's been sitting still -- re-finding it fresh on every check
+    rather than trusting one snapshot across the whole wait.
 
     The previous approach found the device once, slept out
     `_pace_handshake()`'s wait against that one snapshot's age, and then
@@ -347,7 +358,7 @@ def _find_stable_xinput_device(min_interval: float,
     every one of those calls was silently operating on a device that no
     longer existed at that bus/address -- the handshake never actually
     reached the device that *did* exist, and the whole attempt spent its
-    full `timeout_s` waiting for a vendor-mode re-enumeration nothing had
+    full `timeout_s` waiting for a re-enumeration nothing had actually
     triggered. Confirmed against a real stuck-for-minutes incident: GameSir
     Nexus's own successful recovery from the identical stuck state sent a
     byte-for-byte identical handshake, but only after the device had
@@ -381,7 +392,25 @@ def _find_stable_xinput_device(min_interval: float,
 
 def enter_vendor_mode(timeout_s: float = 10.0,
                        min_interval: float = HANDSHAKE_MIN_INTERVAL) -> tuple[Optional[usb.core.Device], bool]:
-    """Handshake the controller out of XInput mode and into a vendor identity.
+    """Send the "gamesirapp" handshake, moving the controller off PID_XINPUT
+    (the HID-keyboard/mouse-presenting identity) and onto PID_VENDOR (or
+    equivalent) if it isn't there already.
+
+    **CORRECTED, 2026-08-29**: despite the name (scheduled for a rename,
+    see the module docstring), this doesn't enter any "vendor mode" --
+    PID_VENDOR is just as fully XInput as PID_XINPUT is, and the config
+    protocol this handshake is meant to unlock was never actually gated
+    behind it (see PROTOCOL.md "The handshake" and "Device identities").
+    What this function reliably does: if the controller currently presents
+    the HID interface, this flips it off (real one-directional effect,
+    confirmed); if it's already without that interface, this is a no-op as
+    far as the PID goes (confirmed: 20+ real sends into an already-no-HID
+    device produced zero re-enumeration) -- though sending it still opens
+    and releases a real session either way (see PROTOCOL.md "The
+    handshake" for exactly what that does and doesn't mean). **Safe to
+    call unconditionally** -- there was never a real need to check the
+    current state first before deciding whether to call this; see the
+    codebase-phase notes this observation is tracked against.
 
     Returns `(device, via_dongle)`, the same shape `find_writable_device()`
     returns -- callers need the flag to pick the session's timeouts and to
@@ -397,9 +426,10 @@ def enter_vendor_mode(timeout_s: float = 10.0,
     next `find_writable_device()` poll. Observed directly: same USB port,
     `disconnect` at handshake, re-enumerated as `109c` ~2s later.
     """
-    # Not find_device(PID_XINPUT): on firmware v2.4.4 the XInput personality
-    # enumerates at PID_VENDOR, so looking for PID_XINPUT alone finds nothing
-    # and this reports "no device" for a controller sitting right there.
+    # Not find_device(PID_XINPUT): on some firmware/variant combinations the
+    # HID interface is presented at what's otherwise the baseline PID
+    # instead, so looking for PID_XINPUT alone finds nothing and this
+    # reports "no device" for a controller sitting right there.
     #
     # _find_stable_xinput_device(), not a bare find_xinput_device() + a
     # single _pace_handshake(): see that function's docstring for why
@@ -461,12 +491,13 @@ def enter_vendor_mode(timeout_s: float = 10.0,
         # handshake, just on different hardware.
         for pid, via_dongle in VENDOR_PID_CANDIDATES:
             vdev = find_device(pid)
-            # The personality check is what makes this a wait at all on
-            # firmware v2.4.4: the device is at PID_VENDOR both before and
-            # after the handshake, so matching on PID alone returns the
-            # *pre*-handshake device immediately and every read after it
-            # fails. Waiting for interface 1 to stop being HID waits for the
-            # thing that actually changes.
+            # The interface-1 check is what makes this a wait at all on
+            # firmware/variants where the HID interface presents at what's
+            # otherwise the baseline PID: the device is at PID_VENDOR both
+            # before and after the handshake, so matching on PID alone
+            # returns the *pre*-handshake device immediately and every read
+            # after it fails. Waiting for interface 1 to stop being HID
+            # waits for the thing that actually changes.
             if vdev is not None and not is_xinput_personality(vdev):
                 # Real answer to roadmap item 36's original question --
                 # which G7 Pro colourway is this -- via the vendor PID

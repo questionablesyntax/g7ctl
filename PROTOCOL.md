@@ -29,27 +29,78 @@ as confirmed for the G7 Pro and unverified anywhere else.
 
 ## Device identities
 
+**CORRECTED, 2026-08-29 -- read this before anything below.** This project
+spent its whole history treating `100a` and `109b` as two different
+*personalities* -- one "XInput", one "vendor/config" -- switched between by
+a handshake, with `109b` as a config-only mode a working gamepad couldn't
+coexist with. **That model was wrong, foundationally, the entire time.**
+Both PIDs are, and always were, fully working XInput identities. The only
+real difference is whether a second USB interface -- a HID keyboard+mouse
+composite that emits remapped key/mouse events -- is presented alongside
+the gamepad interface. Confirmed end to end, wired, 2026-08-29: **that
+interface is presented exactly when the currently active profile has at
+least one button bound to a keyboard or mouse key, and only then.** A
+firmware update had reset the reference controller's own keyboard/mouse
+binds to native defaults, which is why it sat at `109b` for this entire
+investigation; restoring those binds and releasing the session flipped it
+straight to `100a`; switching to all-native profiles flipped it back to
+`109b` on their own, repeatably.
+
+This means the config/telemetry protocol this whole document describes was
+**never** gated behind a special "vendor mode" at all -- both PIDs answer
+it identically: `109b`, sitting normally with `xpad` bound and no session
+claimed, was confirmed carrying real, button-press-correlated data on
+report `0x20` (proving it's a fully working gamepad at rest); separately,
+`109b` claimed by an actual session was confirmed answering a real
+firmware-version query (proving the config protocol needs no different
+PID). Not the same instant -- USB interface ownership is exclusive, so
+claiming it for config access necessarily detaches `xpad` first, same as
+any session always has -- but the same identity, no PID change either
+way. See "The gamepad and this stream are mutually exclusive", below, for
+the specific claim this replaces. The earlier
+"personality" model wasn't sloppy -- the 2026-08-08 and 2026-08-18
+findings that built it were careful, methodical captures that correctly
+observed a real, consistent correlation (interface-1 HID presence tracks
+`100a`/`109b`). They misattributed the *cause* -- a toggle-able
+"personality" rather than "does the active profile need the keyboard/mouse
+interface" -- and everything built on that inference, including this
+document's whole structure, inherited the error. Kept here as history, not
+erased: see `FINDINGS.md` (private notes) for the full arc of how this was
+found and unwound.
+
+**What is still unconfirmed**: exactly what the `"gamesirapp"` handshake
+mechanically does under this corrected model, and whether the
+bind-content trigger holds for the wireless dongle transport (every
+confirmation so far is wired only). See "The handshake" below for what's
+actually established versus still a working guess.
+
 | Identity | VID:PID | Role |
 |---|---|---|
-| Default runtime | `3537:100a` | "Xbox 360 Controller for Windows" -- standard XInput pad. Interface 1 also exposes a genuine HID keyboard+mouse device (`xpad` + `usbhid`) -- this is what actually emits remapped key/mouse events. **This is where the hardware idles on either transport**: wired, and also the dongle once nothing is heartbeating it (corrected 2026-08-01 -- see the dongle row). |
-| Vendor/config | `3537:109b` | "GameSir-G7 Pro" -- config/telemetry protocol lives here. Interface 1 is isochronous audio in this mode, no HID keyboard/mouse. This project's own reference hardware specifically -- a **G7 Pro "Shadow Ember" Tri-mode** unit, not a generic/unbranded retail one. Worth noting given the rows below: this project's own controller and the "Tri-mode" variant reported separately are the same sub-family (colourway aside), yet use different vendor PIDs (`109b` vs `1003`) -- so colourway or pre-production-vs-retail status, not "Tri-mode-ness" itself, looks like the actual variable. Unconfirmed which. |
-| Wireless dongle, vendor/config | `3537:109c` | The dongle's counterpart to `109b`, same physical unit and serial. **It is a mode, not the dongle's only identity** -- an idle dongle enumerates as `100a` with `xpad` bound, takes the same `"gamesirapp"` handshake, and re-enumerates here; it falls back to `100a` once heartbeats stop. So the dongle behaves exactly as the cable does, one PID apart. While a session is held the controller is **not playable**, same as `109b`: interface 0 shows `driver -> usbfs` in sysfs, `xpad` has nothing bound, and no `/dev/input/js*` node exists. Recovery is perceptibly (not measured) lazier over RF, consistent with the relaxed dongle timings in `pyg7/session.py`. See `pyg7/device.py:enter_vendor_mode()` and `find_writable_device()`. |
-| Native GameSir identity | `3537:1022` | "GameSir-G7 Pro" (no manufacturer string, unlike `109b`). Reached by holding **Menu+Share** on the controller (documented in GameSir's manual as an XInput/native-identity toggle -- the same combo that clears a rare `CMD_READ` wedge). Two plain HID-class interfaces (`0x82`/`0x02` and `0x84`/`0x04`, no vendor-specific class-255 interface at all) -- **not the same protocol as `109b`/`109c`**: neither interface answers the standard `CMD_HEARTBEAT` payload or streams anything unprompted. Not reverse-engineered. `pyg7/device.py:find_native_identity()` recognizes this PID so a user stuck here gets a "hold Menu+Share" message instead of a generic "device not found." |
-| Vendor/config, other variant | `3537:1003` | Reported 2026-08-19 from a community bug report on a "Tri-mode" G7 Pro (pre-production unit, firmware `2.44`) -- not this project's own hardware. Interface 1's descriptor shape (isochronous alt-setting pair, no HID keyboard/mouse) matches `109b`'s exactly, which is why `find_writable_device()`/`enter_vendor_mode()` now also check it. **Confirmed the same day**: the reporter read real config back over it (by hand, patching their own checkout before this constant existed), a genuine round trip rather than just a descriptor match. Needs its own `udev` rule line, same as every other PID here -- easy to miss since access-denied looks identical to "wrong PID" from the CLI's error message. `100a` is this variant's XInput identity too, unchanged from the default row above. |
-| Wireless dongle, vendor/config, other variant | `3537:1004` | The Tri-mode variant's dongle counterpart to `1003` -- exactly one PID higher, same relationship `109c` has to `109b`. Reported and **confirmed the same day** by the same reporter as `1003`: found by hand ("vendor ID for white Tri-mode is 1004"), receiver connection worked after a brute `constants.py` edit. The "+1" relationship has now held on two separate SKUs (this project's own `109b`/`109c`, and this one) -- a real pattern worth watching for on future variants, not yet assumed to hold universally. |
-| Vendor/config, ZZZ edition | `3537:105d` | Reported 2026-08-19 from a second, independent community bug report, on a G7 Pro "Zenless Zone Zero" edition -- `bcdDevice` `6.25`, a firmware numbering scheme unlike anything seen before (every prior sample has been `0.244`/`2.44`-shaped). Same interface-1 signature as `109b`/`1003` (isochronous alt-setting pair, no HID). **The reporter initially took this for the XInput identity** -- reasonably, since `xpad` binds and Steam shows a working pad here -- but that happens off interface 0 regardless of personality and isn't evidence either way; the actual XInput PID for this variant is still unobserved. **Confirmed the same day**: the reporter tested the fix branch directly and read real config back over it, end to end. |
+| XInput, no keyboard/mouse interface | `3537:109b` | "GameSir-G7 Pro". Presented when the active profile's bindings are all-native (no keyboard/mouse remap). Fully playable as a gamepad *and* fully answers the config/telemetry protocol this document describes, at the same time -- there is no separate "vendor mode" this PID enters. This project's own reference hardware is a **G7 Pro "Shadow Ember" Tri-mode** unit specifically, not a generic/unbranded retail one -- worth noting given the rows below: this controller and the "Tri-mode" variant reported separately are the same sub-family (colourway aside) yet use different PIDs here (`109b` vs `1003`), so colourway or pre-production-vs-retail status, not "Tri-mode-ness" itself, looks like the actual variable. Unconfirmed which. |
+| XInput, with keyboard/mouse interface | `3537:100a` | "Xbox 360 Controller for Windows". Presented when the active profile has at least one button bound to a keyboard or mouse key -- that second HID interface (`xpad` + `usbhid`) is what actually emits those remapped events. Equally capable of the config/telemetry protocol as `109b` -- not independently reconfirmed on this exact PID as of 2026-08-29, but nothing in the corrected model gives either PID a reason to differ, and the two were shown fully interchangeable for the config protocol's purposes throughout this project's history. |
+| Wireless dongle | `3537:109c` | The dongle's counterpart to `109b`, same physical unit and serial, same two-interfaces-or-one story as the wired identities above -- **but the bind-content trigger has only been confirmed wired**; whether it holds identically over RF is untested. Historically documented as re-entered by the same handshake from an idle `100a` dongle state and falling back there once heartbeats stop -- that framing predates the 2026-08-29 correction and needs re-verification under the corrected model, not assumed to still be accurate as stated. See `pyg7/device.py:enter_vendor_mode()` and `find_writable_device()`. |
+| Native GameSir identity | `3537:1022` | "GameSir-G7 Pro" (no manufacturer string, unlike `109b`). A genuinely different, third identity -- not affected by the correction above. Reached by holding **Menu+Share** (GameSir's own manual calls this combo "Xbox button + Share", switching between "GIP (Xbox Gaming Device)" and "XInput" -- this PID is the GIP side). Two plain HID-class interfaces (`0x82`/`0x02` and `0x84`/`0x04`, no vendor-specific class-255 interface at all), confirmed via Steam's own controller test **to lack vibration**, unlike both `100a` and `109b` which have it. Neither interface answers the standard `CMD_HEARTBEAT` payload or streams anything unprompted -- not the same protocol as `109b`/`109c`, and not reverse-engineered. `pyg7/device.py:find_native_identity()` recognizes this PID so a user stuck here gets a "hold Menu+Share" message instead of a generic "device not found." |
+| Other variant, no keyboard/mouse interface | `3537:1003` | Reported 2026-08-19 from a community bug report on a "Tri-mode" G7 Pro (pre-production unit, firmware `2.44`) -- not this project's own hardware. Same interface-1 descriptor shape as `109b`, which is why `find_writable_device()`/`enter_vendor_mode()` also check it. **Confirmed the same day**: the reporter read real config back over it, a genuine round trip. The bind-content trigger is not independently reconfirmed on this variant. Needs its own `udev` rule line, same as every PID here. `100a` is this variant's other identity too, same relationship as the default rows above. |
+| Other variant, dongle | `3537:1004` | The `1003` variant's dongle counterpart -- exactly one PID higher, same relationship `109c` has to `109b`. Reported and confirmed the same day by the same reporter as `1003`. The "+1" relationship has held on two SKUs now; worth watching for on future variants, not assumed universal. |
+| ZZZ edition | `3537:105d` | Reported 2026-08-19 from a second, independent community bug report, on a G7 Pro "Zenless Zone Zero" edition -- `bcdDevice` `6.25`, a firmware numbering scheme unlike anything seen before. Same interface-1 signature as `109b`/`1003`. **The reporter initially took this for the personality-model's "XInput identity"** -- reasonably, since `xpad` binds and Steam shows a working pad here -- which, under the corrected model, isn't actually surprising at all: both PIDs are always-XInput, so of course a working pad shows up regardless of which one this is. **Confirmed the same day**: the reporter tested the fix branch directly and read real config back over it, end to end. |
 
-### A profile switch re-enumerates the controller, twice
+### A profile switch can re-enumerate the controller
 
-Pressing an on-device profile combo (`M`+`Y`/`B`/`A`/`X`) makes the
-controller drop off the USB bus and come back as **`109b`**, sit there for
-roughly 45 seconds, then drop again and return to `100a`. Two full
-disconnect/re-enumerate cycles per profile change, with no software
-involved.
+Switching the active profile *can* make the controller drop off the USB
+bus and come back at a different PID -- but only when the switch actually
+changes whether any bound button is a keyboard/mouse key, per the
+corrected model above. Originally documented (2026-08-08) as a direct,
+mechanical consequence of pressing a profile combo at all, landing
+specifically at `109b` then `100a` on a ~45s timer -- that framing was
+the pre-correction model's read of a real, correctly-observed event
+through the wrong cause. Restated under the corrected model: it isn't
+the *profile change* that triggers the re-enumeration, it's whichever
+profile you land on needing a different HID-interface presentation than
+the one you left.
 
-Measured 2026-08-08, wired, with nothing of this project running -- no
-vendor session, no `g7ctlc`, only passive sysfs polling. Two consecutive
-switches, from the kernel log:
+Original measurement, still accurate as raw data (wired, 2026-08-08,
+nothing of this project running -- no vendor session, no `g7ctlc`, only
+passive sysfs polling):
 
 ```
 00:22:15  disconnect
@@ -58,46 +109,97 @@ switches, from the kernel log:
 00:23:04  109b -> 100a   "Xbox 360 Controller for Windows"
 ```
 
-Consequences worth knowing:
+Re-verified live, 2026-08-29, cycling four profile combos deliberately
+spaced ~4s apart: every landing PID matched which profile's bind content
+needed the HID interface, six for six, no exceptions. **Also observed the
+same night: this coupling can apparently come uncoupled under heavy
+churn** -- after enough rapid re-enumeration activity (dozens of real
+transitions in one session), profile switches stopped producing any
+re-enumeration at all, confirmed via the controller's own profile-change
+LED still firing normally and via reading the actual bindings with
+`g7ctlc` -- the profile genuinely changed, the PID just didn't follow. Not
+explained; recorded as a real, reproducible-enough observation, not
+resolved. A longer cooldown than this project has tried may be what
+clears it; a physical reset button press was tried and did not.
 
-- **The HID keyboard/mouse interfaces do not exist while it sits at
-  `109b`** (see the identity table above), and those are the only path by
-  which a remapped key or mouse event reaches the host. Keyboard and mouse
-  bindings are therefore dead for that window after every profile change.
-  The gamepad half keeps working -- `Generic X-Box pad` and `js0` are
-  present at `109b` too -- so this presents as "the remaps broke", not "the
-  controller disconnected".
-- **Anything holding a vendor session loses it.** The session dies because
-  the device re-enumerated, not the other way round.
+Consequences worth knowing, unchanged by the correction:
+
+- **The HID keyboard/mouse interfaces do not exist while sitting at
+  `109b`**, and those are the only path by which a remapped key or mouse
+  event reaches the host. Keyboard and mouse bindings are therefore dead
+  for that window after landing on a profile that doesn't need them. The
+  gamepad half keeps working regardless -- `Generic X-Box pad` and `js0`
+  are present at `109b` too -- so this can present as "the remaps broke",
+  not "the controller disconnected".
+- **Anything holding a session loses it** when the device re-enumerates,
+  same as any other disconnect.
 - **Software watching for gamepads sees a different device.** Steam, for
-  one, shows the pad under a different name after a profile switch and
-  drops a user-assigned custom name, because the product string, the PID
-  and the interface set all change. This was originally reported as a Steam
-  quirk; it is the firmware.
+  one, shows the pad under a different name after a profile switch that
+  changes the PID, and drops a user-assigned custom name, because the
+  product string, the PID and the interface set all change. Originally
+  reported as a Steam quirk; it is the firmware.
 
-The ~45s dwell was consistent across both cycles measured, but two samples
-is not a timing characterisation and no mechanism for it is established.
+The ~45s dwell in the original measurement was consistent across both
+cycles measured there, but two samples is not a timing characterisation
+and no mechanism for it is established.
 
-## Switching out of `100a`: `109b` wired, `109c` over the dongle
+## The handshake
 
 Send ASCII `"gamesirapp"` as 5 chunks of 2 characters, each an 8-byte OUT
 report on endpoint `0x02`: `00 08 00 [c1] [c2] 00 00 00`, with an empty
-flush packet `00 08 00 00 00 00 00 00` between each chunk. Device goes
-silent ~1.3-1.5s after the last chunk, then re-enumerates as `109b`. No
-prior handshake/negotiation steps are required (confirmed: this step
-alone is sufficient). See `pyg7/device.py:enter_vendor_mode()`.
+flush packet `00 08 00 00 00 00 00 00` between each chunk. See
+`pyg7/device.py:enter_vendor_mode()`.
 
-**The dongle takes the same handshake and re-enumerates the same way**, just
-landing on `109c` instead of `109b`. Corrected 2026-08-01; this section
-previously read "wired only" and claimed the dongle was already reachable
-for vendor writes as soon as it was plugged in, needing no switch at all.
+**What this confirms and doesn't, under the corrected model above.**
+Sending it to a device currently presenting the HID keyboard/mouse
+interface (i.e. `100a`, or the equivalent identity on another variant)
+reliably causes it to re-enumerate without that interface (i.e. lands on
+`109b`/equivalent), ~1.3-1.5s after the last chunk, no prior
+negotiation required, and it re-enumerates back once the session
+releases (also confirmed directly, 2026-08-29). **Sending it to a device
+that's already without that interface produces no bus-level
+re-enumeration and no PID change** -- confirmed directly: 20+ real sends
+into an already-`109b` device, zero bus disconnects, verified via kernel
+log. That is not the same as nothing happening: sending it necessarily
+means a session was opened to send it, and opening any session -- with or
+without this specific string -- detaches `xpad` first (exclusive
+interface ownership, the same rule any USB device follows) and hands it
+back on release. The kernel log confirms this too, at every send: no bus
+disconnect, but a fresh `xpad` input-node registration each time, exactly
+matching a detach/reattach around the write. So: the config port opens
+and `xpad`'s own path closes for the write's duration either way: the
+PID-changing part of that is one-directional (only fires from a
+HID-presenting device), the claim/release part happens regardless.
+**What the handshake bytes themselves mechanically trigger, versus what's
+just true of any claimed session, is not established** -- working guess,
+not confirmed: opening a session may suppress the keyboard/mouse
+interface for the session's duration regardless of the active profile's
+real bind content, and the handshake's asymmetry is just that a
+`100a`-shaped device genuinely needs suppressing (hence a real
+re-enumeration) while a `109b`-shaped one has nothing to suppress (hence
+none). Flagged as a guess deliberately -- do not build code logic on it
+without testing it directly first.
 
-That claim came from only ever observing the dongle *after* a switch. It
-stays in `109c` as long as something heartbeats it, and a previous session
-usually left it there -- so `find_writable_device()` kept finding it ready
-and nothing contradicted the assumption. Restarting `g7ctlc` exposed the
-idle state, in one unambiguous sequence on a single USB port with no
-wired controller attached:
+**Safe to send unconditionally regardless.** Since a handshake against an
+already-no-HID device produces no PID change and no observed harm (same
+claim/release any session already does), there is no real need to
+classify the device's current state before deciding whether to send it --
+attempting it and observing the outcome (a real transition, or none) is
+sufficient, and simpler than classifying first. This directly undercuts
+this project's own historical `is_xinput_personality()`-gated design; see
+the codebase-phase notes this correction is tracked against.
+
+**The dongle takes the same handshake and re-enumerates the same way**,
+just landing on `109c` instead of `109b` -- historically documented
+behavior, not re-verified under the corrected model (see the "Wireless
+dongle" row above).
+
+Historical note on a since-superseded finding: this section previously
+claimed the dongle needed no handshake at all and was reachable for
+vendor writes immediately on plugging in. That claim came from only ever
+observing the dongle *after* a switch, since a previous session usually
+left it in the no-HID state and nothing contradicted the assumption until
+a restart of `g7ctlc` exposed the idle state directly:
 
 ```
 xpad 3-8:1.0: xpad_try_sending_next_out_packet ...   <- xpad was bound to it
@@ -106,7 +208,7 @@ usb 3-8: new full-speed USB device number 22         <- ~2s later
 usb 3-8: New USB device found, idProduct=109c        <- same port, now vendor
 ```
 
-The practical cost of the wrong assumption was in `enter_vendor_mode()`,
+The practical cost of that wrong assumption was in `enter_vendor_mode()`,
 which waited for `109b` alone: every dongle connect from idle burned the
 full timeout and logged a failure before the caller's next
 `find_writable_device()` poll quietly succeeded. It now accepts either
@@ -199,8 +301,8 @@ than reading the descriptor.
 
 **Sweeping the remaining selectors is NOT free, and this was learned the
 hard way.** 253 values have never been tried, and an attempt to sweep
-`0x00`-`0x1F` **dropped the device out of vendor mode after about 7
-seconds**, reverting it to `100a`. A control run in the same conditions --
+`0x00`-`0x1F` **caused an unprompted re-enumeration after about 7
+seconds**, landing on `100a`. A control run in the same conditions --
 32 commands using only the two selectors Nexus itself sends, same heartbeat
 cadence, same command rate -- survived with no trouble at all. So it is the
 *unknown selectors* that end the session, not the pacing.
@@ -895,13 +997,35 @@ Not implemented in `pyg7/`.
 
 ## The input stream on report `0x10` (including a full 6-axis IMU)
 
-While a vendor session is open, the device pushes a continuous stream of its
+While a session is open, the device pushes a continuous stream of its
 own input state on report `0x10` -- the same report `CMD_READ` answers on,
 distinguished by byte 4 (`0x05` = read response, `0xE0` = input frame).
 
 **This is how Nexus lets you drive its UI with the controller** ("Direction
-Control / A Confirm / B Back" in its footer). In vendor mode the HID gamepad
-interface does not exist, so the app needs its own path to read inputs.
+Control / A Confirm / B Back" in its footer). **Why Nexus needs this
+separate path is not fully settled** -- the old explanation ("the HID
+gamepad interface does not exist" once a session is open) doesn't survive
+the 2026-08-29 correction as stated: interface 0 (`xpad`'s interface,
+standard gamepad reports) is a real, present descriptor on both `109b` and
+`100a` -- not something that only exists at one of them -- confirmed
+carrying real, button-press-correlated data on report `0x20` while sitting
+normally with `xpad` bound, no session claimed. What *does* still hold,
+same as any USB device: claiming the interface for a session detaches
+`xpad` first (interface ownership is exclusive), so `xpad`'s own path to
+that data is unavailable for the session's duration regardless of PID --
+that part was never wrong, it just isn't evidence of a special
+config-only mode, since the same claim-and-release happens on either PID
+identically. One plausible, unconfirmed explanation for why Nexus reads
+its own report `0x10` rather than relying on a standard OS input API:
+`109b`'s interface 0 has different
+descriptor bytes than `100a`'s (a different `bInterfaceSubClass`/
+`bInterfaceProtocol`, and `100a` alone carries an extra vendor-specific
+descriptor block resembling the classic Xbox 360/XUSB signature) -- if
+Windows' own XInput stack keys off that signature the way Linux's `xpad`
+keys off VID:PID directly, Nexus might simply not see `109b`'s interface 0
+as a standard XInput device even though the raw protocol data is
+identical, and report `0x10` is its workaround for that. Not tested; flagged
+as a real open question, not stated as fact.
 
 Decoded 2026-08-08 from a manual sweep (each input moved in turn, logged
 read-only over one held session):
@@ -930,10 +1054,28 @@ first rests at a perfect `0x80` on all four axes, the second at 134/126/133/
 Which bit of `0x09`/`0x0A` belongs to which button is not mapped -- the
 sweep did not record button order reliably.
 
-### The gamepad and this stream are mutually exclusive
+### The gamepad and this stream do coexist -- a real claim here was flatly wrong
 
-Tempting idea, ruled out 2026-08-08: the HID interface at `100a` *declares*
-this protocol in its report descriptor --
+**CORRECTED, 2026-08-29.** This section used to claim, unqualified, that no
+arrangement lets configuration access and a working gamepad coexist, and
+that this was an unavoidable property of the firmware. **That's false.**
+Two separate, real tests on `109b` establish why: a passive `usbmon`
+capture, wired, with `xpad` bound and nothing of ours claiming the
+interface, caught report `0x20` streaming continuously with byte 4
+flipping in exact sync with a real, timed, held button press -- a fully
+working gamepad, at rest, no session open. Separately, a claimed session
+on the same identity was confirmed answering a genuine `CMD_DEVICE_INFO`
+firmware-version query. Not literally the same instant -- claiming the
+interface for a session detaches `xpad` first, same exclusive-ownership
+rule any USB interface has -- but the same identity supports both, and
+neither needed a different PID to reach. See "Device identities" above
+for why: `109b` was never a config-only mode, it's just XInput without
+the extra HID interface, and the config/telemetry protocol was never
+gated behind leaving XInput at all.
+
+The one narrow thing that *is* still an accurate, confirmed negative
+result, ruled out 2026-08-08: the HID interface at `100a` *declares* this
+protocol in its own report descriptor --
 
 ```
 06 f0 ff  Usage Page (Vendor-Defined 0xFFF0)
@@ -942,23 +1084,26 @@ this protocol in its report descriptor --
   85 0f     Report ID 0x0F, 63-byte OUTPUT
 ```
 
--- which suggests config access via `hidraw` on interface 1 while `xpad`
-keeps interface 0 and the pad stays playable. **It does not work.** Writing
-heartbeats and a `CMD_READ` request to report `0x0F` on `/dev/hidraw*` at
-`100a` succeeds at the OS level and produces **no response of any kind**;
-nothing streams there unprompted either. The firmware declares the reports
-but only services them in vendor mode -- where interface 1 is isochronous
-audio and the HID interface does not exist at all.
+-- which suggested config access via `/dev/hidraw*` on `100a`'s own
+interface 1 specifically, alongside `xpad` on interface 0. **That specific
+approach does not work**: writing heartbeats and a `CMD_READ` request to
+report `0x0F` on `100a`'s `hidraw` node succeeds at the OS level and
+produces no response of any kind. That negative result stands -- interface
+1's declared reports are inert on `100a`. What doesn't stand is the
+conclusion drawn from it: the real config channel was never that
+interface at all. It's the same `0x02`/`0x82` endpoint pair the gamepad
+data itself rides on, on either PID, the whole time.
 
-So there is no arrangement in which configuration and a working gamepad
-coexist. That is a property of the firmware, and the "not usable for playing
-while connected" limitation is unavoidable rather than a design choice here.
-
-**GameSir Nexus behaves identically** -- it takes the device over completely
-for the duration, on Windows, with the vendor's own software. That is the
-strongest available evidence that this is the hardware's design and not a
-shortcoming of this project's approach: if a workaround existed, the app
-written by the people who made the firmware would use it.
+**GameSir Nexus's own behavior** -- appearing to take the device over
+completely for the session's duration -- is real, but per the corrected
+model that's better read as Nexus choosing to present a dedicated UI
+during a session (and possibly relying on report `0x10`'s own
+input-driving capability for that UI, as documented above under "The
+input stream on report `0x10`") rather than evidence the firmware
+*requires* giving up gamepad function to reach config. Not independently
+tested whether Nexus's own session-open behavior also suppresses the
+keyboard/mouse interface the way this project's own handshake does -- an
+open question, not carried over from the old, now-corrected claim.
 
 ## Motion
 
@@ -1091,10 +1236,10 @@ points yet.
 
 A known firmware fault: `CMD_READ` can stop answering entirely -- reads time
 out with no response while heartbeats and writes keep working normally.
-Triggered by rapid, repeated vendor-mode cycling. No software recovery
+Triggered by rapid, repeated re-enumeration cycling. No software recovery
 works: not a host reboot, not `dev.reset()`, not a cable replug. **Holding
 Share+Menu on the controller clears it**, which is also the combo that
-toggles the native identity.
+toggles the native (GIP) identity.
 
 ### The Menu+Share identity flip clears remaps
 
@@ -1227,9 +1372,9 @@ treat any category outside those five as unreadable rather than empty.
 Response, on a **different report ID, `0x10`**. That report also carries a
 continuous stream of controller input state -- **this is how Nexus lets you
 drive its own UI with the controller** (its footer shows "Direction Control
-/ A Confirm / B Back"). In vendor mode the HID gamepad interface does not
-exist, so the app needs its own path to read buttons and sticks, and this
-is it. Match responses by content, not just report ID:
+/ A Confirm / B Back"); see "The input stream on report `0x10`" above for
+why Nexus needs this separate path at all (not fully settled as of the
+2026-08-29 correction). Match responses by content, not just report ID:
 
 ```
 10 00 [SEQ] 3c [CMD_READ] [CATEGORY] [OFFSET_HI] [OFFSET_LO] [LENGTH] [...DATA...]

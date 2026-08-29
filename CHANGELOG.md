@@ -10,17 +10,17 @@ adheres to [semantic versioning](https://semver.org/).
 
 - **Entering vendor mode now names the connected G7 Pro variant, when it's
   one this project has a confirmed report on.** `pyg7.constants.identify_variant()`
-  looks up the vendor-mode PID against the three confirmed editions
-  (Shadow Ember, White Trimode, Zenless Zone Zero) and the log line says
-  which one landed, e.g. `Now in vendor mode (3537:1003, ...) -- White
-  Trimode`. Real answer to a question this project spent six live sessions
-  trying to answer a harder way (a `CMD=0x01` selector sweep, all 256
-  values now behaviorally mapped, none of them ever carried a colourway
-  value) -- the vendor PID itself turned out to already be the per-variant
-  identifier, confirmed on 3 SKUs with zero counterexamples once the
-  v0.2.1 PID reports came in. An unconfirmed PID (a working vendor
-  identity this project just hasn't matched to a name yet) logs with no
-  suffix, not a placeholder.
+  looks up the PID against the three confirmed editions (Shadow Ember,
+  White Trimode, Zenless Zone Zero) and the log line says which one
+  landed, e.g. `Now in vendor mode (3537:1003, ...) -- White Trimode`.
+  Real answer to a question this project spent six live sessions trying
+  to answer a harder way (a `CMD=0x01` selector sweep, all 256 values now
+  behaviorally mapped, none of them ever carried a colourway value) -- the
+  PID itself turned out to already be the per-variant identifier,
+  confirmed on 3 SKUs with zero counterexamples once the v0.2.1 PID
+  reports came in. An unconfirmed PID (a working identity this project
+  just hasn't matched to a name yet) logs with no suffix, not a
+  placeholder.
 
 - **`g7ctl diag`: a diagnostic subcommand for community bug reports**
   (roadmap item 46). The v0.2.1 PID fixes happened because two reporters
@@ -31,48 +31,59 @@ adheres to [semantic versioning](https://semver.org/).
   repo and one command — `g7ctl diag` — rather than deep git/Python
   setup.
 
-  Sends the real, ordinary vendor-mode handshake — the exact same
-  `enter_vendor_mode()` call `g7ctl enter-vendor` makes, through this
-  project's own `pyg7` protocol code rather than a separate reimplementation
-  of it — when it finds a controller sitting in its default XInput
-  personality, specifically so it can also capture the vendor-mode PID.
-  That's not optional: a USB device can only present one identity at a
-  time, so a purely passive read can only ever show whichever *one*
-  personality a controller happens to be in at the moment, and for a
-  first-time reporter that's almost always XInput -- the vendor PID
-  being the one thing missing is exactly the gap that made the v0.2.1
-  fixes need two unusually capable volunteers in the first place. When
-  the controller already answers a vendor-mode read without needing the
+  Sends the real, ordinary handshake — the exact same `enter_vendor_mode()`
+  call `g7ctl enter-vendor` makes, through this project's own `pyg7`
+  protocol code rather than a separate reimplementation of it — when it
+  finds a controller currently presenting the keyboard/mouse HID
+  interface, specifically so it can also capture the PID it lands on
+  without that interface. That's not optional: a USB device can only
+  present one identity at a time, so a purely passive read can only ever
+  show whichever *one* identity a controller happens to be in at the
+  moment, and for a first-time reporter that's usually the one with the
+  HID interface -- capturing the other one is exactly the gap that made
+  the v0.2.1 fixes need two unusually capable volunteers in the first
+  place. When the controller already answers a read without needing the
   handshake at all, reports that directly rather than guessing why: not
-  "already in vendor mode," which a real test found is not something
-  this tool can actually verify -- a controller can accept a vendor read
-  right at a moment it's also genuinely, functionally sitting in XInput
-  (kernel driver bound, working in-game). No config writes, no
-  per-setting protocol traffic beyond that one switch.
+  "already in vendor mode," a claim a real test found this tool couldn't
+  actually verify at the time -- later fully explained (see PROTOCOL.md
+  "Device identities"): both identities the controller can present are
+  fully working XInput, and which one it lands on tracks the active
+  profile's own keyboard/mouse bind content, not a switchable
+  "personality." No config writes, no per-setting protocol traffic
+  beyond that one switch.
 
   Reports the same shape of info `VARIANT_PIDS.md` tracks (variant name
   if known, PID, `bcdDevice`, whether interface 1 shows a HID
   alt-setting, whether a kernel driver is bound to interface 0, firmware
   version) for every GameSir-VID device found, not just PIDs this
   project already recognizes — the whole point is surfacing ones it
-  doesn't yet. Deliberately reports both of those last two as separate,
-  raw facts rather than collapsing them into one confident "personality"
-  label, for the same reason: either one can be misleading alone for a
-  given firmware/unit, and a bug report is more useful with the raw
-  signals than with a wrong conclusion. Scoped deliberately to
-  diagnostic capture only; testing an actual code fix is a real step up
-  in what's needed and this subcommand doesn't pretend otherwise.
+  doesn't yet. Reports the HID-interface check and the kernel-driver
+  check as separate, raw facts rather than collapsing them into one
+  confident label -- for the same reason the corrected model exists at
+  all: neither one alone reliably tells you what a report needs to know,
+  and a bug report is more useful with the raw signals than with a
+  guessed conclusion. Scoped deliberately to diagnostic capture only;
+  testing an actual code fix is a real step up in what's needed and this
+  subcommand doesn't pretend otherwise.
 
   This went through two earlier, now-abandoned shapes before landing
   here: first a standalone `curl | bash` script using only `lsusb`
-  (read-only, so it could never actually capture a vendor-mode PID
-  unless the device happened to already be in that state), then a
+  (read-only, so it could never actually capture the non-HID-interface
+  PID unless the device happened to already be presenting it), then a
   standalone `curl | python3` script using `pyusb` directly (could send
   the handshake, but duplicated protocol logic `pyg7` already has,
   tested, and maintains). Landing it as a real subcommand trades away
   the original "no checkout needed" goal — a reporter now needs this
   repo, not one curl'd file — for reusing `pyg7`'s actual, proven
   protocol functions instead of a second copy of them.
+
+  **A note on terminology, for anyone reading this changelog alongside
+  the code.** "Vendor mode" in this entry (and in `g7ctl`'s own current
+  log messages and constant names, e.g. `PID_VENDOR`, `enter_vendor_mode()`)
+  describes a model this project has since corrected -- see PROTOCOL.md
+  "Device identities" for the full account, and this file's own
+  commentary above. The code/naming rename that follows from that
+  correction is tracked separately and hadn't landed as of this entry.
 
 ## [0.2.1] - 2026-08-28
 

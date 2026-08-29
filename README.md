@@ -81,17 +81,17 @@ Contributions doing so are welcome.
 ## Before you start
 
 **While the app is connected, the controller is not usable for playing — wired
-and over the 2.4GHz dongle alike.** Two things combine. To read or write
-configuration the controller has to be in its vendor/config identity, where
-interface 1 carries audio instead of the HID keyboard and mouse that emit your
-remapped keys. And while the app holds the session it claims the gamepad
+and over the 2.4GHz dongle alike.** This is the app's doing, not a requirement
+of reading or writing configuration itself (both identities the controller can
+present answer the config protocol equally — see
+[PROTOCOL.md](PROTOCOL.md) "Device identities" for the full, corrected
+account). What actually causes it: opening a session claims the gamepad
 interface directly, which detaches the kernel's `xpad` driver, so there is no
-XInput pad either.
-
-The second half is the app's doing, not the identity's: the controller sitting
-in that identity with nothing holding it still enumerates as a gamepad. That
-distinction matters after an on-device profile switch — see
-[On-device features](#on-device-features-no-software-needed).
+XInput pad while it's held — and, when connecting, the tool moves the
+controller off its keyboard/mouse-remapping identity if the active profile
+currently needs one (unclaimed, it still enumerates as a working gamepad
+either way — see [On-device features](#on-device-features-no-software-needed)
+for how that identity gets decided).
 
 That's a property of the controller, not of the cable, and mostly it takes care
 of itself: **the GUI hands the controller back whenever its window loses focus**
@@ -108,8 +108,8 @@ timeouts over the dongle.
 ## Usage
 
 ```bash
-# Remap a button. The tool switches the controller into vendor/config mode
-# itself if it isn't already -- wired or wireless, no separate step needed.
+# Remap a button. The tool handshakes the controller off its keyboard/mouse
+# identity itself if needed -- wired or wireless, no separate step needed.
 g7ctl remap share f11
 g7ctl remap a f12 --shift          # target the Shift Layer instead
 g7ctl remap b native_b --profile 2 # target a specific onboard profile
@@ -223,18 +223,19 @@ regardless of this tool — and two of them can change settings **out from under
 a configuration you synced, which is the main reason "Read from Device" exists.
 
 - **Switch profile:** `M`+`Y` = 1, `M`+`B` = 2, `M`+`A` = 3, `M`+`X` = 4.
-  Note the controller **disconnects and reconnects twice** when you do this:
-  it re-enumerates as a different USB device for roughly 45 seconds, then
-  again on the way back. That is the firmware, not this tool — it happens
-  with nothing running. Two things follow. Steam (and anything else that
-  tracks gamepads) sees a different device and will show it under a
+  **Can make the controller disconnect and reconnect** — happens when the
+  profile you're switching to needs a different keyboard/mouse-remap setup
+  than the one you left (any bound key vs. none), not on every switch
+  unconditionally. That is the firmware, not this tool — it happens with
+  nothing running. Two things follow when it does. Steam (and anything else
+  that tracks gamepads) sees a different device and will show it under a
   different name, losing a custom name you assigned. And your keyboard/mouse
   remaps stop working for that window, because the HID keyboard and mouse
-  interfaces that emit them are absent while it sits in the other identity —
-  note the gamepad itself keeps working throughout, so this presents as "my
-  remaps broke", not "my controller disconnected".
-  See [PROTOCOL.md](PROTOCOL.md) "A profile switch re-enumerates the
-  controller, twice".
+  interfaces that emit them are absent while the new profile doesn't need
+  them — note the gamepad itself keeps working throughout, so this presents
+  as "my remaps broke", not "my controller disconnected".
+  See [PROTOCOL.md](PROTOCOL.md) "A profile switch can re-enumerate the
+  controller".
 - **Remap a back paddle on the fly** (`L4`/`R4`/`L5`/`R5`): hold `M` + the
   paddle until the Xbox indicator flashes slowly, press the button you want
   mirrored onto it, indicator goes solid. Press the paddle again while still
@@ -278,10 +279,10 @@ g7ctl diag
 ```
 
 and paste the output into an issue or the Reddit thread. This is the only
-way to actually capture a vendor-mode PID this project hasn't seen yet: a
-controller sitting in its default XInput personality won't show one on its
-own (a USB device can only present one identity at a time), so `diag` sends
-the real, ordinary mode-switch handshake — the exact same one
+way to actually capture the PID this project keys variant identification on
+(see PROTOCOL.md "Device identities"), if the controller isn't already
+presenting it: a USB device can only present one identity at a time, so
+`diag` sends the real, ordinary handshake — the exact same one
 `g7ctl enter-vendor` sends, through the same `pyg7` protocol code the rest
 of this tool uses, not a second copy of that logic — then reports what it
 finds. No config writes, no per-setting protocol traffic, just that one
