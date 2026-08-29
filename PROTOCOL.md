@@ -158,31 +158,57 @@ flush packet `00 08 00 00 00 00 00 00` between each chunk. See
 Sending it to a device currently presenting the HID keyboard/mouse
 interface (i.e. `100a`, or the equivalent identity on another variant)
 reliably causes it to re-enumerate without that interface (i.e. lands on
-`109b`/equivalent), ~1.3-1.5s after the last chunk, no prior
-negotiation required, and it re-enumerates back once the session
-releases (also confirmed directly, 2026-08-29). **Sending it to a device
+`109b`/equivalent), ~1.3-1.5s after the last chunk, no prior negotiation
+required, and re-enumerates back to `100a` once the session releases --
+provided the active profile's bind content still calls for HID at that
+point (also confirmed directly, 2026-08-29). **Sending it to a device
 that's already without that interface produces no bus-level
-re-enumeration and no PID change** -- confirmed directly: 20+ real sends
-into an already-`109b` device, zero bus disconnects, verified via kernel
-log. That is not the same as nothing happening: sending it necessarily
-means a session was opened to send it, and opening any session -- with or
-without this specific string -- detaches `xpad` first (exclusive
-interface ownership, the same rule any USB device follows) and hands it
-back on release. The kernel log confirms this too, at every send: no bus
-disconnect, but a fresh `xpad` input-node registration each time, exactly
-matching a detach/reattach around the write. So: the config port opens
-and `xpad`'s own path closes for the write's duration either way: the
-PID-changing part of that is one-directional (only fires from a
-HID-presenting device), the claim/release part happens regardless.
-**What the handshake bytes themselves mechanically trigger, versus what's
-just true of any claimed session, is not established** -- working guess,
-not confirmed: opening a session may suppress the keyboard/mouse
-interface for the session's duration regardless of the active profile's
-real bind content, and the handshake's asymmetry is just that a
-`100a`-shaped device genuinely needs suppressing (hence a real
-re-enumeration) while a `109b`-shaped one has nothing to suppress (hence
-none). Flagged as a guess deliberately -- do not build code logic on it
-without testing it directly first.
+re-enumeration, on entry or on release** -- confirmed directly: 20+ real
+sends into an already-`109b` device, zero bus disconnects at any point,
+verified via kernel log.
+
+Both cases are the same rule, not opposite behaviors, and this project
+previously mischaracterized it as one-directional -- it isn't. **A
+config session always leaves interface presence matching whatever the
+current bind content calls for**, and a re-enumeration happens exactly
+when reality needs to change to make that true: on the way in, if the
+starting identity doesn't already match; on the way back out, if it no
+longer matches once the session ends (e.g. binds were edited mid-session
+-- see the untested prediction below). A `100a`-started session
+ordinarily has something to shed going in and something to restore
+coming back out -- two re-enumerations. A `109b`-started session has
+nothing to shed and nothing to restore -- zero. There is no direction
+the mechanism refuses to run in; there's simply nothing for it to do
+when starting and current bind content already agree.
+
+*(Untested prediction, follows directly from the rule above: clearing
+every HID-bound key mid-session while sitting at a `100a`-started
+session should leave nothing to restore on release, so the device should
+stay at `109b` rather than round-tripping back to `100a`. Flagged as a
+prediction, not confirmed.)*
+
+None of this makes the `109b` side a true no-op either: sending the
+handshake, or opening any session at all, detaches `xpad` first
+(exclusive interface ownership, the same rule any USB device follows)
+and hands it back on release. The kernel log confirms this too, at every
+send: no bus disconnect, but a fresh `xpad` input-node registration each
+time, exactly matching a detach/reattach around the write. So the config
+port opens and `xpad`'s own path closes for the session's duration
+regardless of which PID is involved -- that claim/release plumbing is
+unconditional; only the re-enumeration is conditional, on whether the
+identity you're already at matches the bind content you currently have.
+
+**What's still not established is *why* config mode requires shedding
+the HID interface at all**, rather than running the config protocol
+concurrently with it present. Leading hypothesis, not confirmed:
+entering config mode needs to renegotiate the HID report-descriptor/
+keycode mapping to match the controller's present configuration, and a
+USB composite device can't add or remove an interface from a live
+configuration without tearing down and re-presenting the whole thing --
+a USB-level constraint, not something this project has any say in.
+Either way it's GameSir's design decision, not ours. Flagged as a guess
+deliberately -- do not build code logic on it without testing it
+directly first.
 
 **Safe to send unconditionally regardless.** Since a handshake against an
 already-no-HID device produces no PID change and no observed harm (same
