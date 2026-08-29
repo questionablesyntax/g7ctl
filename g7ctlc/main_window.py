@@ -318,11 +318,13 @@ class MainWindow(QMainWindow):
         self.playability_label = QLabel("")
         self.playability_label.setStyleSheet("color: #d99a3f;")
         self.playability_label.setToolTip(
-            "To read or write configuration the controller has to sit in its "
-            "vendor/config identity, where it is not an Xbox pad and has no "
-            "HID keyboard/mouse to emit your remapped keys. This is just as "
-            "true over the 2.4GHz dongle as it is wired -- the dongle bridges "
-            "the same session through. Click \"Release Device\" to hand the "
+            "Reading or writing configuration claims the gamepad interface "
+            "directly, which detaches the kernel's controller driver for as "
+            "long as the session is held -- not because configuration needs "
+            "a special identity (it doesn't; both identities the controller "
+            "can present answer it equally). This is just as true over the "
+            "2.4GHz dongle as it is wired -- the dongle bridges the same "
+            "session through. Click \"Release Device\" to hand the "
             "controller back without quitting."
         )
         bottom.addWidget(self.playability_label)
@@ -426,11 +428,12 @@ class MainWindow(QMainWindow):
     def changeEvent(self, event: QEvent) -> None:
         """Hand the controller back while the window isn't focused.
 
-        Holding the device keeps it in vendor/config mode, where it isn't a
-        gamepad at all -- so tabbing away to actually play would otherwise
-        find a dead controller until Release Device was clicked by hand.
-        GameSir Nexus releases on unfocus for the same reason. Hiding to the
-        tray deactivates the window too, so that path is covered by this one.
+        Holding the device keeps its gamepad interface claimed, detaching
+        the kernel driver -- so tabbing away to actually play would
+        otherwise find a dead controller until Release Device was clicked
+        by hand. GameSir Nexus releases on unfocus for the same reason.
+        Hiding to the tray deactivates the window too, so that path is
+        covered by this one.
         """
         if event.type() == QEvent.Type.ActivationChange:
             if self.isActiveWindow() and self.isVisible():

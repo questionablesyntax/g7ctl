@@ -1,9 +1,9 @@
 """CLI-level tests: error handling and message translation.
 
-No real device is touched -- find_writable_device()/enter_vendor_mode()/
+No real device is touched -- find_writable_device()/switch_to_xid()/
 VendorSession are monkeypatched. These tests exist to pin the fix for a real
 gap: main()'s only try/except used to catch usb.core.USBError alone, and
-enter_vendor_mode() (called for both the standalone 'enter-vendor' action and
+switch_to_xid() (called for both the standalone 'enter-vendor' action and
 the CLI's own auto-handshake fallback) was called OUTSIDE that block
 entirely -- so the exact USBError cases _explain_usb_error() exists to
 translate (device busy, missing udev permission) surfaced as a raw libusb
@@ -97,7 +97,7 @@ class MainErrorHandlingTest(unittest.TestCase):
 
     def setUp(self):
         self._orig_find = cli_main.find_writable_device
-        self._orig_enter = cli_main.enter_vendor_mode
+        self._orig_enter = cli_main.switch_to_xid
         self._orig_session = cli_main.VendorSession
         self._orig_argv = sys.argv
         # A device is always "already reachable" -- these tests are about
@@ -107,7 +107,7 @@ class MainErrorHandlingTest(unittest.TestCase):
 
     def tearDown(self):
         cli_main.find_writable_device = self._orig_find
-        cli_main.enter_vendor_mode = self._orig_enter
+        cli_main.switch_to_xid = self._orig_enter
         cli_main.VendorSession = self._orig_session
         sys.argv = self._orig_argv
 
@@ -171,14 +171,14 @@ class MainErrorHandlingTest(unittest.TestCase):
         self.assertNotIn("Traceback", stderr)
 
     def test_enter_vendor_usb_error_is_translated_not_a_traceback(self):
-        # Regression target: enter_vendor_mode() used to be called OUTSIDE
+        # Regression target: switch_to_xid() used to be called OUTSIDE
         # the try/except entirely for both call sites (standalone
         # 'enter-vendor' and the auto-handshake fallback below).
         def _raise(*a, **k):
             exc = usb.core.USBError("boom")
             exc.errno = 16
             raise exc
-        cli_main.enter_vendor_mode = _raise
+        cli_main.switch_to_xid = _raise
         code, stderr = self._run(["enter-vendor"])
         self.assertEqual(code, 1)
         self.assertIn("busy", stderr.lower())
@@ -187,14 +187,14 @@ class MainErrorHandlingTest(unittest.TestCase):
     def test_auto_handshake_usb_error_is_translated_not_a_traceback(self):
         # Same regression, the other call site: find_writable_device()
         # reports "not ready yet", so main() falls back to calling
-        # enter_vendor_mode() itself.
+        # switch_to_xid() itself.
         cli_main.find_writable_device = lambda: (None, False)
 
         def _raise(*a, **k):
             exc = usb.core.USBError("boom")
             exc.errno = 13
             raise exc
-        cli_main.enter_vendor_mode = _raise
+        cli_main.switch_to_xid = _raise
         code, stderr = self._run(["remap", "a", "f12"])
         self.assertEqual(code, 1)
         self.assertIn("Permission denied", stderr)
@@ -256,7 +256,7 @@ class DongleNoControllerTest(unittest.TestCase):
 
     def test_wired_path_is_unaffected(self):
         # via_dongle=False must never call probe_controller_live() at all --
-        # PID_VENDOR is the controller's own USB descriptor, so its mere
+        # PID_XID is the controller's own USB descriptor, so its mere
         # presence already proves it's there. _DeadControllerSession's
         # probe_controller_live() always returns False, so if the CLI ever
         # called it for a wired session, dispatch would never run and no

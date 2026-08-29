@@ -1,8 +1,8 @@
 """Tests for `g7ctl diag` (roadmap item 46) -- device discovery is faked out
-entirely (find_native_identity/find_xinput_device/find_writable_device/
-enter_vendor_mode/VendorSession are all monkeypatched on the g7ctl.main
+entirely (find_native_identity/find_hid_device/find_writable_device/
+switch_to_xid/VendorSession are all monkeypatched on the g7ctl.main
 module, same pattern tests/test_cli.py uses), so nothing here touches real
-USB. is_xinput_personality() is the one real pyg7.device function exercised,
+USB. has_hid_interface() is the one real pyg7.device function exercised,
 against a minimal fake descriptor shape -- same style test_device.py itself
 uses.
 """
@@ -13,7 +13,7 @@ import unittest
 from unittest import mock
 
 from g7ctl import main as cli_main
-from pyg7.constants import PID_DONGLE, PID_NATIVE, PID_VENDOR
+from pyg7.constants import PID_DONGLE, PID_NATIVE, PID_XID
 from pyg7.device import HID_INTERFACE_CLASS
 
 from .fakes import FakeSession
@@ -79,23 +79,23 @@ class DiagTest(unittest.TestCase):
     def setUp(self):
         self._orig = {
             "find_native_identity": cli_main.find_native_identity,
-            "find_xinput_device": cli_main.find_xinput_device,
+            "find_hid_device": cli_main.find_hid_device,
             "find_writable_device": cli_main.find_writable_device,
-            "enter_vendor_mode": cli_main.enter_vendor_mode,
+            "switch_to_xid": cli_main.switch_to_xid,
             "VendorSession": cli_main.VendorSession,
             "argv": sys.argv,
         }
         cli_main.find_native_identity = lambda: None
-        cli_main.find_xinput_device = lambda: None
+        cli_main.find_hid_device = lambda: None
         cli_main.find_writable_device = lambda: (None, False)
-        cli_main.enter_vendor_mode = lambda **k: (None, False)
+        cli_main.switch_to_xid = lambda **k: (None, False)
         cli_main.VendorSession = _FakeSessionCM
 
     def tearDown(self):
         cli_main.find_native_identity = self._orig["find_native_identity"]
-        cli_main.find_xinput_device = self._orig["find_xinput_device"]
+        cli_main.find_hid_device = self._orig["find_hid_device"]
         cli_main.find_writable_device = self._orig["find_writable_device"]
-        cli_main.enter_vendor_mode = self._orig["enter_vendor_mode"]
+        cli_main.switch_to_xid = self._orig["switch_to_xid"]
         cli_main.VendorSession = self._orig["VendorSession"]
         sys.argv = self._orig["argv"]
 
@@ -119,71 +119,71 @@ class DiagTest(unittest.TestCase):
         # framing would be actively misleading here.
         self.assertNotIn("No GameSir-VID device found at all", report)
 
-    def test_xinput_found_sends_handshake_and_reports_both_states(self):
+    def test_hid_found_sends_handshake_and_reports_both_states(self):
         xdev = _FakeDevice(0x100a, hid_on_iface1=True)
-        vdev = _FakeDevice(PID_VENDOR, hid_on_iface1=False)
-        cli_main.find_xinput_device = lambda: xdev
-        cli_main.enter_vendor_mode = lambda **k: (vdev, False)
+        vdev = _FakeDevice(PID_XID, hid_on_iface1=False)
+        cli_main.find_hid_device = lambda: xdev
+        cli_main.switch_to_xid = lambda **k: (vdev, False)
 
         report = self._run()
 
-        self.assertIn("sending the real vendor-mode handshake", report)
+        self.assertIn("sending the real handshake", report)
         self.assertIn(f"{0x100a:04x}", report)
-        self.assertIn(f"{PID_VENDOR:04x}", report)
+        self.assertIn(f"{PID_XID:04x}", report)
         self.assertIn("Shadow Ember", report)
         self.assertIn("confirmed", report)
         self.assertIn("Firmware version: 2.44", report)
 
-    def test_handshake_sent_but_no_reenumeration_reports_xinput_state_only(self):
+    def test_handshake_sent_but_no_reenumeration_reports_hid_state_only(self):
         xdev = _FakeDevice(0x100a, hid_on_iface1=True)
-        cli_main.find_xinput_device = lambda: xdev
-        cli_main.enter_vendor_mode = lambda **k: (None, False)
+        cli_main.find_hid_device = lambda: xdev
+        cli_main.switch_to_xid = lambda **k: (None, False)
 
         report = self._run()
 
-        self.assertIn("no vendor-mode re-enumeration seen", report)
+        self.assertIn("no re-enumeration seen", report)
         self.assertIn(f"{0x100a:04x}", report)
         self.assertNotIn("Firmware version:", report)
 
     def test_readable_without_a_handshake_sends_no_handshake(self):
-        already = _FakeDevice(PID_VENDOR, hid_on_iface1=False)
+        already = _FakeDevice(PID_XID, hid_on_iface1=False)
         cli_main.find_writable_device = lambda: (already, False)
         handshake_calls = []
-        cli_main.enter_vendor_mode = lambda **k: handshake_calls.append(1) or (None, False)
+        cli_main.switch_to_xid = lambda **k: handshake_calls.append(1) or (None, False)
 
         report = self._run()
 
-        self.assertIn("accepts vendor-mode reads right now", report)
-        self.assertIn(f"{PID_VENDOR:04x}", report)
+        self.assertIn("accepts config reads right now", report)
+        self.assertIn(f"{PID_XID:04x}", report)
         self.assertEqual(handshake_calls, [])
 
     def test_readable_state_does_not_claim_it_was_already_left_that_way(self):
         # Regression target: a real, confirmed-wrong report -- this exact
         # branch used to claim "left there by an earlier session" and
         # "already in vendor/config mode" when nothing of the sort could
-        # actually be verified. A controller can accept a vendor read here
+        # actually be verified. A controller can accept a config read here
         # while it was, a moment before, genuinely and functionally sitting
         # in XInput (xpad bound, working in-game) -- see g7ctl/main.py's
         # _handle_diag() docstring on this branch for the real incident.
-        already = _FakeDevice(PID_VENDOR, hid_on_iface1=False, driver_bound=True)
+        already = _FakeDevice(PID_XID, hid_on_iface1=False, driver_bound=True)
         cli_main.find_writable_device = lambda: (already, False)
 
         report = self._run()
 
         self.assertNotIn("already in vendor/config mode", report)
         self.assertNotIn("left there by an earlier session", report)
-        self.assertIn("does not mean the controller was already sitting in "
-                       "vendor mode before this ran", report)
+        self.assertIn("was already presenting the baseline identity before "
+                       "this ran", report)
         self.assertIn("Kernel driver bound to interface 0 | yes", report)
 
     def test_flags_the_known_ambiguous_combination(self):
         # Real, confirmed case (2026-08-28): interface 1 shows no HID
-        # alt-setting (usually read as vendor mode) while a kernel driver
-        # is bound (usually read as a live gamepad) -- neither signal alone
-        # tells you which is true here. A bug report benefits from being
-        # told this combination is known-ambiguous, not just shown the two
-        # raw facts side by side with no context.
-        already = _FakeDevice(PID_VENDOR, hid_on_iface1=False, driver_bound=True)
+        # alt-setting while a kernel driver is bound (usually read as a
+        # live gamepad) -- neither signal alone tells you which is true
+        # here. A bug report benefits from being told this combination is
+        # known-ambiguous, not just shown the two raw facts side by side
+        # with no context.
+        already = _FakeDevice(PID_XID, hid_on_iface1=False, driver_bound=True)
         cli_main.find_writable_device = lambda: (already, False)
 
         report = self._run()
@@ -191,7 +191,7 @@ class DiagTest(unittest.TestCase):
         self.assertIn("Known-ambiguous combination", report)
 
     def test_does_not_flag_when_the_driver_is_not_bound(self):
-        already = _FakeDevice(PID_VENDOR, hid_on_iface1=False, driver_bound=False)
+        already = _FakeDevice(PID_XID, hid_on_iface1=False, driver_bound=False)
         cli_main.find_writable_device = lambda: (already, False)
 
         report = self._run()
@@ -201,8 +201,8 @@ class DiagTest(unittest.TestCase):
     def test_unconfirmed_pid_says_so_honestly_not_a_guess(self):
         xdev = _FakeDevice(0x100a, hid_on_iface1=True)
         vdev = _FakeDevice(PID_DONGLE, hid_on_iface1=False)  # not a variant PID
-        cli_main.find_xinput_device = lambda: xdev
-        cli_main.enter_vendor_mode = lambda **k: (vdev, False)
+        cli_main.find_hid_device = lambda: xdev
+        cli_main.switch_to_xid = lambda **k: (vdev, False)
 
         report = self._run()
 
@@ -210,7 +210,7 @@ class DiagTest(unittest.TestCase):
 
     def test_iproduct_read_failure_shows_unknown_not_a_traceback(self):
         xdev = _FakeDevice(0x100a, hid_on_iface1=True)
-        cli_main.find_xinput_device = lambda: xdev
+        cli_main.find_hid_device = lambda: xdev
         with mock.patch("g7ctl.main.usb.util.get_string", side_effect=Exception("no backend")):
             report = self._run()
         self.assertIn("(unknown)", report)

@@ -59,7 +59,7 @@ class EstablishSessionTest(unittest.TestCase):
         return watcher
 
     def test_wired_session_settles_and_becomes_connected_with_no_probe(self):
-        # Wired mode must never even ask for a liveness probe -- PID_VENDOR
+        # Wired mode must never even ask for a liveness probe -- PID_XID
         # is the controller's own USB descriptor, so its presence already
         # proves it's there. _FakeSession's probe_controller_live() isn't
         # called at all here (via_dongle=False short-circuits it), so an

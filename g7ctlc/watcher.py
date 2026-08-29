@@ -24,8 +24,7 @@ import usb.core
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from pyg7 import state as state_mod
-from pyg7.constants import PID_XINPUT
-from pyg7.device import enter_vendor_mode, find_device, find_native_identity, find_writable_device
+from pyg7.device import find_hid_device, find_native_identity, find_writable_device, switch_to_xid
 from pyg7.session import VendorSession
 
 log = logging.getLogger(__name__)
@@ -39,8 +38,8 @@ HEARTBEAT_INTERVAL = 0.25  # matches the app's observed heartbeat cadence while 
 # of stalling the heartbeat loop, which is what keeps the session alive.
 BATTERY_POLL_INTERVAL = 30.0
 # Short on purpose, and much tighter than READ_CHUNK_TIMEOUT. A missed battery
-# sample is worth nothing; a heartbeat gap long enough for the firmware to drop
-# vendor mode costs the whole session. Timeouts here are swallowed, not raised.
+# sample is worth nothing; a heartbeat gap long enough for the firmware to end
+# the session costs the whole thing. Timeouts here are swallowed, not raised.
 BATTERY_READ_TIMEOUT = 0.3
 
 # The active profile changes only when the user presses a combo on the pad,
@@ -392,7 +391,14 @@ class DeviceWatcher(QObject):
         if vdev is not None:
             return self._open_session(vdev, via_dongle)
 
-        xdev = find_device(PID_XINPUT)
+        # find_hid_device(), not a bare find_device(PID_HID) -- a real gap
+        # fixed 2026-08-29: on firmware/variant combinations where the HID
+        # interface presents at what's otherwise the baseline PID (already
+        # seen in the wild: Tri-mode, ZZZ), a literal PID_HID check finds
+        # nothing even though the controller genuinely needs a handshake.
+        # The CLI's own connect path already used the thorough check;
+        # this brings the GUI in line.
+        xdev = find_hid_device()
         if xdev is None:
             # Distinguish "genuinely not connected" from "connected, but in
             # the native GameSir identity this tool can't talk to yet" --
@@ -407,7 +413,7 @@ class DeviceWatcher(QObject):
             return None
 
         self._set_state("connecting")
-        vdev, via_dongle = enter_vendor_mode()
+        vdev, via_dongle = switch_to_xid()
         if vdev is None:
             self._set_state("disconnected")
             return None

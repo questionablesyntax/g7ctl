@@ -178,8 +178,9 @@ class PlayabilityWarningTest(unittest.TestCase):
 class AutoReleaseOnUnfocusTest(unittest.TestCase):
     """Releasing the controller when the window loses focus.
 
-    Held, the device sits in vendor/config mode and is not a gamepad at all,
-    so tabbing away to play would find a dead pad. Driven by calling the
+    Held, the device's gamepad interface is claimed and the kernel driver
+    detached, so it isn't a gamepad at all while the session lasts -- so
+    tabbing away to play would find a dead pad. Driven by calling the
     handlers directly rather than by real focus events: the offscreen
     platform these run under has no window manager to activate anything.
     """

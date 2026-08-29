@@ -98,8 +98,8 @@ class PacingTest(unittest.TestCase):
         self.assertEqual(self._pace(age=None), [])
 
 
-class FindStableXinputDeviceTest(unittest.TestCase):
-    """_find_stable_xinput_device() -- from a real incident where a stale
+class FindStableHidDeviceTest(unittest.TestCase):
+    """_find_stable_hid_device() -- from a real incident where a stale
     Device snapshot silently broke pacing during a device that kept
     re-enumerating. See that function's own docstring in pyg7/device.py
     for the full account, including the wire capture that confirmed
@@ -108,12 +108,12 @@ class FindStableXinputDeviceTest(unittest.TestCase):
     """
 
     def test_returns_none_immediately_when_no_device_found(self):
-        """Must not wait at all -- EnterVendorModeMissingDeviceTest in
+        """Must not wait at all -- SwitchToXidMissingDeviceTest in
         test_device.py depends on this being instant, same as the old
-        bare find_xinput_device() + immediate-return-None it replaced."""
-        with mock.patch.object(device, "find_xinput_device", return_value=None), \
+        bare find_hid_device() + immediate-return-None it replaced."""
+        with mock.patch.object(device, "find_hid_device", return_value=None), \
              mock.patch.object(device.time, "sleep") as sleep:
-            result = device._find_stable_xinput_device(min_interval=5.0)
+            result = device._find_stable_hid_device(min_interval=5.0)
         self.assertIsNone(result)
         sleep.assert_not_called()
 
@@ -121,18 +121,18 @@ class FindStableXinputDeviceTest(unittest.TestCase):
         """--unsafe-no-wait passes 0; must not even read sysfs, same
         contract _pace_handshake() already guarantees."""
         dev = _FakeDev()
-        with mock.patch.object(device, "find_xinput_device", return_value=dev), \
+        with mock.patch.object(device, "find_hid_device", return_value=dev), \
              mock.patch.object(device, "seconds_since_enumeration") as age:
-            result = device._find_stable_xinput_device(min_interval=0)
+            result = device._find_stable_hid_device(min_interval=0)
         self.assertIs(result, dev)
         age.assert_not_called()
 
     def test_already_settled_device_returns_immediately(self):
         dev = _FakeDev()
-        with mock.patch.object(device, "find_xinput_device", return_value=dev), \
+        with mock.patch.object(device, "find_hid_device", return_value=dev), \
              mock.patch.object(device, "seconds_since_enumeration", return_value=60.0), \
              mock.patch.object(device.time, "sleep") as sleep:
-            result = device._find_stable_xinput_device(min_interval=5.0)
+            result = device._find_stable_hid_device(min_interval=5.0)
         self.assertIs(result, dev)
         sleep.assert_not_called()
 
@@ -144,10 +144,10 @@ class FindStableXinputDeviceTest(unittest.TestCase):
         re-found device afterward -- which is what actually confirms it
         settled, not just "we slept the planned amount"."""
         dev = _FakeDev()
-        with mock.patch.object(device, "find_xinput_device", return_value=dev), \
+        with mock.patch.object(device, "find_hid_device", return_value=dev), \
              mock.patch.object(device, "seconds_since_enumeration", side_effect=[1.0, 1.0, 5.0]), \
              mock.patch.object(device.time, "sleep") as sleep:
-            result = device._find_stable_xinput_device(min_interval=5.0)
+            result = device._find_stable_hid_device(min_interval=5.0)
         self.assertIs(result, dev)
         sleep.assert_called_once_with(4.0)
 
@@ -159,11 +159,11 @@ class FindStableXinputDeviceTest(unittest.TestCase):
         and return the NEW one, not the stale first one."""
         first_dev = _FakeDev(address=7)
         second_dev = _FakeDev(address=9)  # re-enumerated to a new address
-        with mock.patch.object(device, "find_xinput_device",
+        with mock.patch.object(device, "find_hid_device",
                                 side_effect=[first_dev, second_dev]), \
              mock.patch.object(device, "seconds_since_enumeration", side_effect=[1.0, 1.0, 5.0]), \
              mock.patch.object(device.time, "sleep") as sleep:
-            result = device._find_stable_xinput_device(min_interval=5.0)
+            result = device._find_stable_hid_device(min_interval=5.0)
         # Settles on the SECOND device, not the stale first one -- this is
         # the whole point: the caller now gets the device that actually
         # exists, not a reference to one that may already be gone.
@@ -172,10 +172,10 @@ class FindStableXinputDeviceTest(unittest.TestCase):
 
     def test_device_vanishing_mid_wait_returns_none(self):
         dev = _FakeDev()
-        with mock.patch.object(device, "find_xinput_device", side_effect=[dev, None]), \
+        with mock.patch.object(device, "find_hid_device", side_effect=[dev, None]), \
              mock.patch.object(device, "seconds_since_enumeration", return_value=1.0), \
              mock.patch.object(device.time, "sleep"):
-            result = device._find_stable_xinput_device(min_interval=5.0)
+            result = device._find_stable_hid_device(min_interval=5.0)
         self.assertIsNone(result)
 
     def test_never_settling_gives_up_after_max_wait_s(self):
@@ -184,11 +184,11 @@ class FindStableXinputDeviceTest(unittest.TestCase):
         max_wait_s of real time has passed."""
         dev = _FakeDev()
         times = iter([0.0, 0.05, 0.1, 100.0])  # jumps past a tiny max_wait_s
-        with mock.patch.object(device, "find_xinput_device", return_value=dev), \
+        with mock.patch.object(device, "find_hid_device", return_value=dev), \
              mock.patch.object(device, "seconds_since_enumeration", return_value=0.1), \
              mock.patch.object(device.time, "sleep"), \
              mock.patch.object(device.time, "time", side_effect=lambda: next(times, 100.0)):
-            result = device._find_stable_xinput_device(min_interval=5.0, max_wait_s=1.0)
+            result = device._find_stable_hid_device(min_interval=5.0, max_wait_s=1.0)
         self.assertIsNone(result)
 
 

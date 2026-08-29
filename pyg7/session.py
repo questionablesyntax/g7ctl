@@ -1,4 +1,11 @@
-"""The vendor-mode USB session: claim/release, heartbeat, raw packet send."""
+"""The claimed USB session: claim/release, heartbeat, raw packet send.
+
+"Vendor" here means the vendor-specific-class USB interface this session
+claims -- not a device "mode"; see PROTOCOL.md "Device identities" and
+pyg7/device.py's module docstring for the corrected model this project
+used to build on (renamed 2026-08-29: PID_XINPUT -> PID_HID, PID_VENDOR ->
+PID_XID, enter_vendor_mode() -> switch_to_xid()).
+"""
 import logging
 import time
 from typing import Any, NamedTuple, Optional
@@ -137,7 +144,10 @@ def profile_layer_byte(profile: int = 1, shift: bool = False) -> int:
 
 
 class VendorSession:
-    """A claimed USB interface on the vendor-mode device.
+    """A claimed USB interface on the controller -- "vendor" here names the
+    vendor-specific-class protocol this session speaks, not a device mode
+    (see PROTOCOL.md "Device identities"; both PID_HID and PID_XID answer
+    this protocol identically).
 
     IMPORTANT: writes sent with no heartbeat before/after appear to get
     silently discarded by the firmware -- the device reverts to XInput mode
@@ -214,7 +224,7 @@ class VendorSession:
           timeout on the very first chunk, while the connection itself
           stayed up.
         - 2026-07-28, CLI: read_state() issued straight after
-          enter_vendor_mode() failed harder still -- USBError errno 19, the
+          switch_to_xid() failed harder still -- USBError errno 19, the
           device dropping off the bus entirely mid-read. The same read run
           after ~3s of settle heartbeats completed all 4 profiles on the
           first attempt with no errors.
@@ -391,9 +401,10 @@ class VendorSession:
         ends.
 
         **Only pass selectors known to be supported.** An unsupported one
-        drops the device out of vendor mode within seconds -- a clean revert
-        to PID_XINPUT rather than the CMD_READ wedge, so it recovers in
-        software, but it ends the session. See PROTOCOL.md "Device info".
+        causes an unprompted re-enumeration within seconds -- a clean
+        switch to PID_HID rather than the CMD_READ wedge, so it recovers
+        in software, but it ends the session. See PROTOCOL.md "Device
+        info".
         """
         if timeout is None:
             timeout = READ_CHUNK_TIMEOUT_DONGLE if self.via_dongle else READ_CHUNK_TIMEOUT
@@ -485,13 +496,13 @@ class VendorSession:
         enumerates on USB, and is fully claimable, whether or not a physical
         controller is powered on and paired to it -- the dongle chip and the
         controller are two separate things joined by an RF link, not one USB
-        device. `find_writable_device()`/`enter_vendor_mode()` only prove the
+        device. `find_writable_device()`/`switch_to_xid()` only prove the
         *dongle* is there; heartbeats succeed too, since those are one-way
         writes with no reply to check. None of that proves a controller is
         actually on the other end -- only a real CMD_READ does, since it
         requires an actual response.
 
-        Wired mode doesn't need this: PID_VENDOR is the controller's own USB
+        Wired mode doesn't need this: PID_XID is the controller's own USB
         descriptor, so its mere presence already proves the controller itself
         is there. Callers should only bother calling this when
         `self.via_dongle` is true.

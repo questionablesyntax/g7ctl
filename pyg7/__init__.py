@@ -7,7 +7,10 @@
 # configuration tool. The hard-won part of this work is the protocol
 # knowledge, and copyleft on that layer would only narrow who can use it.
 # See LICENSE in this directory, and README.md "License" for the split.
-"""Reverse-engineered protocol library for the GameSir G7 Pro's vendor config mode.
+"""Reverse-engineered protocol library for the GameSir G7 Pro's config
+protocol -- confirmed, 2026-08-29, to answer identically on either USB
+identity the controller presents (PID_HID or PID_XID; see PROTOCOL.md
+"Device identities"), not gated behind a separate "vendor mode".
 
 Qt-free and pyusb-only: nothing here imports the GUI, so this package is
 usable from a script, a service, or a udev hook on its own.
@@ -15,7 +18,7 @@ usable from a script, a service, or a udev hook on its own.
 Reading the modules in this order makes the protocol easiest to follow:
 
   constants.py  USB identities, command bytes, category prefixes
-  device.py     finding the controller and switching it into vendor mode
+  device.py     finding the controller, handshaking it off PID_HID when needed
   session.py    the claimed USB session: heartbeat, raw send, chunked read
   buttons.py    button remap/unbind + the shared keycode table
   sticks.py     \\

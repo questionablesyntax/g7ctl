@@ -6,6 +6,45 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING (pyg7 API): retired "vendor mode" from the code itself, not
+  just the docs and comments.** Full account in `PROTOCOL.md` "Device
+  identities" and `FINDINGS.md`'s "vendor mode misconception" entry --
+  short version: `PID_XINPUT`/`PID_VENDOR` were never an "XInput
+  personality" and a "vendor/config mode"; both are, and always were,
+  fully working XInput identities, and the config protocol never needed
+  a special one. Renamed to name what's actually true instead:
+  - `PID_XINPUT` -> `PID_HID` (presents the extra keyboard/mouse HID
+    interface), `PID_VENDOR` -> `PID_XID` (baseline, doesn't) --
+    likewise `PID_VENDOR_TRIMODE`/`PID_VENDOR_ZZZ` -> `PID_XID_TRIMODE`/
+    `PID_XID_ZZZ`. `PID_DONGLE` is unchanged -- it's a bridge identity,
+    not a personality pair (the dongle presents one fixed PID regardless
+    of what the controller behind it is doing over RF -- unconfirmed
+    hypothesis, see its own comment in `constants.py`, hardware to test
+    it is currently broken).
+  - `pyg7.device.is_xinput_personality()` -> `has_hid_interface()`,
+    `find_xinput_device()` -> `find_hid_device()`,
+    `enter_vendor_mode()` -> `switch_to_xid()`.
+  - `VENDOR_PID_CANDIDATES` -> `XID_PID_CANDIDATES`,
+    `PERSONALITY_INTERFACE` -> `KEYBOARD_MOUSE_INTERFACE`.
+
+  No back-compat aliases for the Python names -- pyg7 is pre-1.0 with no
+  confirmed external consumer yet, and this project already treats
+  pre-1.0 as allowing real breaking changes. **The `g7ctl enter-vendor`
+  CLI subcommand string is deliberately kept stable** despite the
+  function behind it being renamed -- an intentional exception, not an
+  oversight, to avoid breaking anyone's existing scripts; a rename with
+  an internal alias is planned for a later pass.
+
+  Also fixed two real bugs found during this same sweep, unrelated to
+  naming: the regular CLI path (`remap`, `write-state`, etc., not just
+  `diag`) printed the same "already in vendor mode" overclaim `diag` was
+  already fixed for, when connecting via the dongle without a handshake;
+  and the GUI watcher's own connect logic checked a narrower PID than the
+  CLI did, which could miss a controller needing a handshake on
+  variant/firmware combinations already seen in the wild (Tri-mode, ZZZ).
+
 ### Added
 
 - **Entering vendor mode now names the connected G7 Pro variant, when it's

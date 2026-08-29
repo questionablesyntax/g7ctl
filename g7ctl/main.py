@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
 """
-Reverse-engineered CLI for the GameSir G7 Pro's vendor config protocol.
-See PROTOCOL.md for the wire-format reference.
+Reverse-engineered CLI for the GameSir G7 Pro's config protocol -- confirmed,
+2026-08-29, to answer identically on either USB identity the controller
+presents (see PROTOCOL.md "Device identities"), not gated behind a separate
+"vendor mode".
 
 Confirmed via USB capture + testing:
-  - Default runtime identity:  VID 0x3537 PID 0x100a ("Xbox 360 Controller for Windows")
-  - Vendor/config identity:    VID 0x3537 PID 0x109b ("GameSir-G7 Pro")
-  - Switching 100a -> 109b requires no windows app: send the ASCII string
-    "gamesirapp" as 5 chunks of 2 chars to interrupt OUT endpoint 0x02, each
-    chunk padded to 8 bytes as [00 08 00 c1 c2 00 00 00], interleaved with an
-    empty flush packet [00 08 00 00 00 00 00 00]. The device disconnects and
-    re-enumerates as 109b roughly 1-1.5s after the last chunk.
+  - Identity with the extra HID keyboard/mouse interface (PID_HID):
+    VID 0x3537 PID 0x100a ("Xbox 360 Controller for Windows")
+  - Baseline identity, no extra HID interface (PID_XID):
+    VID 0x3537 PID 0x109b ("GameSir-G7 Pro")
+  - Switching PID_HID -> PID_XID requires no windows app: send the ASCII
+    string "gamesirapp" as 5 chunks of 2 chars to interrupt OUT endpoint
+    0x02, each chunk padded to 8 bytes as [00 08 00 c1 c2 00 00 00],
+    interleaved with an empty flush packet [00 08 00 00 00 00 00 00]. The
+    device disconnects and re-enumerates as 109b roughly 1-1.5s after the
+    last chunk.
   - NOTE: the real app also does a report-ID-0x06 exchange before this,
     whose purpose is still unknown. It is NOT required for this tool's
     handshake or writes to work.
-  - Once in 109b, all config writes are sent as 64-byte interrupt OUT reports
+  - Once at 109b, all config writes are sent as 64-byte interrupt OUT reports
     on endpoint 0x02, format:
         0f 00 [SEQ] 3c [payload] 00 00 ... (zero pad to 64)
     SEQ increments each command sent (shared with the heartbeat 0f 00 SEQ 02 f2 00).
@@ -58,11 +63,11 @@ from pyg7 import state as state_mod
 from pyg7.constants import IFACE, PID_NATIVE, VID, identify_variant
 from pyg7.device import (
     HANDSHAKE_MIN_INTERVAL,
-    enter_vendor_mode,
+    find_hid_device,
     find_native_identity,
     find_writable_device,
-    find_xinput_device,
-    is_xinput_personality,
+    has_hid_interface,
+    switch_to_xid,
 )
 from pyg7.session import VendorSession
 
@@ -171,22 +176,23 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
     ap.add_argument("--version", action="version", version=_version_string())
     ap.add_argument(
         "--unsafe-no-wait", action="store_true",
-        help=f"Skip the {HANDSHAKE_MIN_INTERVAL:.0f}s pause before re-entering vendor mode. "
+        help=f"Skip the {HANDSHAKE_MIN_INTERVAL:.0f}s pause before switching identity again. "
              "That pause exists because rapid re-enumeration wedges the controller's "
              "read path, and the only fix (holding Share+Menu) erases the active "
              "profile's remaps. For running many commands, prefer 'batch' -- it uses "
              "one session and never hits the pause. This switch is for testing.")
     sub = ap.add_subparsers(dest="action", required=True)
 
-    sub.add_parser("enter-vendor", help="Switch the controller from XInput mode into vendor/config mode.")
+    sub.add_parser("enter-vendor", help="Handshake the controller off its keyboard/mouse identity, "
+                                         "onto the baseline one the rest of this tool's commands use.")
 
     sub.add_parser(
         "diag",
-        help="Diagnostic capture for a bug report -- finds the controller, switches it into "
-             "vendor mode to also capture its vendor-mode PID (the same handshake enter-vendor "
-             "sends), and prints a report to paste into an issue. No config writes.")
+        help="Diagnostic capture for a bug report -- finds the controller, sends the same "
+             "handshake as enter-vendor to also capture its baseline PID, and prints a report to "
+             "paste into an issue. No config writes.")
 
-    p_remap = sub.add_parser("remap", help="Send a button remap command (device must already be in vendor mode).")
+    p_remap = sub.add_parser("remap", help="Send a button remap command (handshakes automatically if needed).")
     p_remap.add_argument("button", help=f"Button ID: name ({', '.join(buttons.KNOWN_BUTTON_IDS)}) or raw hex bytes")
     p_remap.add_argument("keycode", help=f"Target keycode: name ({', '.join(buttons.KNOWN_KEYCODES)}) or raw hex byte")
     _add_heartbeat_args(p_remap)
@@ -194,14 +200,14 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
                           help="Target the Shift Layer (one layer, shared by all four profiles)")
     p_remap.add_argument("--profile", type=int, default=1, choices=[1, 2, 3, 4], help="Target profile 1-4 (default 1)")
 
-    p_unbind = sub.add_parser("unbind", help="Clear a button's binding entirely (device must already be in vendor mode).")
+    p_unbind = sub.add_parser("unbind", help="Clear a button's binding entirely (handshakes automatically if needed).")
     p_unbind.add_argument("button", help=f"Button ID: name ({', '.join(buttons.KNOWN_BUTTON_IDS)}) or raw hex bytes")
     _add_heartbeat_args(p_unbind)
     p_unbind.add_argument("--shift", action="store_true",
                            help="Target the Shift Layer (one layer, shared by all four profiles)")
     p_unbind.add_argument("--profile", type=int, default=1, choices=[1, 2, 3, 4], help="Target profile 1-4 (default 1)")
 
-    p_stick = sub.add_parser("stick-set", help="Set a Sticks-tab setting (device must already be in vendor mode).")
+    p_stick = sub.add_parser("stick-set", help="Set a Sticks-tab setting (handshakes automatically if needed).")
     p_stick.add_argument("side", choices=["left", "right"])
     p_stick.add_argument("setting", choices=sorted(sticks.SETTINGS))
     p_stick.add_argument("value", help="Value: number, on/off, or preset/mode name depending on the setting")
@@ -210,7 +216,7 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
                                "same as Buttons.")
     _add_heartbeat_args(p_stick)
 
-    p_motion = sub.add_parser("motion-set", help="Set a Motion-tab setting (device must already be in vendor mode).")
+    p_motion = sub.add_parser("motion-set", help="Set a Motion-tab setting (handshakes automatically if needed).")
     p_motion.add_argument("side", choices=["aim", "tilt"])
     p_motion.add_argument("setting", choices=sorted(motion.SETTINGS))
     p_motion.add_argument("value", help="Value: number, on/off, or preset/mode name depending on the setting "
@@ -220,7 +226,7 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
                                 "same as Buttons.")
     _add_heartbeat_args(p_motion)
 
-    p_trig = sub.add_parser("trigger-set", help="Set a Triggers-tab setting (device must already be in vendor mode).")
+    p_trig = sub.add_parser("trigger-set", help="Set a Triggers-tab setting (handshakes automatically if needed).")
     p_trig.add_argument("side", choices=["left", "right"])
     p_trig.add_argument("setting", choices=sorted(triggers.SETTINGS))
     p_trig.add_argument("value", help="Value: number or preset name depending on the setting")
@@ -229,18 +235,18 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
                               "same as Buttons.")
     _add_heartbeat_args(p_trig)
 
-    p_vib = sub.add_parser("vibration-set", help="Set a Vibrations-tab setting (device must already be in vendor mode).")
+    p_vib = sub.add_parser("vibration-set", help="Set a Vibrations-tab setting (handshakes automatically if needed).")
     p_vib.add_argument("setting", choices=sorted(vibration.SETTINGS))
     p_vib.add_argument("value", help=f"one of {vibration.LEVELS} for levels, on/off for force/sync flags")
     p_vib.add_argument("--profile", type=int, default=1, choices=[1, 2, 3, 4], help="Target profile 1-4 (default 1)")
     _add_heartbeat_args(p_vib)
 
-    p_rate = sub.add_parser("report-rate-set", help="Set the report/polling rate (device must already be in vendor mode).")
+    p_rate = sub.add_parser("report-rate-set", help="Set the report/polling rate (handshakes automatically if needed).")
     p_rate.add_argument("hz", type=int, choices=[250, 500, 1000])
     p_rate.add_argument("--profile", type=int, default=1, choices=[1, 2, 3, 4], help="Target profile 1-4 (default 1)")
     _add_heartbeat_args(p_rate)
 
-    p_dpad = sub.add_parser("dpad-set", help="Set a D-Pad option (device must already be in vendor mode).")
+    p_dpad = sub.add_parser("dpad-set", help="Set a D-Pad option (handshakes automatically if needed).")
     p_dpad.add_argument("setting", choices=sorted(dpad_options.SETTINGS))
     p_dpad.add_argument("value", choices=["on", "off"])
     p_dpad.add_argument("--profile", type=int, default=1, choices=[1, 2, 3, 4], help="Target profile 1-4 (default 1)")
@@ -248,7 +254,7 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
 
     p_ct = sub.add_parser(
         "continuous-trigger",
-        help="Turn per-button Continuous Trigger on or off (device must already be in vendor mode). "
+        help="Turn per-button Continuous Trigger on or off (handshakes automatically if needed). "
              "Continuous Trigger latches the button: press once and it stays held until pressed "
              "again. It is not turbo -- the button does not repeat. Independent of the binding: "
              "it doesn't change what the button sends, only how long it stays sent.")
@@ -259,7 +265,7 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
     p_ct.add_argument("--profile", type=int, default=1, choices=[1, 2, 3, 4], help="Target profile 1-4 (default 1)")
     _add_heartbeat_args(p_ct)
 
-    p_dock = sub.add_parser("dock-set", help="Set a Dock setting (global, not per-profile; device must already be in vendor mode).")
+    p_dock = sub.add_parser("dock-set", help="Set a Dock setting (global, not per-profile; handshakes automatically if needed).")
     p_dock.add_argument("setting", choices=sorted(dock_settings.SETTINGS))
     p_dock.add_argument("value", help="0-100 for brightness, on/off for auto_on_off")
     _add_heartbeat_args(p_dock)
@@ -267,7 +273,7 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
     p_raw = sub.add_parser(
         "raw",
         help="Send an unvalidated raw command byte + hex payload -- the protocol-poking escape "
-             "hatch, no safety checks at all (device must be in vendor mode).")
+             "hatch, no safety checks at all (handshakes automatically if needed).")
     p_raw.add_argument("cmd", help="Command byte in hex, e.g. 3c")
     p_raw.add_argument("payload", help="Payload as hex bytes, e.g. 0305007b013e -- sent exactly as "
                         "given, with none of the range/format checks every other setting command has")
@@ -278,28 +284,28 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
     p_new.add_argument("path", help="Output path, e.g. mystate.json")
     p_new.add_argument("--name", default="New State")
 
-    p_write = sub.add_parser("write-state", help="Push an entire state JSON file to the device in one session (device must already be in vendor mode).")
+    p_write = sub.add_parser("write-state", help="Push an entire state JSON file to the device in one session (handshakes automatically if needed).")
     p_write.add_argument("path", help="State JSON file to write")
     p_write.add_argument("--interval", type=float, default=state_mod.WRITE_HEARTBEAT_INTERVAL,
                           help=f"Seconds between heartbeats (default {state_mod.WRITE_HEARTBEAT_INTERVAL})")
 
     sub.add_parser(
         "active-profile",
-        help="Show which profile the controller is physically using (device must already be "
-             "in vendor mode). Note every other command targets a profile explicitly, so this "
+        help="Show which profile the controller is physically using (handshakes automatically "
+             "if needed). Note every other command targets a profile explicitly, so this "
              "is informational -- it does not change what --profile does.")
 
     sub.add_parser(
         "firmware",
-        help="Show the controller's firmware version (device must already be in vendor mode).")
+        help="Show the controller's firmware version (handshakes automatically if needed).")
 
     sub.add_parser(
         "battery",
-        help="Show the controller's charge level (device must already be in vendor mode). "
+        help="Show the controller's charge level (handshakes automatically if needed). "
              "Read-only: this issues no command at all, since the value arrives unprompted "
              "in the device's input stream.")
 
-    p_read = sub.add_parser("read-state", help="Read a profile's current button bindings back from the device (device must already be in vendor mode).")
+    p_read = sub.add_parser("read-state", help="Read a profile's current button bindings back from the device (handshakes automatically if needed).")
     p_read.add_argument("--profile", type=int, default=1, choices=[1, 2, 3, 4], help="Profile slot to read (default 1)")
     p_read.add_argument("--save", metavar="PATH", help="Also save the result as a state JSON file")
 
@@ -560,31 +566,39 @@ def _connect_session(min_interval: float = HANDSHAKE_MIN_INTERVAL):
     exactly one session for many commands instead of duplicating this per
     invocation.
 
-    `min_interval` is forwarded to enter_vendor_mode()'s pacing floor; the
+    `min_interval` is forwarded to switch_to_xid()'s pacing floor; the
     CLI drops it to 0 for --unsafe-no-wait. Note the pause only applies when
-    a handshake is actually needed -- a controller already in vendor mode is
-    reclaimed without re-enumerating, so back-to-back commands that catch it
-    still switched pay nothing."""
+    a handshake is actually needed -- a controller already presenting a
+    no-HID identity is reclaimed without re-enumerating, so back-to-back
+    commands that catch it still switched pay nothing."""
     vdev, via_dongle = find_writable_device()
     if vdev is None:
         # Fall back to doing the handshake ourselves rather than telling
         # the user to run 'enter-vendor' as a separate command first. That
         # two-step flow barely works in practice: once 'enter-vendor'
-        # exits, nothing is heartbeating, and the firmware reverts to
-        # XInput within seconds -- usually before the follow-up command can
+        # exits, nothing is heartbeating, and the firmware switches back
+        # within seconds -- usually before the follow-up command can
         # claim it. The GUI's watcher has always auto-entered for exactly
         # this reason (watcher._connect); this brings the CLI in line.
-        print("Device not in vendor mode -- entering it now...")
+        print("Controller presents the keyboard/mouse interface -- switching it now...")
         # The handshake reports which identity it landed on: wired
-        # (PID_VENDOR) or dongle (PID_DONGLE). Both are reachable this way --
-        # an idle dongle sits in XInput mode like the wired controller does.
-        vdev, via_dongle = enter_vendor_mode(min_interval=min_interval)
+        # (PID_XID) or dongle (PID_DONGLE). Both are reachable this way --
+        # an idle dongle presents the HID interface like the wired
+        # controller does.
+        vdev, via_dongle = switch_to_xid(min_interval=min_interval)
         if vdev is None:
             print("Could not reach the controller. Plug it in (or connect the "
                   "wireless dongle) and try again.", file=sys.stderr)
             sys.exit(1)
     elif via_dongle:
-        print("Using wireless dongle -- already in vendor mode, no handshake needed.")
+        # Real fact, not a history claim: the dongle currently answers
+        # config reads/writes directly, no handshake needed right now --
+        # NOT "already in vendor mode by an earlier session" (see
+        # has_hid_interface()'s 2026-08-28/29 corrections in
+        # pyg7/device.py for exactly why that framing is wrong -- the
+        # same fix already shipped in `g7ctl diag`, applied here too).
+        print("Using wireless dongle -- already answering config reads/writes, "
+              "no handshake needed.")
 
     with VendorSession(vdev, via_dongle=via_dongle) as sess:
         # A just-claimed session accepts heartbeats but isn't ready to
@@ -594,7 +608,7 @@ def _connect_session(min_interval: float = HANDSHAKE_MIN_INTERVAL):
         # whether or not a physical controller is actually powered on and
         # paired to it -- they're two separate things joined by an RF
         # link. Only a real read proves a controller answered; wired mode
-        # doesn't need this check, since PID_VENDOR is the controller's
+        # doesn't need this check, since PID_XID is the controller's
         # own USB descriptor. See VendorSession.probe_controller_live().
         if via_dongle and not sess.probe_controller_live():
             print("Dongle detected, but no controller answered. Make sure "
@@ -773,15 +787,15 @@ def _diag_describe(dev: usb.core.Device) -> dict:
     """Real, structured facts about one device via direct pyusb descriptor
     access -- same fields VARIANT_PIDS.md tracks.
 
-    Reports is_xinput_personality()'s raw answer and the kernel-driver-bound
+    Reports has_hid_interface()'s raw answer and the kernel-driver-bound
     state as separate facts rather than collapsing them into one confident
-    "personality" label -- confirmed real case (2026-08-28, this project's
-    own reference hardware): is_xinput_personality() reads False (interface
-    1 shows no HID alt-setting) while the controller is genuinely,
-    functionally a live XInput gamepad (xpad bound, working in-game). Either
-    signal alone can be wrong for a given firmware/unit; showing both lets a
-    report actually be useful for narrowing down why, instead of asserting
-    an answer this tool cannot reliably give.
+    label -- confirmed real case (2026-08-28, this project's own reference
+    hardware): has_hid_interface() reads False (interface 1 shows no HID
+    alt-setting) while the controller is genuinely, functionally a live
+    gamepad (xpad bound, working in-game). Either signal alone can be
+    misleading for a given firmware/unit; showing both lets a report
+    actually be useful for narrowing down why, instead of asserting an
+    answer this tool cannot reliably give.
     """
     try:
         iproduct = usb.util.get_string(dev, dev.iProduct) if dev.iProduct else None
@@ -797,7 +811,7 @@ def _diag_describe(dev: usb.core.Device) -> dict:
         "address": dev.address,
         "iproduct": iproduct,
         "bcddevice": _format_bcd(dev.bcdDevice),
-        "xinput_shape": is_xinput_personality(dev),
+        "has_hid": has_hid_interface(dev),
         "driver_bound": driver_bound,
     }
 
@@ -814,26 +828,26 @@ def _diag_print_report(info: dict) -> None:
     print(f"| PID | `{info['pid']:04x}` |")
     print(f"| iProduct | {info['iproduct'] or '(unknown)'} |")
     print(f"| bcdDevice | {info['bcddevice']} |")
-    print(f"| Interface 1 shows a HID alt-setting | {info['xinput_shape']} |")
+    print(f"| Interface 1 shows a HID alt-setting | {info['has_hid']} |")
     driver_bound = info["driver_bound"]
     driver_label = ("yes (likely `xpad`)" if driver_bound is True else
                      "no" if driver_bound is False else "(couldn't check)")
     print(f"| Kernel driver bound to interface 0 | {driver_label} |")
     print(f"| Known variant | {variant_line} |")
     print()
-    if info["xinput_shape"] is False and driver_bound is True:
+    if info["has_hid"] is False and driver_bound is True:
         print("**Known-ambiguous combination, confirmed 2026-08-28:** a "
               "kernel driver is bound (usually meaning a live, working "
               "gamepad) at the same time interface 1 shows no HID "
-              "alt-setting (usually read as vendor/config mode). This "
-              "project has confirmed, on real hardware across two "
-              "firmware versions, that this combination can mean the "
-              "controller is genuinely, functionally live as a gamepad "
-              "*and* the vendor protocol answers real reads/writes at the "
-              "same time -- neither signal alone tells you which. See "
-              "`pyg7/device.py`'s `is_xinput_personality()` docstring and "
-              "`FINDINGS.md` (2026-08-28) for the evidence. Worth including "
-              "in a bug report if you're seeing this.")
+              "alt-setting. This project has confirmed, on real hardware "
+              "across two firmware versions, that this combination can "
+              "mean the controller is genuinely, functionally live as a "
+              "gamepad *and* the config protocol answers real reads/"
+              "writes at the same time -- neither signal alone tells you "
+              "which. See `pyg7/device.py`'s `has_hid_interface()` "
+              "docstring and `FINDINGS.md` (2026-08-28/29) for the "
+              "evidence. Worth including in a bug report if you're seeing "
+              "this.")
         print()
 
 
@@ -841,13 +855,13 @@ def _handle_diag(min_interval: float) -> None:
     """Diagnostic capture for a community bug report -- roadmap item 46.
 
     A USB device can only present one identity at a time, so a purely
-    passive read only ever shows whichever *one* personality a controller
-    is in right now -- for a first-time reporter, almost always XInput,
-    never the vendor-mode PID that actually matters for extending
+    passive read only ever shows whichever *one* identity a controller is
+    in right now -- for a first-time reporter, often the HID-presenting
+    one, never the baseline PID that actually matters for extending
     support. So this sends the real handshake -- exactly what
-    `enter-vendor` sends, reusing enter_vendor_mode() directly rather
-    than a second copy of that logic -- when it finds a controller in
-    XInput mode, specifically to also capture that PID. Nothing else is
+    `enter-vendor` sends, reusing switch_to_xid() directly rather than a
+    second copy of that logic -- when it finds a controller presenting the
+    HID interface, specifically to also capture that PID. Nothing else is
     written: no config, no per-setting protocol traffic.
     """
     print("# g7ctl diagnostic capture")
@@ -862,50 +876,51 @@ def _handle_diag(min_interval: float) -> None:
               "then run this again to capture more.")
         print()
 
-    xdev = find_xinput_device()
+    xdev = find_hid_device()
     vdev = None
     via_dongle = False
     if xdev is not None:
         info = _diag_describe(xdev)
         reports.append(info)
-        print("Found in XInput mode -- sending the real vendor-mode handshake "
-              "to also capture its vendor PID (the same one `enter-vendor` "
-              "sends; nothing else is written):")
-        vdev, via_dongle = enter_vendor_mode(min_interval=min_interval)
+        print("Found presenting the keyboard/mouse interface -- sending the "
+              "real handshake to also capture its baseline PID (the same "
+              "one `enter-vendor` sends; nothing else is written):")
+        vdev, via_dongle = switch_to_xid(min_interval=min_interval)
         if vdev is not None:
             reports.append(_diag_describe(vdev))
         else:
-            print("(handshake sent but no vendor-mode re-enumeration seen -- "
-                  "reporting the XInput state only)")
+            print("(handshake sent but no re-enumeration seen -- reporting "
+                  "the HID-interface state only)")
         print()
     else:
-        # is_xinput_personality() (interface 1's descriptor shape) said no
-        # here, so find_xinput_device() didn't find it above -- but that
-        # check is not the same thing as "was actually idle in XInput a
-        # moment ago," and diag has no reliable way to know the controller's
-        # personality *before* this run touched it. find_writable_device()
-        # answers a narrower, verifiable question instead: does this
-        # interface accept a vendor-mode read right now. Report exactly
-        # that, not a guess about how it got that way -- claiming "already
-        # in vendor mode" here was a real, confirmed-wrong overclaim: a
-        # controller can enumerate with is_xinput_personality()-false
-        # descriptors while still genuinely, functionally acting as a live
-        # XInput gamepad (xpad bound, working in-game) the moment before
-        # this ran.
+        # has_hid_interface() (interface 1's descriptor shape) said no
+        # here, so find_hid_device() didn't find it above -- but that
+        # check is not the same thing as "was actually presenting the HID
+        # interface a moment ago," and diag has no reliable way to know
+        # the controller's prior state *before* this run touched it.
+        # find_writable_device() answers a narrower, verifiable question
+        # instead: does this interface accept a config read right now.
+        # Report exactly that, not a guess about how it got that way --
+        # claiming "already in vendor mode" here was a real,
+        # confirmed-wrong overclaim: a controller can enumerate with
+        # has_hid_interface()-false descriptors while still genuinely,
+        # functionally acting as a live gamepad (xpad bound, working
+        # in-game) the moment before this ran.
         already, via_dongle = find_writable_device()
         if already is not None:
             reports.append(_diag_describe(already))
             vdev = already
-            print("This interface accepts vendor-mode reads right now, so "
-                  "no handshake was sent -- reading it directly. If a "
-                  "kernel driver (xpad) had it claimed as a live gamepad, "
-                  "that was briefly detached to do this read and is "
-                  "reattached immediately after; this does not mean the "
-                  "controller was already sitting in vendor mode before "
+            print("This interface accepts config reads right now, so no "
+                  "handshake was sent -- reading it directly. If a kernel "
+                  "driver (xpad) had it claimed as a live gamepad, that "
+                  "was briefly detached to do this read and is reattached "
+                  "immediately after; this does not mean the controller "
+                  "was already presenting the baseline identity before "
                   "this ran.")
             print()
         elif native is None:
-            print("No device found in XInput mode either.")
+            print("No device found presenting the keyboard/mouse interface "
+                  "either.")
             print()
 
     if not reports:
@@ -970,14 +985,14 @@ def main() -> None:
     # Everything below touches the device, directly or via _dispatch() (which
     # can also load/validate a state JSON file or parse a raw hex payload) --
     # one try/except covers all of it. Previously this only wrapped the
-    # VendorSession block, so a USBError from enter_vendor_mode() (called
+    # VendorSession block, so a USBError from switch_to_xid() (called
     # just below, and again as the auto-handshake fallback) surfaced as a
     # raw libusb traceback instead of _explain_usb_error()'s message -- on
     # the single most likely first-run failure (device busy/permission
     # denied) for a new user of this tool.
     try:
         if args.action == "enter-vendor":
-            enter_vendor_mode(min_interval=_min_interval(args))
+            switch_to_xid(min_interval=_min_interval(args))
             return
 
         if args.action == "diag":
