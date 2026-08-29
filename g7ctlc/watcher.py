@@ -105,11 +105,26 @@ class DeviceWatcher(QObject):
     def pause(self) -> None:
         """Thread-safe: call from the GUI thread. Releases the session and
         stops auto-reconnecting until resume() is called. Dropping the
-        heartbeat is what lets the controller leave config mode and go back
-        to being a gamepad -- on the dongle as much as on the cable, since
-        the dongle only bridges the same session through. The visible
-        difference is USB-side: wired, the device re-enumerates from 109b
-        back to 100a; over the dongle the PID never changes."""
+        heartbeat is what lets the controller leave its claimed session and
+        go back to being a plain gamepad -- on the dongle as much as on the
+        cable, since the dongle only bridges the same session through.
+
+        Whether a re-enumeration rides along with that release follows the
+        same rule as everywhere else in this project: interface presence
+        tracks current bind content, and a re-enumeration only fires when
+        reality needs to change to match it. A session that started at
+        PID_HID (100a) and still needs HID on release re-enumerates back to
+        it; one that never needed HID doesn't move.
+
+        Corrected 2026-08-29 -- this docstring used to claim "over the
+        dongle the PID never changes" on release. Wrong: switch_to_xid()'s
+        own docstring already documents an idle dongle sitting at 100a and
+        re-enumerating to 109c on handshake, so the same round trip should
+        mirror coming back out. The wired direction of that round trip is
+        directly confirmed; the dongle side is inferred from the same rule,
+        not independently tested (hardware currently unavailable) -- see
+        PROTOCOL.md's "Wireless dongle" row and FINDINGS.md's still-open
+        list."""
         self._paused = True
 
     def resume(self) -> None:

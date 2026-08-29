@@ -198,10 +198,10 @@ regardless of which PID is involved -- that claim/release plumbing is
 unconditional; only the re-enumeration is conditional, on whether the
 identity you're already at matches the bind content you currently have.
 
-**What's still not established is *why* config mode requires shedding
-the HID interface at all**, rather than running the config protocol
-concurrently with it present. Leading hypothesis, not confirmed:
-entering config mode needs to renegotiate the HID report-descriptor/
+**What's still not established is *why* opening a session requires
+shedding the HID interface at all**, rather than running the config
+protocol concurrently with it present. Leading hypothesis, not
+confirmed: doing so needs to renegotiate the HID report-descriptor/
 keycode mapping to match the controller's present configuration, and a
 USB composite device can't add or remove an interface from a live
 configuration without tearing down and re-presenting the whole thing --

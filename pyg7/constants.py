@@ -47,6 +47,20 @@ PID_DONGLE = 0x109c   # 2.4GHz wireless dongle counterpart to PID_XID, same
                       # dongle's own USB identity staying fixed regardless. No
                       # PID_DONGLE_HID has been added on this basis -- flagged as
                       # an open hypothesis, not assumed.
+                      #
+                      # FLAGGED TENSION, not resolved (found 2026-08-29 during a
+                      # post-rename read-through): read literally, this
+                      # hypothesis says the dongle's own USB PID never changes --
+                      # but the paragraph above documents a confirmed, hardware-
+                      # observed exception to that: an idle dongle enumerates as
+                      # PID_HID (100a), only landing here (109c) once handshaked.
+                      # Left for the owner to reconcile with real hardware, not
+                      # assumed either way here -- possibly what's meant is
+                      # narrower than "fixed identity" reads (e.g. idling at
+                      # PID_HID could itself already be the RF-side bind-content
+                      # trigger surfacing on the USB side, the same root cause
+                      # the wired investigation found, rather than evidence
+                      # against this hypothesis).
 PID_XID_TRIMODE = 0x1003   # baseline (no-HID-interface) identity on at least
                       # one other G7 Pro variant -- reported 2026-08-19 from a
                       # community bug report, not this project's own hardware. Same
