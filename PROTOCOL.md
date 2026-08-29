@@ -111,16 +111,20 @@ passive sysfs polling):
 
 Re-verified live, 2026-08-29, cycling four profile combos deliberately
 spaced ~4s apart: every landing PID matched which profile's bind content
-needed the HID interface, six for six, no exceptions. **Also observed the
-same night: this coupling can apparently come uncoupled under heavy
-churn** -- after enough rapid re-enumeration activity (dozens of real
-transitions in one session), profile switches stopped producing any
-re-enumeration at all, confirmed via the controller's own profile-change
-LED still firing normally and via reading the actual bindings with
-`g7ctlc` -- the profile genuinely changed, the PID just didn't follow. Not
-explained; recorded as a real, reproducible-enough observation, not
-resolved. A longer cooldown than this project has tried may be what
-clears it; a physical reset button press was tried and did not.
+needed the HID interface, six for six, no exceptions.
+
+**A later stretch of the same session looked like this coupling had come
+uncoupled under heavy churn -- it hadn't.** Profile switches stopped
+producing any re-enumeration, confirmed via the controller's own
+profile-change LED still firing normally and via reading the actual
+bindings with `g7ctlc` -- the profile genuinely changed, the PID didn't.
+Resolved, not a mystery: whichever profiles were being cycled at that
+point in the session all shared the same bind composition (either all
+had a keyboard/mouse remap, or all were native) -- switching among
+profiles that don't differ on the one axis that matters produces no
+re-enumeration, exactly as the confirmed model predicts. Not a separate
+phenomenon; the same rule, just observed in a case where every profile
+in the cycle happened to agree.
 
 Consequences worth knowing, unchanged by the correction:
 
