@@ -66,24 +66,24 @@ class BatteryStatus(NamedTuple):
 
 
 # Warmup pacing for a freshly-claimed session -- see VendorSession.settle().
-# 12 x 0.25s (~3s) is what empirically cleared the errno-19 disconnect on a
-# just-re-enumerated device; the GUI's older 5-beat value was enough for its
-# own slower connect path but not for a CLI invocation that reads immediately.
-SETTLE_HEARTBEATS = 12
+#
+# One universal value since the 2026-08-29 detection redesign -- this used
+# to be two separate constants (a wired default and a doubled "_DONGLE"
+# relaxation, raised 2026-07-30 for the extra RF hop through the dongle:
+# controller -> RF -> dongle -> USB). Picking between them required already
+# knowing via_dongle, which real firmware evidence (jieli-re's extracted
+# corpus) confirmed is not reliably detectable at all -- a wired baseline
+# and its dongle counterpart share an identical descriptor shape, only the
+# PID differs. So rather than guess (and risk the wrong guess: a genuinely
+# slow dongle hop timing out against the tighter wired value), this always
+# uses the more patient number. The cost of that for a wired connection is
+# a few extra seconds of settle time, once, at connect -- read_chunk()'s
+# timeout is a ceiling, not a mandatory wait, so it costs nothing there
+# unless something's actually wrong. Still a judgment call, not a measured
+# minimum; cheap to relax further later if this still isn't enough.
+SETTLE_HEARTBEATS = 24
 SETTLE_INTERVAL = 0.25
-
-# Wireless dongle relaxation -- raised 2026-07-30 from real daily use: the
-# link through the dongle (controller -> RF -> dongle -> USB) is an extra
-# hop the wired path doesn't have, and the first read_chunk() right after
-# connecting is the one most often seen timing out over the dongle
-# specifically. Doubling both the settle warmup and the default read
-# timeout is a judgment call, not a measured minimum -- there's no hard
-# data pinning the exact number needed, just that the wired defaults were
-# observed to be occasionally too tight for the dongle. Cheap to relax
-# further later if this still isn't enough.
-SETTLE_HEARTBEATS_DONGLE = 24
-READ_CHUNK_TIMEOUT = 2.0
-READ_CHUNK_TIMEOUT_DONGLE = 4.0
+READ_CHUNK_TIMEOUT = 4.0
 
 
 # The Shift layer's category. ONE byte, for the whole device -- the Shift
@@ -234,14 +234,13 @@ class VendorSession:
         lives here now so warmup is a property of the session, not of one
         consumer that happened to get bitten first.
 
-        `count` defaults to `SETTLE_HEARTBEATS_DONGLE` over the dongle and
-        `SETTLE_HEARTBEATS` wired -- the extra RF hop the dongle adds was
-        observed (real daily use, 2026-07-30) to make the first read after
-        connecting time out more often than wired. Pass an explicit `count`
-        to override either way.
+        `count` defaults to `SETTLE_HEARTBEATS` regardless of connection
+        type (see that constant's own comment for why this stopped
+        branching on `via_dongle` in the 2026-08-29 detection redesign).
+        Pass an explicit `count` to override.
         """
         if count is None:
-            count = SETTLE_HEARTBEATS_DONGLE if self.via_dongle else SETTLE_HEARTBEATS
+            count = SETTLE_HEARTBEATS
         for _ in range(count):
             self.heartbeat()
             time.sleep(interval)
@@ -307,12 +306,12 @@ class VendorSession:
         discarding anything else (telemetry frames, or a stale response to
         an earlier request).
 
-        `timeout` defaults to `READ_CHUNK_TIMEOUT_DONGLE` over the dongle
-        and `READ_CHUNK_TIMEOUT` wired -- same reasoning as `settle()`'s
-        dongle-aware default. Pass an explicit value to override either way.
+        `timeout` defaults to `READ_CHUNK_TIMEOUT` regardless of connection
+        type (see that constant's own comment for why this stopped
+        branching on `via_dongle`). Pass an explicit value to override.
         """
         if timeout is None:
-            timeout = READ_CHUNK_TIMEOUT_DONGLE if self.via_dongle else READ_CHUNK_TIMEOUT
+            timeout = READ_CHUNK_TIMEOUT
         if not 0 <= offset <= 0xFFFF:
             raise ValueError("offset must fit in 16 bits")
         req_payload = bytes([READ_SUBCOMMAND, category, (offset >> 8) & 0xFF, offset & 0xFF, length])
@@ -350,7 +349,7 @@ class VendorSession:
         Raises TimeoutError if no input frame arrives in `timeout`.
         """
         if timeout is None:
-            timeout = READ_CHUNK_TIMEOUT_DONGLE if self.via_dongle else READ_CHUNK_TIMEOUT
+            timeout = READ_CHUNK_TIMEOUT
         deadline = time.time() + timeout
         while True:
             remaining = deadline - time.time()
@@ -407,7 +406,7 @@ class VendorSession:
         info".
         """
         if timeout is None:
-            timeout = READ_CHUNK_TIMEOUT_DONGLE if self.via_dongle else READ_CHUNK_TIMEOUT
+            timeout = READ_CHUNK_TIMEOUT
         self.send_raw(CMD_DEVICE_INFO, bytes([selector]))
         deadline = time.time() + timeout
         while True:
@@ -502,10 +501,16 @@ class VendorSession:
         actually on the other end -- only a real CMD_READ does, since it
         requires an actual response.
 
-        Wired mode doesn't need this: PID_XID is the controller's own USB
-        descriptor, so its mere presence already proves the controller itself
-        is there. Callers should only bother calling this when
-        `self.via_dongle` is true.
+        Wired mode doesn't strictly need this -- PID_XID is the controller's
+        own USB descriptor, so its mere presence already proves the
+        controller itself is there -- but callers now run it unconditionally
+        regardless of connection type (2026-08-29 detection redesign:
+        `via_dongle` isn't reliably knowable for an unrecognized variant, and
+        the cost of running this against a genuinely-wired connection is
+        just one harmless extra read, bounded by the same timeout already
+        paid elsewhere). Not a behavior change for wired beyond that one
+        extra round trip -- a real connection still answers it the same way
+        any other read succeeds.
 
         Returns True if a minimal read succeeds, False on timeout (no
         controller answering -- could be powered off, unpaired, or possibly

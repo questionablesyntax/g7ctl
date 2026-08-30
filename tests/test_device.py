@@ -1,45 +1,288 @@
 """device.py tests: finding the controller and identifying its current USB
-identity. No real USB access -- pyg7.device.find_device() is
-monkeypatched, so these only exercise the pure decision logic (which PID to
-look for, which message to log), not the actual libusb calls.
+identity. No real USB access -- usb.core.find() is monkeypatched (as of the
+2026-08-29 detection redesign, every finder scans VID-matching devices and
+classifies them structurally, rather than looking up known PIDs one at a
+time), so these only exercise the pure decision logic (which device gets
+picked, which message to log), not the actual libusb calls.
 """
+import itertools
 import unittest
 from unittest import mock
 
 from pyg7 import constants, device
 
 
+class _FakeIntf:
+    def __init__(self, number, klass):
+        self.bInterfaceNumber = number
+        self.bInterfaceClass = klass
+
+
+class _FakeDev:
+    """Minimal stand-in exposing what has_hid_interface()/
+    _has_vendor_interface() read, plus the handful of calls
+    switch_to_xid()'s claim/write/release flow makes on whichever device it
+    finds pre-handshake (kernel-driver detach/reattach, the handshake
+    writes themselves) -- claim_interface()/release_interface() are
+    usb.util module functions, mocked separately, not device methods.
+
+    `interfaces=None` models a device whose descriptors can't be read at all
+    (mid-re-enumeration, or unplugged between the find and the query).
+    """
+    def __init__(self, pid, interfaces, product=""):
+        self.idProduct = pid
+        self.product = product
+        self.bus = 3
+        self.address = 88
+        self._interfaces = interfaces
+
+    def get_active_configuration(self):
+        if self._interfaces is None:
+            raise OSError("descriptors unavailable")
+        return self._interfaces
+
+    def is_kernel_driver_active(self, iface):
+        return False
+
+    def detach_kernel_driver(self, iface):
+        pass
+
+    def attach_kernel_driver(self, iface):
+        pass
+
+    def write(self, endpoint, data):
+        return len(data)
+
+
+def _hid_shaped(pid):
+    """Interface 1 is the HID keyboard+mouse composite -- a working gamepad.
+    Interface 0 stays vendor-class, same as every usable identity."""
+    return _FakeDev(pid, [_FakeIntf(0, 0xFF), _FakeIntf(1, 0x03)],
+                    "Xbox 360 Controller for Windows")
+
+
+def _xid_shaped(pid):
+    """Interface 1 is not HID -- vendor class, or the isochronous audio
+    pair. Interface 0 stays vendor-class."""
+    return _FakeDev(pid, [_FakeIntf(0, 0xFF), _FakeIntf(1, 0xFF)], "GameSir-G7 Pro")
+
+
+def _native_shaped(pid):
+    """Two plain HID-class interfaces, no vendor-specific class-255
+    interface anywhere -- the native/GIP identity's real shape (see
+    PROTOCOL.md "Device identities"). Interface 1 being HID here, same as
+    _hid_shaped(), is exactly why has_hid_interface() alone can't tell this
+    apart from a real PID_HID device -- only the absence of any
+    vendor-class interface does."""
+    return _FakeDev(pid, [_FakeIntf(0, 0x03), _FakeIntf(1, 0x03)], "GameSir-G7 Pro")
+
+
+def _patched(*devices):
+    """Patch usb.core.find() to return exactly this fixed list of fake
+    devices, regardless of the kwargs it's called with -- every finder in
+    device.py calls it the same way (find_all=True, idVendor=VID) since the
+    2026-08-29 redesign, so there's only one call shape to model."""
+    return mock.patch("usb.core.find", return_value=list(devices))
+
+
 class FindNativeIdentityTest(unittest.TestCase):
-    def test_delegates_to_find_device_with_the_right_pid(self):
-        with mock.patch.object(device, "find_device") as mocked:
-            mocked.return_value = "sentinel"
-            result = device.find_native_identity()
-        mocked.assert_called_once_with(constants.PID_NATIVE)
-        self.assertEqual(result, "sentinel")
+    """Redesigned 2026-08-29: structural (no vendor-class interface
+    anywhere), not a hardcoded PID match. See find_native_identity()'s own
+    docstring for why: PID_NATIVE is confirmed stable across the two
+    variants checked so far (this project's own hardware and a G7 Pro ZZZ
+    edition, independently), but that's not the same as guaranteed stable
+    for a variant this project hasn't seen yet."""
+
+    def test_finds_a_device_with_no_vendor_interface(self):
+        target = _native_shaped(constants.PID_NATIVE)
+        with _patched(target):
+            self.assertIs(device.find_native_identity(), target)
+
+    def test_skips_a_device_that_has_a_vendor_interface(self):
+        with _patched(_xid_shaped(constants.PID_XID)):
+            self.assertIsNone(device.find_native_identity())
+
+    def test_returns_none_when_nothing_is_connected(self):
+        with _patched():
+            self.assertIsNone(device.find_native_identity())
+
+    def test_skips_a_device_whose_descriptors_cant_be_read_yet(self):
+        # _has_vendor_interface() returning None ("don't know") must never
+        # be misread as "definitely no vendor interface" -- that would
+        # misclassify a transiently-unreadable *usable* device as native.
+        unreadable = _FakeDev(constants.PID_HID, None)
+        with _patched(unreadable):
+            self.assertIsNone(device.find_native_identity())
+
+    def test_finds_a_genuinely_unknown_variant(self):
+        # The whole point of the redesign: a variant this project has
+        # never hardcoded a PID for still works.
+        target = _native_shaped(0x9999)
+        with _patched(target):
+            self.assertIs(device.find_native_identity(), target)
+
+
+class HasHidInterfaceTest(unittest.TestCase):
+    """Renamed 2026-08-29 from PersonalityTest -- this was never a
+    "personality" question (see has_hid_interface()'s own corrected
+    docstring in pyg7/device.py for the full account). The descriptor
+    check itself is real and unchanged: interface 1 shows HID class when
+    the keyboard/mouse interface is present, vendor class/isochronous
+    audio otherwise. What's retired is reading that as "XInput vs.
+    vendor/config" rather than "HID interface present or not".
+
+    Historical note this class used to open with, kept for the record:
+    the HID interface moved onto PID_XID's own PID on at least one real
+    firmware (v2.4.4), measured 2026-08-18 -- a freshly-plugged
+    controller at 3537:109b, iProduct "Xbox 360 Controller for Windows",
+    xpad bound and js0 live, streaming XInput report frames -- while
+    a PID_HID-only lookup found nothing at all. That's still a real,
+    confirmed case; it just isn't evidence of two "personalities" sharing
+    one PID, it's the same HID-interface-presence axis showing up under a
+    different PID than usual.
+    """
+
+    def test_hid_interface_1_present(self):
+        self.assertTrue(device.has_hid_interface(_hid_shaped(constants.PID_XID)))
+
+    def test_non_hid_interface_1_absent(self):
+        self.assertFalse(device.has_hid_interface(_xid_shaped(constants.PID_XID)))
+
+    def test_unreadable_descriptors_answer_false_not_true(self):
+        # "Don't know" must keep the module's previous behaviour rather than
+        # making a device invisible to find_writable_device().
+        self.assertFalse(device.has_hid_interface(_FakeDev(constants.PID_XID, None)))
+
+
+class FindWritableDeviceTest(unittest.TestCase):
+    def test_refuses_a_gamepad_sitting_at_the_baseline_pid(self):
+        """The bug. Claiming this detached xpad, took the controller away
+        mid-use, and left a heartbeat loop on an endpoint that answers
+        nothing -- which looks exactly like a wedge."""
+        with _patched(_hid_shaped(constants.PID_XID)):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIsNone(dev)
+        self.assertFalse(via_dongle)
+
+    def test_still_finds_a_genuine_baseline_device(self):
+        target = _xid_shaped(constants.PID_XID)
+        with _patched(target):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIs(dev, target)
+        self.assertFalse(via_dongle)
+
+    def test_still_finds_the_dongle(self):
+        target = _xid_shaped(constants.PID_DONGLE)
+        with _patched(target):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIs(dev, target)
+        self.assertTrue(via_dongle)
+
+    def test_a_gamepad_at_the_baseline_pid_does_not_mask_the_dongle(self):
+        # Order matters: scanning must continue past a rejected candidate
+        # (one presenting the HID interface at what would otherwise read
+        # as baseline) rather than stopping at the first VID match.
+        rejected = _hid_shaped(constants.PID_XID)
+        dongle = _xid_shaped(constants.PID_DONGLE)
+        with _patched(rejected, dongle):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIs(dev, dongle)
+        self.assertTrue(via_dongle)
+
+    def test_finds_a_genuine_baseline_device_at_the_other_variant_pid(self):
+        target = _xid_shaped(constants.PID_XID_TRIMODE)
+        with _patched(target):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIs(dev, target)
+        self.assertFalse(via_dongle)
+
+    def test_finds_the_other_variant_dongle(self):
+        target = _xid_shaped(constants.PID_DONGLE_TRIMODE)
+        with _patched(target):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIs(dev, target)
+        self.assertTrue(via_dongle)
+
+    def test_finds_a_genuine_baseline_device_at_the_zzz_edition_pid(self):
+        # Regression target: xpad binding to interface 0 and Steam showing a
+        # working pad is not evidence this PID presents the HID interface --
+        # it happens regardless of which identity is present. Only
+        # interface 1's descriptor shape (checked by has_hid_interface())
+        # tells the two apart, and this one reads as baseline (no HID).
+        target = _xid_shaped(constants.PID_XID_ZZZ)
+        with _patched(target):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIs(dev, target)
+        self.assertFalse(via_dongle)
+
+    def test_excludes_the_native_identity(self):
+        # The native identity has no vendor-class interface at all, so it
+        # must never be mistaken for a writable baseline device -- even
+        # though has_hid_interface() alone reads its interface 1 as "not
+        # HID" too (both interfaces are plain HID there, see
+        # _native_shaped()'s own docstring).
+        with _patched(_native_shaped(constants.PID_NATIVE)):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIsNone(dev)
+        self.assertFalse(via_dongle)
+
+    def test_finds_a_genuinely_unknown_variant_pid(self):
+        # The whole point of the redesign: a variant this project has
+        # never hardcoded a PID for still works, and gets no confident
+        # dongle label (False, not a guess either way).
+        target = _xid_shaped(0x9999)
+        with _patched(target):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIs(dev, target)
+        self.assertFalse(via_dongle)
+
+
+class FindHidDeviceTest(unittest.TestCase):
+    def test_finds_it_at_the_classic_pid(self):
+        target = _hid_shaped(constants.PID_HID)
+        with _patched(target):
+            self.assertIs(device.find_hid_device(), target)
+
+    def test_finds_it_at_the_baseline_pid_on_v244_firmware(self):
+        """Without this, switch_to_xid() reports "no device found" for a
+        controller that is plugged in and working."""
+        target = _hid_shaped(constants.PID_XID)
+        with _patched(target):
+            self.assertIs(device.find_hid_device(), target)
+
+    def test_does_not_mistake_a_baseline_device_for_one_needing_a_handshake(self):
+        with _patched(_xid_shaped(constants.PID_XID)):
+            self.assertIsNone(device.find_hid_device())
+
+    def test_does_not_mistake_the_native_identity_for_one_needing_a_handshake(self):
+        # The native/GIP identity's interface 1 is ALSO HID-class (see
+        # PROTOCOL.md "Device identities") -- has_hid_interface() alone
+        # can't tell it apart from a real PID_HID device. Regression target
+        # for the 2026-08-29 detection redesign: excluded via
+        # _has_vendor_interface(), not accidentally matched.
+        with _patched(_native_shaped(constants.PID_NATIVE)):
+            self.assertIsNone(device.find_hid_device())
+
+    def test_finds_a_genuinely_unknown_variant_pid(self):
+        target = _hid_shaped(0x9999)
+        with _patched(target):
+            self.assertIs(device.find_hid_device(), target)
 
 
 class SwitchToXidMissingDeviceTest(unittest.TestCase):
-    """switch_to_xid()'s early-return path when PID_HID isn't found --
-    covers only the message-selection branch. Everything past that point
-    (the handshake, waiting for re-enumeration) needs a real device and
-    isn't exercised here.
+    """switch_to_xid()'s early-return path when nothing HID-shaped is
+    found -- covers only the message-selection branch. Everything past
+    that point (the handshake, waiting for re-enumeration) needs a real
+    device and isn't exercised here.
     """
-
-    def _fake_find_device(self, native_present: bool):
-        def fake(pid):
-            if pid == constants.PID_HID:
-                return None
-            if pid == constants.PID_NATIVE:
-                return object() if native_present else None
-            return None
-        return fake
 
     def test_logs_the_native_identity_hint_when_present(self):
         # Regression target: a controller left in its native GameSir
         # identity (found 2026-07-30, held via Menu+Share) used to report
         # the same generic "no device found" as a genuinely unplugged
         # controller -- indistinguishable, and not actionable.
-        with mock.patch.object(device, "find_device", side_effect=self._fake_find_device(True)):
+        native = _native_shaped(constants.PID_NATIVE)
+        with _patched(native):
             with self.assertLogs(device.log, level="ERROR") as cm:
                 dev, via_dongle = device.switch_to_xid()
         self.assertIsNone(dev)
@@ -47,13 +290,13 @@ class SwitchToXidMissingDeviceTest(unittest.TestCase):
         self.assertTrue(any("Menu+Share" in msg for msg in cm.output))
 
     def test_logs_the_generic_message_when_native_identity_absent_too(self):
-        with mock.patch.object(device, "find_device", side_effect=self._fake_find_device(False)):
+        with _patched():
             with self.assertLogs(device.log, level="ERROR") as cm:
                 dev, via_dongle = device.switch_to_xid()
         self.assertIsNone(dev)
         self.assertFalse(via_dongle)
         self.assertFalse(any("Menu+Share" in msg for msg in cm.output))
-        self.assertTrue(any("No device found" in msg for msg in cm.output))
+        self.assertTrue(any("No G7 Pro device found" in msg for msg in cm.output))
 
 
 class SwitchToXidLandingIdentityTest(unittest.TestCase):
@@ -71,17 +314,20 @@ class SwitchToXidLandingIdentityTest(unittest.TestCase):
     """
 
     def _run(self, landing_pid, timeout_s=1.0):
-        hid_dev = mock.MagicMock(name="hid_dev")
-        landed_dev = mock.MagicMock(name="landed_dev")
+        hid_dev = _hid_shaped(constants.PID_HID)
+        landed_dev = _xid_shaped(landing_pid) if landing_pid is not None else None
 
-        def fake_find_device(pid):
-            if pid == constants.PID_HID:
-                return hid_dev
-            if pid == landing_pid:
-                return landed_dev
-            return None
+        if landed_dev is not None:
+            # First call (the pre-handshake find_hid_device()) sees the
+            # HID-shaped device; every call after (the post-handshake
+            # find_writable_device() polling loop) sees it landed --
+            # models the real re-enumeration the handshake write triggers.
+            find_effect = itertools.chain([[hid_dev]], itertools.repeat([landed_dev]))
+        else:
+            # No landing at all -- stays HID-shaped for the whole timeout.
+            find_effect = itertools.repeat([hid_dev])
 
-        with mock.patch.object(device, "find_device", side_effect=fake_find_device), \
+        with mock.patch("usb.core.find", side_effect=find_effect), \
              mock.patch("usb.util.claim_interface"), \
              mock.patch("usb.util.release_interface"), \
              mock.patch.object(device.time, "sleep"):
@@ -111,16 +357,14 @@ class SwitchToXidLandingIdentityTest(unittest.TestCase):
         # directly, see its own docstring). Must not print "None" or crash.
         with self.assertLogs(device.log, level="INFO") as logs:
             self._run(constants.PID_DONGLE)
-        landing_lines = [line for line in logs.output if "Now at PID_XID" in line]
+        landing_lines = [line for line in logs.output if "Now at a baseline" in line]
         self.assertEqual(len(landing_lines), 1)
         self.assertNotIn("None", landing_lines[0])
 
     def test_other_variant_landing_is_recognized_too(self):
         # Regression target: a reported-but-unconfirmed other-variant
         # baseline PID (see PID_XID_TRIMODE's comment) must not be a wait
-        # this function can never win -- it needs to be in the candidate
-        # list the post-handshake loop actually checks, same as
-        # PID_XID/PID_DONGLE.
+        # this function can never win.
         (dev, via_dongle), landed = self._run(constants.PID_XID_TRIMODE)
         self.assertIs(dev, landed)
         self.assertFalse(via_dongle)
@@ -132,6 +376,13 @@ class SwitchToXidLandingIdentityTest(unittest.TestCase):
 
     def test_zzz_edition_landing_is_recognized_too(self):
         (dev, via_dongle), landed = self._run(constants.PID_XID_ZZZ)
+        self.assertIs(dev, landed)
+        self.assertFalse(via_dongle)
+
+    def test_landing_on_a_genuinely_unknown_variant_pid_still_works(self):
+        # The whole point of the redesign: no hardcoded list needed for
+        # detection to recognize a brand-new variant's landing PID.
+        (dev, via_dongle), landed = self._run(0x9999)
         self.assertIs(dev, landed)
         self.assertFalse(via_dongle)
 
@@ -147,156 +398,3 @@ class SwitchToXidLandingIdentityTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class _FakeIntf:
-    def __init__(self, number, klass):
-        self.bInterfaceNumber = number
-        self.bInterfaceClass = klass
-
-
-class _FakeDev:
-    """Minimal stand-in exposing only what has_hid_interface() reads.
-
-    `interfaces=None` models a device whose descriptors can't be read at all
-    (mid-re-enumeration, or unplugged between the find and the query).
-    """
-    def __init__(self, pid, interfaces, product=""):
-        self.idProduct = pid
-        self.product = product
-        self.bus = 3
-        self.address = 88
-        self._interfaces = interfaces
-
-    def get_active_configuration(self):
-        if self._interfaces is None:
-            raise OSError("descriptors unavailable")
-        return self._interfaces
-
-
-def _hid_shaped(pid):
-    """Interface 1 is the HID keyboard+mouse composite -- a working gamepad."""
-    return _FakeDev(pid, [_FakeIntf(0, 0xFF), _FakeIntf(1, 0x03)],
-                    "Xbox 360 Controller for Windows")
-
-
-def _xid_shaped(pid):
-    """Interface 1 is not HID -- vendor class, or the isochronous audio pair."""
-    return _FakeDev(pid, [_FakeIntf(0, 0xFF), _FakeIntf(1, 0xFF)], "GameSir-G7 Pro")
-
-
-class HasHidInterfaceTest(unittest.TestCase):
-    """Renamed 2026-08-29 from PersonalityTest -- this was never a
-    "personality" question (see has_hid_interface()'s own corrected
-    docstring in pyg7/device.py for the full account). The descriptor
-    check itself is real and unchanged: interface 1 shows HID class when
-    the keyboard/mouse interface is present, vendor class/isochronous
-    audio otherwise. What's retired is reading that as "XInput vs.
-    vendor/config" rather than "HID interface present or not".
-
-    Historical note this class used to open with, kept for the record:
-    the HID interface moved onto PID_XID's own PID on at least one real
-    firmware (v2.4.4), measured 2026-08-18 -- a freshly-plugged
-    controller at 3537:109b, iProduct "Xbox 360 Controller for Windows",
-    xpad bound and js0 live, streaming XInput report frames -- while
-    find_device(PID_HID) found nothing at all. That's still a real,
-    confirmed case; it just isn't evidence of two "personalities" sharing
-    one PID, it's the same HID-interface-presence axis showing up under a
-    different PID than usual.
-    """
-
-    def test_hid_interface_1_present(self):
-        self.assertTrue(device.has_hid_interface(_hid_shaped(constants.PID_XID)))
-
-    def test_non_hid_interface_1_absent(self):
-        self.assertFalse(device.has_hid_interface(_xid_shaped(constants.PID_XID)))
-
-    def test_unreadable_descriptors_answer_false_not_true(self):
-        # "Don't know" must keep the module's previous behaviour rather than
-        # making a device invisible to find_writable_device().
-        self.assertFalse(device.has_hid_interface(_FakeDev(constants.PID_XID, None)))
-
-
-class FindWritableDeviceTest(unittest.TestCase):
-    def _patched(self, table):
-        return mock.patch.object(device, "find_device", side_effect=lambda pid: table.get(pid))
-
-    def test_refuses_a_gamepad_sitting_at_the_baseline_pid(self):
-        """The bug. Claiming this detached xpad, took the controller away
-        mid-use, and left a heartbeat loop on an endpoint that answers
-        nothing -- which looks exactly like a wedge."""
-        with self._patched({constants.PID_XID: _hid_shaped(constants.PID_XID)}):
-            dev, via_dongle = device.find_writable_device()
-        self.assertIsNone(dev)
-        self.assertFalse(via_dongle)
-
-    def test_still_finds_a_genuine_baseline_device(self):
-        target = _xid_shaped(constants.PID_XID)
-        with self._patched({constants.PID_XID: target}):
-            dev, via_dongle = device.find_writable_device()
-        self.assertIs(dev, target)
-        self.assertFalse(via_dongle)
-
-    def test_still_finds_the_dongle(self):
-        target = _xid_shaped(constants.PID_DONGLE)
-        with self._patched({constants.PID_DONGLE: target}):
-            dev, via_dongle = device.find_writable_device()
-        self.assertIs(dev, target)
-        self.assertTrue(via_dongle)
-
-    def test_a_gamepad_at_the_baseline_pid_does_not_mask_the_dongle(self):
-        # Order matters: the wired PID is checked first, and rejecting it
-        # must continue to the dongle rather than returning None.
-        dongle = _xid_shaped(constants.PID_DONGLE)
-        with self._patched({constants.PID_XID: _hid_shaped(constants.PID_XID),
-                            constants.PID_DONGLE: dongle}):
-            dev, via_dongle = device.find_writable_device()
-        self.assertIs(dev, dongle)
-        self.assertTrue(via_dongle)
-
-    def test_finds_a_genuine_baseline_device_at_the_other_variant_pid(self):
-        target = _xid_shaped(constants.PID_XID_TRIMODE)
-        with self._patched({constants.PID_XID_TRIMODE: target}):
-            dev, via_dongle = device.find_writable_device()
-        self.assertIs(dev, target)
-        self.assertFalse(via_dongle)
-
-    def test_finds_the_other_variant_dongle(self):
-        target = _xid_shaped(constants.PID_DONGLE_TRIMODE)
-        with self._patched({constants.PID_DONGLE_TRIMODE: target}):
-            dev, via_dongle = device.find_writable_device()
-        self.assertIs(dev, target)
-        self.assertTrue(via_dongle)
-
-    def test_finds_a_genuine_baseline_device_at_the_zzz_edition_pid(self):
-        # Regression target: xpad binding to interface 0 and Steam showing a
-        # working pad is not evidence this PID presents the HID interface --
-        # it happens regardless of which identity is present. Only
-        # interface 1's descriptor shape (checked by has_hid_interface())
-        # tells the two apart, and this one reads as baseline (no HID).
-        target = _xid_shaped(constants.PID_XID_ZZZ)
-        with self._patched({constants.PID_XID_ZZZ: target}):
-            dev, via_dongle = device.find_writable_device()
-        self.assertIs(dev, target)
-        self.assertFalse(via_dongle)
-
-
-class FindHidDeviceTest(unittest.TestCase):
-    def _patched(self, table):
-        return mock.patch.object(device, "find_device", side_effect=lambda pid: table.get(pid))
-
-    def test_finds_it_at_the_classic_pid(self):
-        target = _hid_shaped(constants.PID_HID)
-        with self._patched({constants.PID_HID: target}):
-            self.assertIs(device.find_hid_device(), target)
-
-    def test_finds_it_at_the_baseline_pid_on_v244_firmware(self):
-        """Without this, switch_to_xid() reports "no device found" for a
-        controller that is plugged in and working."""
-        target = _hid_shaped(constants.PID_XID)
-        with self._patched({constants.PID_XID: target}):
-            self.assertIs(device.find_hid_device(), target)
-
-    def test_does_not_mistake_a_baseline_device_for_one_needing_a_handshake(self):
-        with self._patched({constants.PID_XID: _xid_shaped(constants.PID_XID)}):
-            self.assertIsNone(device.find_hid_device())

@@ -226,7 +226,12 @@ class DongleNoControllerTest(unittest.TestCase):
     a physical controller is powered on/paired to it -- so
     find_writable_device() succeeding is not proof a controller answered.
     The CLI must catch this via probe_controller_live() and exit cleanly
-    instead of running the requested command against a dead link."""
+    instead of running the requested command against a dead link.
+
+    Redesigned 2026-08-29: this check now runs unconditionally, wired or
+    dongle alike -- real wired/dongle detection turned out not to be
+    possible at all (see find_writable_device()'s docstring), so the wired
+    path is exercised here too, not assumed exempt."""
 
     def setUp(self):
         self._orig_find = cli_main.find_writable_device
@@ -254,18 +259,19 @@ class DongleNoControllerTest(unittest.TestCase):
         self.assertIn("no controller answered", stderr.lower())
         self.assertNotIn("Traceback", stderr)
 
-    def test_wired_path_is_unaffected(self):
-        # via_dongle=False must never call probe_controller_live() at all --
-        # PID_XID is the controller's own USB descriptor, so its mere
-        # presence already proves it's there. _DeadControllerSession's
-        # probe_controller_live() always returns False, so if the CLI ever
-        # called it for a wired session, dispatch would never run and no
-        # write would land -- assert the opposite: dispatch actually ran.
+    def test_wired_path_is_checked_too(self):
+        # Redesigned 2026-08-29: probe_controller_live() now runs
+        # unconditionally rather than being gated on via_dongle (real
+        # wired/dongle detection isn't possible -- see
+        # find_writable_device()'s docstring), so a wired connection with a
+        # dead link must be caught exactly like a dongle one is, just with
+        # a medium-agnostic message instead of the dongle-specific one.
         cli_main.find_writable_device = lambda: (object(), False)
-        sys.argv = ["g7ctl", "remap", "a", "f12", "--interval", "0"]
-        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
-            cli_main.main()  # must return normally, not sys.exit(1)
-        _DeadControllerSessionCM.captured.only_payload()  # raises if nothing was sent
+        code, stderr = self._run(["remap", "a", "f12", "--interval", "0"])
+        self.assertEqual(code, 1)
+        self.assertIn("no controller answered", stderr.lower())
+        self.assertNotIn("Dongle detected", stderr)
+        self.assertNotIn("Traceback", stderr)
 
 
 class DpadDockSetCommandTest(unittest.TestCase):

@@ -45,7 +45,49 @@ adheres to [semantic versioning](https://semver.org/).
   CLI did, which could miss a controller needing a handshake on
   variant/firmware combinations already seen in the wild (Tri-mode, ZZZ).
 
-### Added
+- **Detection stopped depending on already knowing a variant's PID.**
+  `find_hid_device()`/`find_writable_device()`/`find_native_identity()`
+  used to check a hardcoded list of known PIDs (`XID_PID_CANDIDATES`,
+  `PID_HID`, `PID_NATIVE`); a brand-new variant's PID had to be
+  community-reported and added to that list before this project could
+  even see the controller, the exact bar the previous entry's own
+  `diag` subcommand was built to lower. Every finder now scans any
+  `0x3537` (GameSir's own USB vendor ID) device and classifies it
+  structurally instead:
+  - Needs a handshake, or already config-ready: `has_hid_interface()`'s
+    existing interface-1 descriptor-class check (unchanged) -- now run
+    against every VID match rather than a fixed PID list.
+  - Stuck in the native/GIP identity, unusable by this tool: a new
+    structural check (`_has_vendor_interface()`) rather than a bare
+    `PID == PID_NATIVE` match -- the real signature every usable identity
+    has and the native one lacks entirely ("two plain HID-class
+    interfaces, no vendor-specific class at all", per `PROTOCOL.md`
+    "Device identities"), so a future variant's native identity is
+    recognized even if it doesn't land on the same PID number a past one
+    did.
+
+  `XID_PID_CANDIDATES` survives only as a cosmetic dongle-vs-wired label
+  for log messages now, not a functional lookup -- and speaking of which:
+
+- **BREAKING (pyg7 API): `VendorSession` stopped trying to detect wired
+  vs. dongle for timeouts.** Confirmed via real firmware extraction
+  (`jieli-re`'s corpus of GameSir's own compiled firmware images, not
+  guessed) that a wired baseline identity and its dongle counterpart
+  share an identical USB descriptor shape end to end -- the PID is the
+  only thing that differs, and GameSir's own firmware doesn't create a
+  structural signal to tell them apart. `SETTLE_HEARTBEATS_DONGLE` and
+  `READ_CHUNK_TIMEOUT_DONGLE` are gone -- `SETTLE_HEARTBEATS` and
+  `READ_CHUNK_TIMEOUT` now always use the more patient value regardless
+  of connection type, and `probe_controller_live()` (the dongle
+  liveness check) now runs unconditionally rather than being gated on
+  `via_dongle`. Cost of always erring patient: a few extra seconds of
+  settle warmup for a wired connection, once, at connect -- the
+  alternative (guessing wired and being wrong) risked a real, confusing
+  timeout failure instead. `via_dongle` still exists on `VendorSession`
+  and in `find_writable_device()`'s/`switch_to_xid()`'s return value,
+  but it's cosmetic-only now (display/logging), not authoritative.
+
+
 
 - **Entering vendor mode now names the connected G7 Pro variant, when it's
   one this project has a confirmed report on.** `pyg7.constants.identify_variant()`

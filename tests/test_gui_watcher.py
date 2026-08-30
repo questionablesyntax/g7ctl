@@ -1,11 +1,14 @@
-"""DeviceWatcher._establish() tests: the dongle-vs-wired liveness gate.
+"""DeviceWatcher._establish() tests: the liveness gate.
 
 Raised 2026-07-30 from real daily use: the 2.4GHz dongle enumerates on USB
 (and claims, and heartbeats fine) whether or not a physical controller is
 actually powered on and paired to it -- they're two separate things joined
 by an RF link. Before this fix, DeviceWatcher reported "connected" the
 instant the dongle was found, regardless, and every subsequent read/write
-just failed silently against a live-looking but dead connection.
+just failed silently against a live-looking but dead connection. Runs
+unconditionally as of the 2026-08-29 detection redesign -- wired and dongle
+alike, since real wired/dongle detection turned out not to be possible at
+all (see pyg7/device.py's find_writable_device() docstring).
 
 _connect() (real USB discovery) is monkeypatched to return a fake
 session-like object -- these tests are about what _establish() does with
@@ -32,11 +35,13 @@ class _FakeSession:
         self._live = live
         self.settled = False
         self.torn_down = False
+        self.probed = False
 
     def settle(self) -> None:
         self.settled = True
 
     def probe_controller_live(self) -> bool:
+        self.probed = True
         return self._live
 
     def __exit__(self, *exc) -> bool:
@@ -58,18 +63,22 @@ class EstablishSessionTest(unittest.TestCase):
         watcher._connect = lambda: connect_result
         return watcher
 
-    def test_wired_session_settles_and_becomes_connected_with_no_probe(self):
-        # Wired mode must never even ask for a liveness probe -- PID_XID
-        # is the controller's own USB descriptor, so its presence already
-        # proves it's there. _FakeSession's probe_controller_live() isn't
-        # called at all here (via_dongle=False short-circuits it), so an
-        # accidental call would only surface if the return value were
-        # inspected -- test the actual observable instead: session survives.
+    def test_wired_session_is_probed_too_and_becomes_connected(self):
+        # Redesigned 2026-08-29: the liveness probe now runs
+        # unconditionally, wired or dongle alike -- real wired/dongle
+        # detection turned out not to be possible at all (confirmed via
+        # jieli-re's extracted-firmware corpus: a wired baseline and its
+        # dongle counterpart share an identical descriptor shape). This
+        # test used to assert the opposite (wired must skip the probe
+        # entirely) -- a healthy wired connection just passes it the same
+        # way any other read succeeds, at the cost of one harmless extra
+        # round trip.
         session = _FakeSession(via_dongle=False)
         watcher = self._watcher(session)
         result = watcher._establish()
         self.assertIs(result, session)
         self.assertTrue(session.settled)
+        self.assertTrue(session.probed)
         self.assertFalse(session.torn_down)
         self.assertEqual(watcher._state, "connected")
 

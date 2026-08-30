@@ -375,7 +375,7 @@ class DeviceWatcher(QObject):
         # it turned out the CLI needed the exact same protection.
         session.settle()
 
-        if session.via_dongle and not session.probe_controller_live():
+        if not session.probe_controller_live():
             # Raised 2026-07-30 from real daily use: the dongle enumerates
             # on USB (and claims, and heartbeats fine) whether or not a
             # physical controller is actually powered on and paired to it --
@@ -384,7 +384,11 @@ class DeviceWatcher(QObject):
             # every subsequent read/write just failed. Tear down and keep
             # polling -- this recovers on its own once a controller answers,
             # no different from any other disconnected-and-waiting state.
-            # See VendorSession.probe_controller_live() for what this can't
+            # Runs unconditionally now (2026-08-29 detection redesign)
+            # rather than gated on session.via_dongle -- that flag is
+            # cosmetic-only as of this redesign, and the cost against a
+            # genuinely-wired connection is one harmless extra read. See
+            # VendorSession.probe_controller_live() for what this can't
             # tell apart (powered off vs. unpaired vs. possibly switched to
             # its native GameSir identity mid-session).
             self._teardown(session)

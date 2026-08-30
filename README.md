@@ -102,8 +102,13 @@ holds the device only for the duration of a command. See
 [PROTOCOL.md](PROTOCOL.md) "Device identities" for the details.
 
 Expect the wireless controller to be a little slower to respond than the wired
-one, handover included — the extra RF hop is why the session runs relaxed
-timeouts over the dongle.
+one, handover included — the extra RF hop is why every session (wired
+included, as of a 2026-08-29 redesign) runs generously relaxed timeouts,
+rather than trying to detect which one it's dealing with and picking
+tighter values for wired. That turned out not to be reliably possible in
+the first place: a wired baseline identity and its dongle counterpart
+share an identical USB descriptor shape, confirmed straight from GameSir's
+own compiled firmware.
 
 ## Usage
 

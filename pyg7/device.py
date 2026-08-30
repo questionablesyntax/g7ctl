@@ -18,6 +18,23 @@ anyone grepping history: `PID_XINPUT` -> `PID_HID`, `PID_VENDOR` ->
 `find_xinput_device()` -> `find_hid_device()`, `enter_vendor_mode()` ->
 `switch_to_xid()`.
 
+**Detection redesign, 2026-08-29 (same day, later): classification stopped
+depending on already knowing a variant's PID.** Every finder in this
+module now scans any `VID`-matching device and classifies it structurally
+-- `has_hid_interface()`'s existing interface-1 class check, plus a new
+`_has_vendor_interface()` check (any interface class `0xFF`, the
+signature every usable identity has and the native/GIP identity lacks
+entirely). A brand-new variant this project has never seen a PID for
+works the moment it's plugged in; no PID needs adding anywhere for
+detection to work, only for `identify_variant()`'s cosmetic colourway
+name. `XID_PID_CANDIDATES` survives only as a cosmetic dongle-label
+lookup now -- see its own comment. Also dropped: `via_dongle` no longer
+picks a settle/timeout value or gates `probe_controller_live()` --
+confirmed via real firmware extraction (`jieli-re`'s corpus) that
+GameSir's own compiled descriptors give wired and dongle baselines the
+identical shape, so there was never a reliable signal to detect here in
+the first place. See `PROTOCOL.md` and `session.py` for the rest.
+
 Progress here goes through `logging`, not print(): this module is imported
 by the GUI as well as the CLI, and a bare print() from a background watcher
 thread lands on whatever terminal the app happened to be launched from --
@@ -78,13 +95,20 @@ SYSFS_USB_ROOT = "/sys/bus/usb/devices"
 # known to be safe."
 HANDSHAKE_MIN_INTERVAL = 5.0
 
-# Every PID the "gamesirapp" handshake is known (or reported) to land on,
-# paired with whether that PID means "via the dongle". Every entry past the
-# first two is additive only -- it does not change behavior for any PID
-# already in this list, it just gives find_writable_device()/
-# switch_to_xid() one more place to look. A single source of truth so a
-# future variant only needs adding here, not in every loop that checks "is
-# this a baseline (no-HID) identity".
+# Cosmetic-only now (2026-08-29 detection redesign) -- find_writable_device()/
+# switch_to_xid() no longer consult this to find anything; they scan by VID
+# and classify structurally instead (see module docstring). This survives
+# purely to label a *known* PID as "via the dongle" for display/logging,
+# e.g. main.py's "Using wireless dongle" message. Real detection of wired
+# vs. dongle was never possible here in the first place: confirmed via
+# jieli-re's extracted-firmware corpus (2026-08-29) that GameSir's own
+# compiled descriptors give a wired baseline and its dongle counterpart the
+# identical shape (device class 255, same layout) -- the PID is the only
+# difference, so an *unknown* PID has no way to earn a label here and
+# defaults to "not confidently a dongle" (see _cosmetic_is_dongle()), never
+# "wired" as a confirmed fact. Extend this list only to improve a log
+# message for a newly-confirmed variant; nothing functional depends on it
+# anymore.
 XID_PID_CANDIDATES = (
     (PID_XID, False),
     (PID_DONGLE, True),
@@ -176,13 +200,32 @@ def _pace_handshake(dev: usb.core.Device, min_interval: float) -> None:
 
 
 def find_native_identity() -> Optional[usb.core.Device]:
-    """The controller in its own "default GameSir identity" (`PID_NATIVE`)
-    -- not usable by this tool; see `PID_NATIVE`'s comment in constants.py.
+    """The controller in its own "default GameSir identity" -- not usable
+    by this tool; see `PID_NATIVE`'s comment in constants.py.
     A caller that can't find the device at any identity it *does* know how
     to talk to should check this before reporting a generic "no device
     found", so a user who's holding it in the wrong identity gets told how
-    to fix that (hold Menu+Share) instead of "plug it in"."""
-    return find_device(PID_NATIVE)
+    to fix that (hold Menu+Share) instead of "plug it in".
+
+    Renamed-in-spirit 2026-08-29: no longer `find_device(PID_NATIVE)`.
+    `PID_NATIVE` is a real, confirmed-stable value (checked twice now: our
+    own reference hardware and, independently, a G7 Pro ZZZ edition -- see
+    ROADMAP.md item 46's tail for a near-miss that almost assumed
+    otherwise), but matching on it directly still means every future
+    variant's native identity has to be independently confirmed to share
+    that same number before this function can recognize it. Checks the
+    structural signature instead -- no interface anywhere at
+    VENDOR_INTERFACE_CLASS, the one thing every usable identity has and
+    this one doesn't (see PROTOCOL.md "Device identities") -- so a variant
+    this project has never seen is recognized correctly the first time.
+    Skips (never matches) a device whose descriptors can't be read yet --
+    see _has_vendor_interface()'s own docstring for why that has to be
+    "don't know", not "must be native".
+    """
+    for dev in usb.core.find(find_all=True, idVendor=VID):
+        if _has_vendor_interface(dev) is False:
+            return dev
+    return None
 
 
 # Interface 1's descriptor shape is what varies between PID_HID and
@@ -190,6 +233,18 @@ def find_native_identity() -> Optional[usb.core.Device]:
 # this does and doesn't tell you now.
 HID_INTERFACE_CLASS = 0x03
 KEYBOARD_MOUSE_INTERFACE = 1
+
+# Every usable G7 Pro identity -- PID_HID, PID_XID, every per-variant
+# equivalent, both wired and dongle -- has at least one interface at this
+# class. The native/GIP identity (PID_NATIVE) is the one identity that
+# doesn't: "two plain HID-class interfaces, no vendor-specific class-255
+# interface at all" (see PROTOCOL.md "Device identities"). That absence,
+# not any specific PID, is what _has_vendor_interface() checks for --
+# added 2026-08-29 so find_native_identity() stops needing a hardcoded PID
+# that isn't actually guaranteed stable in meaning across every variant
+# (see ROADMAP.md item 46's tail for the near-miss that prompted double-
+# checking this rather than assuming it).
+VENDOR_INTERFACE_CLASS = 0xFF
 
 
 def _interface_classes(dev: usb.core.Device, number: int) -> list:
@@ -204,6 +259,38 @@ def _interface_classes(dev: usb.core.Device, number: int) -> list:
     except Exception:  # pragma: no cover - depends on live USB state
         return []
     return [i.bInterfaceClass for i in cfg if i.bInterfaceNumber == number]
+
+
+def _has_vendor_interface(dev: usb.core.Device) -> Optional[bool]:
+    """Does this device have *any* interface (any number, any alt setting)
+    at VENDOR_INTERFACE_CLASS?
+
+    Returns None when the descriptors can't be read -- a device that's
+    mid-re-enumeration, or gone. **Callers must treat None as "don't know",
+    never as a confirmed non-match** -- misreading "can't tell yet" as
+    "definitely lacks a vendor interface" would misclassify a transiently-
+    unreadable *usable* device as the native/unusable identity, exactly the
+    kind of false positive this structural check exists to avoid in the
+    first place.
+    """
+    try:
+        cfg = dev.get_active_configuration()
+    except Exception:  # pragma: no cover - depends on live USB state
+        return None
+    return any(i.bInterfaceClass == VENDOR_INTERFACE_CLASS for i in cfg)
+
+
+def _cosmetic_is_dongle(pid: int) -> bool:
+    """Best-effort, display-only "does this look like a dongle" label for
+    a *known* PID -- never gates behavior, and callers must not treat a
+    False here as "confirmed wired." See XID_PID_CANDIDATES's comment for
+    why real detection isn't possible: GameSir's own compiled firmware
+    gives a wired baseline and its dongle counterpart the identical
+    descriptor shape, confirmed 2026-08-29. Defaults to False for any PID
+    not on the known list, including every future/unrecognized variant --
+    that's "no confident label," not "confirmed wired."
+    """
+    return any(pid == candidate and via_dongle for candidate, via_dongle in XID_PID_CANDIDATES)
 
 
 def has_hid_interface(dev: usb.core.Device) -> bool:
@@ -277,55 +364,63 @@ def find_hid_device() -> Optional[usb.core.Device]:
     interface (see has_hid_interface()'s corrected docstring), at whichever
     PID this firmware puts it behind.
 
-    PID_HID first (the common case), then the PID_XID-family PIDs filtered
-    by has_hid_interface() (some firmware/variant combinations present the
-    HID interface at what's otherwise the baseline PID -- see PROTOCOL.md
-    "Device identities"). Returns None if no candidate PID is currently
-    presenting that interface.
+    Redesigned 2026-08-29: scans every VID-matching device rather than
+    checking PID_HID then a fixed PID_XID/PID_DONGLE fallback -- a brand-
+    new variant's PID is recognized the first time, no code change needed.
+    Guards with _has_vendor_interface() so the native/GIP identity, whose
+    interface 1 is *also* HID-class (see PROTOCOL.md "Device identities"
+    -- "two plain HID-class interfaces"), can never be mistaken for a
+    controller that needs a handshake: has_hid_interface() alone can't
+    tell those two apart, since it only looks at interface 1. Returns None
+    if nothing VID-matching currently presents that interface.
     """
-    dev = find_device(PID_HID)
-    if dev is not None:
-        return dev
-    for pid in (PID_XID, PID_DONGLE):
-        dev = find_device(pid)
-        if dev is not None and has_hid_interface(dev):
+    for dev in usb.core.find(find_all=True, idVendor=VID):
+        if _has_vendor_interface(dev) and has_hid_interface(dev):
             return dev
     return None
 
 
 def find_writable_device() -> tuple[Optional[usb.core.Device], bool]:
-    """Find a device *already* ready to accept 0x0f config writes -- the wired
-    controller at PID_XID or the dongle at PID_DONGLE. Returns
+    """Find a device *already* ready to accept 0x0f config writes -- any
+    baseline (no-HID) identity, wired or dongle. Returns
     (device, via_dongle) or (None, False).
 
     PID_XID was never a distinct "vendor mode" the controller gets switched
     into and falls back out of -- see the module docstring and PROTOCOL.md
     "Device identities" for the corrected model. What this function
-    actually finds is: whichever known PID currently lacks the extra HID
-    keyboard/mouse interface, which answers `0x0f` writes regardless of how
-    it got there -- because every PID answers them, always; there's no
-    separate identity to reach for config access at all. In practice this
-    is often "wherever the active profile's own trigger-bundle content
-    already put it" (see `has_hid_interface()` -- keyboard/mouse binds and
-    report rate both count), not evidence of a prior session -- a
-    controller can sit here indefinitely with nothing having "switched" it.
+    actually finds is: whichever VID-matching device currently lacks the
+    extra HID keyboard/mouse interface, which answers `0x0f` writes
+    regardless of how it got there -- because every such identity answers
+    them, always; there's no separate identity to reach for config access
+    at all. In practice this is often "wherever the active profile's own
+    trigger-bundle content already put it" (see `has_hid_interface()` --
+    keyboard/mouse binds and report rate both count), not evidence of a
+    prior session -- a controller can sit here indefinitely with nothing
+    having "switched" it.
 
-    **The PID alone is not enough to decide this.** On some firmware/
-    variant combinations the HID interface is presented at what's
-    otherwise the baseline PID instead (a working gamepad, `xpad` bound and
-    `js0` live, at `PID_XID`'s own PID). Matching on PID alone would claim
+    **The PID alone is not enough to decide this**, and neither is
+    `has_hid_interface()` alone. On some firmware/variant combinations the
+    HID interface is presented at what's otherwise the baseline PID
+    instead (a working gamepad, `xpad` bound and `js0` live, at what would
+    otherwise read as a baseline PID). Matching on PID alone would claim
     it, detach `xpad`, take the controller away mid-use, and hold a
     heartbeat loop on an interface that's actually busy being a gamepad,
-    which presents as a wedge without being one. See has_hid_interface()
-    for the interface-1 check this guards against that specifically.
+    which presents as a wedge without being one -- has_hid_interface()
+    guards against that. And has_hid_interface() alone would wrongly match
+    the *native/GIP* identity, whose interface 1 is also HID-class (see
+    find_hid_device()'s docstring) -- _has_vendor_interface() guards
+    against that: the native identity has no vendor-class interface at
+    all, so it's excluded before has_hid_interface() is even asked.
 
-    Checks every PID in XID_PID_CANDIDATES, not just PID_XID/PID_DONGLE --
-    see that constant's comment.
+    Redesigned 2026-08-29: scans every VID-matching device rather than a
+    fixed candidate list (`XID_PID_CANDIDATES`, kept only as a cosmetic
+    dongle label now -- see that constant's comment) -- a brand-new
+    variant's baseline PID is recognized the first time, no code change
+    needed.
     """
-    for pid, via_dongle in XID_PID_CANDIDATES:
-        dev = find_device(pid)
-        if dev is not None and not has_hid_interface(dev):
-            return dev, via_dongle
+    for dev in usb.core.find(find_all=True, idVendor=VID):
+        if _has_vendor_interface(dev) and not has_hid_interface(dev):
+            return dev, _cosmetic_is_dongle(dev.idProduct)
     return None, False
 
 
@@ -430,8 +525,10 @@ def switch_to_xid(timeout_s: float = 10.0,
     stay.
 
     Returns `(device, via_dongle)`, the same shape `find_writable_device()`
-    returns -- callers need the flag to pick the session's timeouts and to
-    decide whether the liveness probe applies.
+    returns. `via_dongle` is cosmetic-only as of the 2026-08-29 detection
+    redesign (display/logging, e.g. "Using wireless dongle") -- it no
+    longer picks a session timeout or gates the liveness probe; both of
+    those run the same way regardless now (see `session.py`).
 
     The wireless dongle re-enumerates too. Corrected 2026-08-01: this
     function used to wait for `PID_XID` alone, on the belief that the
@@ -466,7 +563,7 @@ def switch_to_xid(timeout_s: float = 10.0,
                 "into a stable state within %.1fs. Not a missing device: it's "
                 "still cycling. Try again once it stops.", SETTLE_MAX_WAIT)
         else:
-            log.error("No device found at %04x:%04x.", VID, PID_HID)
+            log.error("No G7 Pro device found (VID %04x).", VID)
         return None, False
 
     log.info("Found a stable PID_HID device (bus=%s addr=%s).", dev.bus, dev.address)
@@ -499,34 +596,32 @@ def switch_to_xid(timeout_s: float = 10.0,
             except Exception as e:
                 log.debug("attach_kernel_driver failed (likely already re-enumerating): %s", e)
 
-    log.info("Handshake sent, waiting for it to switch to PID_XID...")
+    log.info("Handshake sent, waiting for it to switch off PID_HID...")
     deadline = time.time() + timeout_s
     while time.time() < deadline:
-        # Checks every PID in XID_PID_CANDIDATES, not just PID_XID/
-        # PID_DONGLE -- see that constant's comment. Order doesn't encode
-        # priority; every candidate is an equally valid outcome of the same
-        # handshake, just on different hardware.
-        for pid, via_dongle in XID_PID_CANDIDATES:
-            vdev = find_device(pid)
-            # The interface-1 check is what makes this a wait at all on
-            # firmware/variants where the HID interface presents at what's
-            # otherwise the baseline PID: the device is at PID_XID both
-            # before and after the handshake, so matching on PID alone
-            # returns the *pre*-handshake device immediately and every read
-            # after it fails. Waiting for interface 1 to stop being HID
-            # waits for the thing that actually changes.
-            if vdev is not None and not has_hid_interface(vdev):
-                # Real answer to roadmap item 36's original question --
-                # which G7 Pro colourway is this -- via this PID itself,
-                # not a CMD=0x01 sweep. variant is None for a PID this
-                # project hasn't had a confirmed report on yet (e.g.
-                # Dragon's Dogma 2/WUCHANG); that's an honest "don't know
-                # yet", not a bug. See constants.identify_variant().
-                variant = identify_variant(pid)
-                suffix = f" -- {variant}" if variant else ""
-                log.info("Now at PID_XID (%04x:%04x, bus=%s addr=%s)%s.",
-                         VID, pid, vdev.bus, vdev.address, suffix)
-                return vdev, via_dongle
+        # Redesigned 2026-08-29: reuses find_writable_device() rather than
+        # looping XID_PID_CANDIDATES directly -- same VID-wide scan,
+        # structural classification, recognizes a brand-new variant's PID
+        # with no code change needed. The interface-1 check inside it is
+        # what makes this a wait at all on firmware/variants where the HID
+        # interface presents at what's otherwise the baseline PID: the
+        # device is at that PID both before and after the handshake, so
+        # matching on PID alone would return the *pre*-handshake device
+        # immediately and every read after it fails. Waiting for interface
+        # 1 to stop being HID waits for the thing that actually changes.
+        vdev, via_dongle = find_writable_device()
+        if vdev is not None:
+            # Real answer to roadmap item 36's original question -- which
+            # G7 Pro colourway is this -- via this PID itself, not a
+            # CMD=0x01 sweep. variant is None for a PID this project
+            # hasn't had a confirmed report on yet (e.g. Dragon's Dogma
+            # 2/WUCHANG); that's an honest "don't know yet", not a bug.
+            # See constants.identify_variant().
+            variant = identify_variant(vdev.idProduct)
+            suffix = f" -- {variant}" if variant else ""
+            log.info("Now at a baseline (no-HID) identity (%04x:%04x, bus=%s addr=%s)%s.",
+                     VID, vdev.idProduct, vdev.bus, vdev.address, suffix)
+            return vdev, via_dongle
         time.sleep(0.3)
-    log.error("Timed out waiting for the switch to PID_XID.")
+    log.error("Timed out waiting for the switch off PID_HID.")
     return None, False

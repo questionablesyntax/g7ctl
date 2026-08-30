@@ -9,9 +9,7 @@ import unittest
 
 from pyg7.session import (
     READ_CHUNK_TIMEOUT,
-    READ_CHUNK_TIMEOUT_DONGLE,
     SETTLE_HEARTBEATS,
-    SETTLE_HEARTBEATS_DONGLE,
     VendorSession,
 )
 
@@ -110,47 +108,45 @@ def _read_response_report(category: int, offset: int, length: int, data: bytes) 
     return bytes(pkt)
 
 
-class DongleAwareDefaultsTest(unittest.TestCase):
+class ConnectionAgnosticDefaultsTest(unittest.TestCase):
     """Raised 2026-07-30 from real daily use: the dongle's extra RF hop was
     seen making the first read after connecting time out more often than
-    wired. VendorSession now scales its settle warmup and read_chunk's
-    default timeout based on via_dongle -- these pin that it actually
-    changes the numbers used, not just that the constants exist."""
+    wired, so VendorSession used to scale its settle warmup and
+    read_chunk's default timeout based on via_dongle. Redesigned
+    2026-08-29: real wired/dongle detection turned out not to be possible
+    at all (GameSir's own compiled firmware gives both an identical
+    descriptor shape -- see pyg7/device.py's module docstring), so guessing
+    was retired in favor of always using the more patient values,
+    regardless of via_dongle. These pin that the default really is the
+    same either way now, not just that the constants exist."""
 
-    def test_settle_heartbeat_count_defaults_to_wired(self):
-        sess = VendorSession(_FakeDevice(), via_dongle=False)
-        sess.settle(interval=0)
+    def test_settle_heartbeat_count_same_regardless_of_via_dongle(self):
+        wired = VendorSession(_FakeDevice(), via_dongle=False)
+        wired.settle(interval=0)
+        dongle = VendorSession(_FakeDevice(), via_dongle=True)
+        dongle.settle(interval=0)
         # send_raw increments seq once per heartbeat -- count them via seq.
-        self.assertEqual(sess.seq, SETTLE_HEARTBEATS)
+        self.assertEqual(wired.seq, SETTLE_HEARTBEATS)
+        self.assertEqual(dongle.seq, SETTLE_HEARTBEATS)
 
-    def test_settle_heartbeat_count_relaxed_over_dongle(self):
-        sess = VendorSession(_FakeDevice(), via_dongle=True)
-        sess.settle(interval=0)
-        self.assertEqual(sess.seq, SETTLE_HEARTBEATS_DONGLE)
-        self.assertGreater(SETTLE_HEARTBEATS_DONGLE, SETTLE_HEARTBEATS)
-
-    def test_settle_explicit_count_overrides_dongle_default(self):
+    def test_settle_explicit_count_overrides_default(self):
         sess = VendorSession(_FakeDevice(), via_dongle=True)
         sess.settle(count=3, interval=0)
         self.assertEqual(sess.seq, 3)
 
-    def test_read_chunk_timeout_defaults_to_wired(self):
-        dev = _FakeReadDevice([_read_response_report(1, 0, 1, b"\x00")])
-        sess = VendorSession(dev, via_dongle=False)
-        sess.read_chunk(1, 0, 1)
-        # read_chunk passes timeout in milliseconds (derived from a
-        # deadline, so a slice of a millisecond of real elapsed time between
-        # setting it and computing `remaining` is expected slop, not a bug).
-        self.assertAlmostEqual(dev.read_timeouts[-1], int(READ_CHUNK_TIMEOUT * 1000), delta=5)
+    def test_read_chunk_timeout_same_regardless_of_via_dongle(self):
+        for via_dongle in (False, True):
+            with self.subTest(via_dongle=via_dongle):
+                dev = _FakeReadDevice([_read_response_report(1, 0, 1, b"\x00")])
+                sess = VendorSession(dev, via_dongle=via_dongle)
+                sess.read_chunk(1, 0, 1)
+                # read_chunk passes timeout in milliseconds (derived from a
+                # deadline, so a slice of a millisecond of real elapsed time
+                # between setting it and computing `remaining` is expected
+                # slop, not a bug).
+                self.assertAlmostEqual(dev.read_timeouts[-1], int(READ_CHUNK_TIMEOUT * 1000), delta=5)
 
-    def test_read_chunk_timeout_relaxed_over_dongle(self):
-        dev = _FakeReadDevice([_read_response_report(1, 0, 1, b"\x00")])
-        sess = VendorSession(dev, via_dongle=True)
-        sess.read_chunk(1, 0, 1)
-        self.assertAlmostEqual(dev.read_timeouts[-1], int(READ_CHUNK_TIMEOUT_DONGLE * 1000), delta=5)
-        self.assertGreater(READ_CHUNK_TIMEOUT_DONGLE, READ_CHUNK_TIMEOUT)
-
-    def test_read_chunk_explicit_timeout_overrides_dongle_default(self):
+    def test_read_chunk_explicit_timeout_overrides_default(self):
         dev = _FakeReadDevice([_read_response_report(1, 0, 1, b"\x00")])
         sess = VendorSession(dev, via_dongle=True)
         sess.read_chunk(1, 0, 1, timeout=0.5)

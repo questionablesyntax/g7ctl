@@ -60,7 +60,7 @@ import usb.util
 
 from pyg7 import buttons, dock_settings, dpad_options, motion, report_rate, sticks, triggers, vibration
 from pyg7 import state as state_mod
-from pyg7.constants import IFACE, PID_NATIVE, VID, identify_variant
+from pyg7.constants import IFACE, VID, identify_variant
 from pyg7.device import (
     HANDSHAKE_MIN_INTERVAL,
     find_hid_device,
@@ -607,13 +607,24 @@ def _connect_session(min_interval: float = HANDSHAKE_MIN_INTERVAL):
         # The dongle enumerates on USB (and claims, and heartbeats fine)
         # whether or not a physical controller is actually powered on and
         # paired to it -- they're two separate things joined by an RF
-        # link. Only a real read proves a controller answered; wired mode
-        # doesn't need this check, since PID_XID is the controller's
-        # own USB descriptor. See VendorSession.probe_controller_live().
-        if via_dongle and not sess.probe_controller_live():
-            print("Dongle detected, but no controller answered. Make sure "
-                  "it's powered on and paired (or hold Menu+Share on the "
-                  "controller if it may have switched identity).", file=sys.stderr)
+        # link. Only a real read proves a controller answered. Runs
+        # unconditionally now (2026-08-29 detection redesign) rather than
+        # gated on via_dongle -- that flag is cosmetic-only as of this
+        # redesign (real wired/dongle detection turned out not to be
+        # possible at all; see find_writable_device()'s docstring), and
+        # the cost of running this against a genuinely-wired connection is
+        # just one harmless extra read. See VendorSession.probe_controller_live().
+        if not sess.probe_controller_live():
+            if via_dongle:
+                print("Dongle detected, but no controller answered. Make sure "
+                      "it's powered on and paired (or hold Menu+Share on the "
+                      "controller if it may have switched identity).", file=sys.stderr)
+            else:
+                print("Claimed the interface, but no controller answered a read. "
+                      "If this is the wireless dongle, make sure the controller is "
+                      "powered on and paired; otherwise try reconnecting it (or "
+                      "hold Menu+Share if it may have switched identity).",
+                      file=sys.stderr)
             sys.exit(1)
         yield sess
 
@@ -871,7 +882,13 @@ def _handle_diag(min_interval: float) -> None:
 
     native = find_native_identity()
     if native is not None:
-        print(f"Found in its native GameSir identity (PID {PID_NATIVE:04x}) -- "
+        # native.idProduct, not a hardcoded constant -- find_native_identity()
+        # is a structural check now (2026-08-29 detection redesign), so the
+        # device it finds isn't guaranteed to be sitting at exactly this
+        # project's own PID_NATIVE value on every variant (confirmed stable
+        # across the two variants checked so far, but this report shouldn't
+        # assume that holds for one this project hasn't seen yet).
+        print(f"Found in its native GameSir identity (PID {native.idProduct:04x}) -- "
               "hold Menu+Share on the controller to switch to XInput mode, "
               "then run this again to capture more.")
         print()
