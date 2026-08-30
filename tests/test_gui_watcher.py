@@ -17,7 +17,9 @@ whatever _connect() hands it, not about USB discovery itself. Runs headless
 g7ctlc test modules.
 """
 import os
+import time
 import unittest
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -245,3 +247,80 @@ class BatteryPollTest(unittest.TestCase):
         w._poll_battery(sess)
         self.assertEqual(len(seen), 2)
         self.assertEqual(len(gone), 1)
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class RunLoopBackoffTest(unittest.TestCase):
+    """run()'s own backoff-skip logic -- untested until now (only
+    _establish() in isolation is covered above). Raised 2026-08-30 from
+    real daily use: a session that starts on HID-needing content
+    round-trips straight back to PID_HID on release, so losing the
+    connection and retrying immediately just re-triggers the whole
+    handshake cycle again -- exactly the rapid-re-enumeration pattern
+    HANDSHAKE_MIN_INTERVAL already exists to pace against for handshake
+    sends specifically, just via a path that pacing never covered. Only
+    ever verified live against real hardware before this test existed.
+
+    Drives run() directly with time.sleep mocked to a fast,
+    iteration-counting stub that stops the loop deterministically, rather
+    than needing a real thread or a real timeout.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_backoff_skips_establish_until_it_expires(self):
+        from g7ctlc.watcher import PROBE_FAILURE_BACKOFF, DeviceWatcher
+
+        watcher = DeviceWatcher()
+        establish_calls = []
+
+        def fake_establish():
+            establish_calls.append(1)
+            # Mirrors what a real failure inside _establish() does: sets
+            # the backoff deadline before returning None.
+            watcher._probe_backoff_until = time.time() + PROBE_FAILURE_BACKOFF
+            return None
+
+        watcher._establish = fake_establish
+
+        sleep_calls = []
+
+        def fake_sleep(interval):
+            sleep_calls.append(interval)
+            if len(sleep_calls) >= 4:
+                watcher._stop = True
+
+        with mock.patch("g7ctlc.watcher.time.sleep", side_effect=fake_sleep):
+            watcher.run()
+
+        # _establish() only ever got one real chance -- the backoff
+        # deadline it set on that first (fake) failure should have kept
+        # every later loop iteration in this test from calling it again.
+        self.assertEqual(len(establish_calls), 1)
+        self.assertGreaterEqual(len(sleep_calls), 4)
+
+    def test_no_backoff_means_establish_is_retried_every_iteration(self):
+        # Contrast case: confirms the previous test is actually pinning the
+        # backoff, not some other reason _establish() is only called once
+        # (e.g. the loop exiting early). With no deadline ever set, a
+        # failing _establish() should be retried every iteration.
+        from g7ctlc.watcher import DeviceWatcher
+
+        watcher = DeviceWatcher()
+        establish_calls = []
+        watcher._establish = lambda: establish_calls.append(1) or None
+
+        sleep_calls = []
+
+        def fake_sleep(interval):
+            sleep_calls.append(interval)
+            if len(sleep_calls) >= 4:
+                watcher._stop = True
+
+        with mock.patch("g7ctlc.watcher.time.sleep", side_effect=fake_sleep):
+            watcher.run()
+
+        self.assertEqual(len(establish_calls), len(sleep_calls))

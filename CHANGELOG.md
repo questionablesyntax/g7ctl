@@ -87,7 +87,31 @@ adheres to [semantic versioning](https://semver.org/).
   and in `find_writable_device()`'s/`switch_to_xid()`'s return value,
   but it's cosmetic-only now (display/logging), not authoritative.
 
+  Two real bugs found the very next day by actually running the redesign
+  against real hardware, not caught in review: the GUI's "no_controller"
+  state showed "Dongle detected, no controller responding" on a *wired*
+  connection (the label predated the probe becoming unconditional and
+  never got updated for it); and `probe_controller_live()` occasionally
+  hit a real `USBError` errno 19 on a wired connection fresh off a
+  handshake-triggered re-enumeration -- the same "not fully settled yet"
+  quirk `settle()` already exists to protect against, in a window this
+  exact read never ran in before. Both fixed: the label reworded to be
+  connection-medium-agnostic, and errno 19 specifically caught inside
+  `probe_controller_live()` and treated the same as a timeout (`False`)
+  rather than raised.
 
+  A third bug surfaced by further live testing that same night:
+  `g7ctlc`'s reconnect loop retried a fresh claim on every poll tick
+  (1s) after a failed probe, with no pacing at all -- unlike an actual
+  handshake send, which `HANDSHAKE_MIN_INTERVAL` already paces. Since a
+  session that started on HID-needing content round-trips straight back
+  to `PID_HID` on release, losing the connection and retrying
+  immediately just re-triggers the whole handshake cycle again --
+  confirmed live as a sustained oscillation. Added `PROBE_FAILURE_BACKOFF`
+  (reuses `HANDSHAKE_MIN_INTERVAL`'s own value) -- the watcher now skips
+  attempting a fresh claim entirely for that interval after either
+  failure path (the initial connect, or losing an already-connected
+  session), rather than retrying every poll tick.
 
 - **Entering vendor mode now names the connected G7 Pro variant, when it's
   one this project has a confirmed report on.** `pyg7.constants.identify_variant()`
