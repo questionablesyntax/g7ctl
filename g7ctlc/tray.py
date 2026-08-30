@@ -37,7 +37,13 @@ _STATE_LABELS = {
     "connecting": "Connecting…",
     "connected": "Connected -- controller not usable as a gamepad until released",
     "paused": "Released (click Reconnect to resume)",
-    "no_controller": "Dongle detected, no controller responding",
+    # Not dongle-specific since the 2026-08-29 detection redesign made the
+    # underlying liveness probe run unconditionally -- a wired connection
+    # can land in this state too now (confirmed live 2026-08-30, on a
+    # transient errno-19 blip fresh off a handshake re-enumeration -- see
+    # VendorSession.probe_controller_live()). This label predated that
+    # change and didn't get updated for it -- a real, user-visible bug.
+    "no_controller": "No controller responding",
 }
 
 

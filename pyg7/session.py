@@ -507,21 +507,41 @@ class VendorSession:
         regardless of connection type (2026-08-29 detection redesign:
         `via_dongle` isn't reliably knowable for an unrecognized variant, and
         the cost of running this against a genuinely-wired connection is
-        just one harmless extra read, bounded by the same timeout already
-        paid elsewhere). Not a behavior change for wired beyond that one
-        extra round trip -- a real connection still answers it the same way
-        any other read succeeds.
+        meant to be just one harmless extra read, bounded by the same
+        timeout already paid elsewhere).
 
-        Returns True if a minimal read succeeds, False on timeout (no
-        controller answering -- could be powered off, unpaired, or possibly
-        switched to its native GameSir identity mid-session (see PROTOCOL.md
-        "Device identities"); this can't tell those apart, only that nothing
-        answered). A real USBError (the dongle itself vanishing) is not
-        caught here -- that's a different, harder failure the caller's
-        existing USBError handling already covers.
+        **That turned out not to be quite true, caught in live testing the
+        very next day (2026-08-30):** a wired connection landing here fresh
+        off a handshake-triggered re-enumeration (switch_to_xid() moving it
+        off PID_HID) occasionally hit a real `USBError` errno 19 (ENODEV) on
+        this specific read -- the device dropping off the bus entirely,
+        recovering on its own by the next attempt. This is the same
+        documented "not fully settled yet" quirk `settle()` exists to
+        protect against, in the same window settle() already covers, just
+        never previously exercised here: wired connections never ran an
+        extra forced read at this exact point before this redesign made the
+        probe unconditional. See `session.settle()`'s own docstring for the
+        historical precedent (a different read, same errno, same fresh-
+        re-enumeration window, first found 2026-07-28).
+
+        Returns True if a minimal read succeeds, False on timeout **or on
+        this specific transient disconnect** (no controller answering --
+        could be powered off, unpaired, switched to its native GameSir
+        identity mid-session (see PROTOCOL.md "Device identities"), or just
+        not settled yet after a fresh re-enumeration; this can't tell those
+        apart, only that nothing answered *this time*). Deliberately narrow:
+        only errno 19 is treated this way. Any other `USBError` (the dongle
+        itself vanishing, a permission error, etc.) still propagates --
+        that's a different, harder failure the caller's existing USBError
+        handling already covers, and folding it into a plain `False` here
+        would hide it behind the same message a merely-slow controller gets.
         """
         try:
             self.read_chunk(profile_layer_byte(1), 0, 1, timeout=timeout)
             return True
         except TimeoutError:
             return False
+        except usb.core.USBError as e:
+            if getattr(e, "errno", None) == 19:
+                return False
+            raise

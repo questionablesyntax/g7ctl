@@ -159,6 +159,11 @@ class ProbeControllerLiveTest(unittest.TestCase):
     off or unpaired -- the dongle is a separate USB device from the
     controller, joined only by an RF link, and enumerates and heartbeats
     fine on its own regardless of whether a controller is on the other end.
+
+    Also covers a second failure mode found live 2026-08-30, one day after
+    this became an unconditional check (2026-08-29 detection redesign):
+    errno 19 specifically, on a wired connection fresh off a handshake
+    re-enumeration, gets treated the same as a timeout rather than raised.
     """
 
     def test_true_when_a_real_read_succeeds(self):
@@ -171,14 +176,31 @@ class ProbeControllerLiveTest(unittest.TestCase):
         sess = VendorSession(dev, via_dongle=True)
         self.assertFalse(sess.probe_controller_live(timeout=0.05))
 
-    def test_real_usb_error_still_propagates(self):
-        # A genuine USBError (the dongle itself vanishing) is a different,
-        # harder failure than "no controller answering" -- the caller's
-        # existing USBError handling covers that, so this must NOT be
-        # swallowed into a plain False the way a timeout is.
+    def test_errno_19_is_treated_like_a_timeout_not_raised(self):
+        # Caught live, 2026-08-30 (the very next day after this became an
+        # unconditional check): a WIRED connection fresh off a handshake-
+        # triggered re-enumeration occasionally hit real errno 19 (ENODEV)
+        # on exactly this read -- the same "not fully settled yet" quirk
+        # settle() already exists to cover, just never previously exercised
+        # here since wired connections never ran a forced read at this
+        # exact point before. Must return False, the same graceful path a
+        # timeout already takes, not raise and force a harder failure path.
         import usb.core
         exc = usb.core.USBError("no such device")
         exc.errno = 19
+        dev = _FakeReadDevice([exc])
+        sess = VendorSession(dev, via_dongle=False)
+        self.assertFalse(sess.probe_controller_live(timeout=0.05))
+
+    def test_other_usb_errors_still_propagate(self):
+        # A genuine, different USBError (a permission error, the dongle
+        # itself vanishing for some other reason) is still a harder failure
+        # than "no controller answering yet" -- the caller's existing
+        # USBError handling covers that, so only errno 19 specifically
+        # gets swallowed, not USBError as a whole.
+        import usb.core
+        exc = usb.core.USBError("access denied")
+        exc.errno = 13
         dev = _FakeReadDevice([exc])
         sess = VendorSession(dev, via_dongle=True)
         with self.assertRaises(usb.core.USBError):

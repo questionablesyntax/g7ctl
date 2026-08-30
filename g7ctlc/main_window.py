@@ -491,7 +491,12 @@ class MainWindow(QMainWindow):
         labels = {
             "disconnected": "disconnected", "connecting": "connecting…",
             "connected": "connected", "paused": "released (click Reconnect to resume)",
-            "no_controller": "dongle detected, no controller responding",
+            # Not dongle-specific since the 2026-08-29 detection redesign
+            # made the underlying liveness probe run unconditionally -- a
+            # wired connection can land here too now (confirmed live
+            # 2026-08-30). This label predated that change and didn't get
+            # updated for it, matching tray.py's own copy of the same bug.
+            "no_controller": "no controller responding",
         }
         self.connection_label.setText(f"Device: {labels.get(state, state)}")
         # The controller is not usable for playing while this app holds it,
