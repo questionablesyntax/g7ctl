@@ -74,6 +74,14 @@ Motion's own Output selector instead of a button binding (`Motion output
 = Mouse -> 100a`, `Motion output = Left/Right Stick -> 109b`, confirmed
 alongside the report-rate finding above).
 
+**The bundle is confirmed closed, not just a floor of two known
+members.** The owner tested every setting category on real hardware
+(2026-08-29): the only two triggers found anywhere are (1) anything that
+outputs to a keyboard or mouse (any button bind, Motion-as-Mouse) and (2)
+1000Hz report rate. Nothing else in the settings -- Sticks, Triggers,
+Vibration, Dock, Advanced Mapping, per-button Continuous Trigger, or
+anything else -- moves this PID.
+
 This means the config/telemetry protocol this whole document describes was
 **never** gated behind a special "vendor mode" at all -- both PIDs answer
 it identically: `109b`, sitting normally with `xpad` bound and no session
@@ -97,14 +105,11 @@ erased: see `FINDINGS.md` (private notes) for the full arc of how this was
 found and unwound.
 
 **What is still unconfirmed**: exactly what the `"gamesirapp"` handshake
-mechanically does under this corrected model; whether the trigger bundle
-holds for the wireless dongle transport (every confirmation so far is
-wired only); and whether keyboard/mouse binds + 1000Hz report rate are
-the *complete* bundle or just the two members found so far -- other
-enhanced-feature settings (e.g. Advanced Mapping, per-button Continuous
-Trigger) haven't been individually tested against this axis yet. See
-"The handshake" below for what's actually established versus still a
-working guess.
+mechanically does under this corrected model; and whether the trigger
+bundle holds for the wireless dongle transport (every confirmation so far
+is wired only). The bundle's *membership* is no longer one of the open
+questions -- see below. See "The handshake" below for what's actually
+established versus still a working guess.
 
 | Identity | VID:PID | Role |
 |---|---|---|

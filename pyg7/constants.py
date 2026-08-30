@@ -18,10 +18,12 @@ VID = 0x3537
 # trigger as a bound key, not a third one. GameSir's own manual already
 # describes "1000Hz polling and keyboard/mouse remapping" as one bundle
 # unlocked together (at the native-GIP-vs-XInput axis); this is the same
-# bundle governing this finer PID_HID/PID_XID split too. Whether other
-# settings (Advanced Mapping, per-button Continuous Trigger, etc.) also
-# belong to this bundle is untested -- treat the two confirmed members as
-# a floor, not an exhaustive list. Not a switchable device "personality"
+# bundle governing this finer PID_HID/PID_XID split too. **The bundle is
+# now confirmed closed, not just a floor** -- owner tested every setting
+# category on real hardware (2026-08-29): the only two triggers are (1)
+# anything that outputs to a keyboard or mouse (any button bind, Motion
+# output set to Mouse) and (2) 1000Hz report rate. Nothing else in the
+# settings moves this PID. Not a switchable device "personality"
 # either way. Both PIDs equally answer the config/telemetry protocol this
 # whole package speaks. Old names, for anyone grepping history:
 # PID_XINPUT -> PID_HID, PID_VENDOR -> PID_XID.
