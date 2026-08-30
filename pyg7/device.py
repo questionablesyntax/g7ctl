@@ -6,7 +6,10 @@ touching this module. PID_HID and PID_XID are NOT an "XInput personality"
 vs. a "vendor/config mode" -- both are fully working XInput identities;
 the only real difference is whether a second HID interface (keyboard+
 mouse, for remapped key/mouse events) is presented, which tracks the
-active profile's own bind content, not a switchable device state. The
+active profile's own trigger-bundle content -- keyboard/mouse binds
+(including Motion-as-Mouse) OR 1000Hz report rate, confirmed 2026-08-29
+as two independent members of the same bundle, not just bind content
+alone -- not a switchable device state. The
 whole `has_hid_interface()`/"vendor mode" framing this module used to
 build on was a real, careful correlation observed correctly and explained
 incorrectly -- see PROTOCOL.md for the full account. Old names, for
@@ -214,15 +217,24 @@ def has_hid_interface(dev: usb.core.Device) -> bool:
     gamepad has to leave, and the config/telemetry protocol this package
     speaks answers identically on either. The only real difference is
     whether interface 1 presents the second HID interface, and **that
-    tracks the active profile's own button bindings**: any button bound to
-    a keyboard/mouse key -> present (PID_HID); every binding native ->
-    absent (PID_XID). Confirmed end to end, wired, 2026-08-29: a firmware
+    tracks the active profile's own trigger-bundle content, not just its
+    button bindings**: any button (or Motion output) bound to a
+    keyboard/mouse key -> present (PID_HID); so does 1000Hz report rate on
+    its own, with zero keyboard/mouse content -- confirmed 2026-08-29,
+    `lsusb -v`-verified as a genuine HID-class interface 1 in that case
+    too, not a PID-only coincidence. Only when every bundle member is at
+    its baseline (all-native binds, report rate below 1000Hz) -> absent
+    (PID_XID). Confirmed end to end, wired, 2026-08-29: a firmware
     flash had reset the reference controller's keyboard/mouse binds to
     native defaults, which is why it sat at PID_XID for an entire
     investigation that (wrongly, at the time) suspected a broken
     "personality" mechanism; restoring those binds and releasing the
     session flipped it straight to PID_HID; switching to all-native
-    profiles flipped it back on their own, repeatably, six for six.
+    profiles flipped it back on their own, repeatably, six for six. The
+    report-rate trigger was found in the same investigation's own
+    follow-up: the reference unit had been manually set to 1000Hz all
+    along (500Hz is the factory default), a second independent reason it
+    never actually landed at PID_XID until that was reset too.
 
     What this function actually checks, and why that's still a fine thing
     to check: interface 1 genuinely does differ in descriptor shape
@@ -293,8 +305,9 @@ def find_writable_device() -> tuple[Optional[usb.core.Device], bool]:
     keyboard/mouse interface, which answers `0x0f` writes regardless of how
     it got there -- because every PID answers them, always; there's no
     separate identity to reach for config access at all. In practice this
-    is often "wherever the active profile's own bind content already put
-    it" (see `has_hid_interface()`), not evidence of a prior session -- a
+    is often "wherever the active profile's own trigger-bundle content
+    already put it" (see `has_hid_interface()` -- keyboard/mouse binds and
+    report rate both count), not evidence of a prior session -- a
     controller can sit here indefinitely with nothing having "switched" it.
 
     **The PID alone is not enough to decide this.** On some firmware/

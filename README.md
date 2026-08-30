@@ -224,9 +224,11 @@ a configuration you synced, which is the main reason "Read from Device" exists.
 
 - **Switch profile:** `M`+`Y` = 1, `M`+`B` = 2, `M`+`A` = 3, `M`+`X` = 4.
   **Can make the controller disconnect and reconnect** — happens when the
-  profile you're switching to needs a different keyboard/mouse-remap setup
-  than the one you left (any bound key vs. none), not on every switch
-  unconditionally. That is the firmware, not this tool — it happens with
+  profile you're switching to needs a different keyboard/mouse-interface
+  setup than the one you left, not on every switch unconditionally. Not
+  just keyboard/mouse button binds either — 1000Hz report rate on its own
+  (with no binds at all) has the same effect, and so does setting Motion's
+  Output to Mouse. That is the firmware, not this tool — it happens with
   nothing running. Two things follow when it does. Steam (and anything else
   that tracks gamepads) sees a different device and will show it under a
   different name, losing a custom name you assigned. And your keyboard/mouse

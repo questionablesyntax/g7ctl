@@ -9,21 +9,35 @@ VID = 0x3537
 # fully working XInput identities -- neither is a "vendor/config mode" a
 # gamepad has to leave. The only real difference is whether a second HID
 # interface (keyboard+mouse, for remapped key/mouse events) is presented,
-# which tracks the *active profile's own bind content* (any keyboard/mouse
-# remap -> present; all native -> absent), not a switchable device
-# "personality". Both PIDs equally answer the config/telemetry protocol
-# this whole package speaks. Old names, for anyone grepping history:
+# which tracks the *active profile's own trigger-bundle content* -- NOT
+# just keyboard/mouse bind content: confirmed 2026-08-29 that 1000Hz
+# report rate is a second, independent trigger, with zero keyboard/mouse
+# binds involved (500Hz+all-native -> PID_XID, 1000Hz+all-native ->
+# PID_HID, `lsusb -v`-verified as a genuine HID-class interface 1 either
+# way, not a PID-only coincidence). Motion output set to Mouse is the same
+# trigger as a bound key, not a third one. GameSir's own manual already
+# describes "1000Hz polling and keyboard/mouse remapping" as one bundle
+# unlocked together (at the native-GIP-vs-XInput axis); this is the same
+# bundle governing this finer PID_HID/PID_XID split too. Whether other
+# settings (Advanced Mapping, per-button Continuous Trigger, etc.) also
+# belong to this bundle is untested -- treat the two confirmed members as
+# a floor, not an exhaustive list. Not a switchable device "personality"
+# either way. Both PIDs equally answer the config/telemetry protocol this
+# whole package speaks. Old names, for anyone grepping history:
 # PID_XINPUT -> PID_HID, PID_VENDOR -> PID_XID.
 PID_HID = 0x100a      # "Xbox 360 Controller for Windows" -- presents the extra
                       # HID keyboard/mouse interface. Reached from PID_XID by
                       # the "gamesirapp" handshake when the active profile needs
-                      # that interface; see PROTOCOL.md "The handshake" for what
-                      # is and isn't established about that transition.
+                      # that interface (keyboard/mouse binds OR 1000Hz report
+                      # rate -- see the trigger-bundle comment above); see
+                      # PROTOCOL.md "The handshake" for what is and isn't
+                      # established about that transition.
 PID_XID = 0x109b      # "GameSir-G7 Pro" -- baseline XInput identity, no extra HID
-                      # interface. Presented whenever the active profile's bindings
-                      # are all-native. Fully playable as a gamepad, and answers
-                      # this project's whole config/telemetry protocol -- there is
-                      # no gate between the two.
+                      # interface. Presented only when EVERY member of the
+                      # trigger bundle above is at its baseline (all-native
+                      # binds AND report rate below 1000Hz). Fully playable as a
+                      # gamepad, and answers this project's whole config/telemetry
+                      # protocol -- there is no gate between the two.
 PID_DONGLE = 0x109c   # 2.4GHz wireless dongle counterpart to PID_XID, same
                       # endpoints. Historically documented as reached by the same
                       # "gamesirapp" handshake from an idle PID_HID dongle state,

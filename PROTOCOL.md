@@ -38,13 +38,41 @@ Both PIDs are, and always were, fully working XInput identities. The only
 real difference is whether a second USB interface -- a HID keyboard+mouse
 composite that emits remapped key/mouse events -- is presented alongside
 the gamepad interface. Confirmed end to end, wired, 2026-08-29: **that
-interface is presented exactly when the currently active profile has at
-least one button bound to a keyboard or mouse key, and only then.** A
-firmware update had reset the reference controller's own keyboard/mouse
-binds to native defaults, which is why it sat at `109b` for this entire
-investigation; restoring those binds and releasing the session flipped it
-straight to `100a`; switching to all-native profiles flipped it back to
-`109b` on their own, repeatably.
+interface is presented exactly when the currently active profile uses any
+feature from one specific bundle, and absent only when every feature in
+that bundle is off.** A firmware update had reset the reference
+controller's own keyboard/mouse binds to native defaults, which is why it
+sat at `109b` for this entire investigation; restoring those binds and
+releasing the session flipped it straight to `100a`; switching to
+all-native profiles flipped it back to `109b` on their own, repeatably.
+
+**The bundle is broader than keyboard/mouse binds alone -- confirmed
+2026-08-29 in a live follow-up test.** A button (or Motion output) bound
+to a keyboard/mouse key is one member; **1000Hz report rate is a second,
+entirely independent one**: `500Hz + all-native = 109b`, `1000Hz +
+all-native = 100a`, no keyboard/mouse content involved at all. Verified
+directly that this isn't a PID-only coincidence -- `lsusb -v` on the
+`1000Hz + all-native` device shows interface 1 genuinely HID-class
+(`bInterfaceClass 3`), the same real descriptor signature the
+keyboard/mouse case produces, not some other change landing on the same
+PID by chance. This isn't actually a new mechanism: GameSir's own manual
+(quoted earlier in this document) already describes Menu+Share as
+unlocking "1000Hz polling and keyboard/mouse remapping" together as one
+pair, at the native-GIP-vs-XInput axis. What's newly confirmed is that
+the *same* bundle also governs this finer-grained `100a`/`109b` split one
+level down, not just the coarser native/XInput one. Practical
+consequence for the reference hardware specifically: the unit had been
+manually set to 1000Hz (500Hz is the factory default) well before this
+investigation started, so it was never actually going to land at `109b`
+regardless of bind content until report rate was also reset -- a second,
+independent reason the early sessions read as more tangled than the
+underlying rule actually is.
+
+Motion-as-Mouse output is not a third, separate bundle member -- it's the
+same keyboard/mouse-interface member as a bound key, just reached through
+Motion's own Output selector instead of a button binding (`Motion output
+= Mouse -> 100a`, `Motion output = Left/Right Stick -> 109b`, confirmed
+alongside the report-rate finding above).
 
 This means the config/telemetry protocol this whole document describes was
 **never** gated behind a special "vendor mode" at all -- both PIDs answer
@@ -69,15 +97,19 @@ erased: see `FINDINGS.md` (private notes) for the full arc of how this was
 found and unwound.
 
 **What is still unconfirmed**: exactly what the `"gamesirapp"` handshake
-mechanically does under this corrected model, and whether the
-bind-content trigger holds for the wireless dongle transport (every
-confirmation so far is wired only). See "The handshake" below for what's
-actually established versus still a working guess.
+mechanically does under this corrected model; whether the trigger bundle
+holds for the wireless dongle transport (every confirmation so far is
+wired only); and whether keyboard/mouse binds + 1000Hz report rate are
+the *complete* bundle or just the two members found so far -- other
+enhanced-feature settings (e.g. Advanced Mapping, per-button Continuous
+Trigger) haven't been individually tested against this axis yet. See
+"The handshake" below for what's actually established versus still a
+working guess.
 
 | Identity | VID:PID | Role |
 |---|---|---|
-| XInput, no keyboard/mouse interface | `3537:109b` | "GameSir-G7 Pro". Presented when the active profile's bindings are all-native (no keyboard/mouse remap). Fully playable as a gamepad *and* fully answers the config/telemetry protocol this document describes, at the same time -- there is no separate "vendor mode" this PID enters. This project's own reference hardware is a **G7 Pro "Shadow Ember" Tri-mode** unit specifically, not a generic/unbranded retail one -- worth noting given the rows below: this controller and the "Tri-mode" variant reported separately are the same sub-family (colourway aside) yet use different PIDs here (`109b` vs `1003`), so colourway or pre-production-vs-retail status, not "Tri-mode-ness" itself, looks like the actual variable. Unconfirmed which. |
-| XInput, with keyboard/mouse interface | `3537:100a` | "Xbox 360 Controller for Windows". Presented when the active profile has at least one button bound to a keyboard or mouse key -- that second HID interface (`xpad` + `usbhid`) is what actually emits those remapped events. Equally capable of the config/telemetry protocol as `109b` -- not independently reconfirmed on this exact PID as of 2026-08-29, but nothing in the corrected model gives either PID a reason to differ, and the two were shown fully interchangeable for the config protocol's purposes throughout this project's history. |
+| XInput, no keyboard/mouse interface | `3537:109b` | "GameSir-G7 Pro". Presented when the active profile is at *both* baselines of the confirmed trigger bundle: all-native bindings (no keyboard/mouse remap, Motion output not set to Mouse) **and** report rate below 1000Hz. Fully playable as a gamepad *and* fully answers the config/telemetry protocol this document describes, at the same time -- there is no separate "vendor mode" this PID enters. This project's own reference hardware is a **G7 Pro "Shadow Ember" Tri-mode** unit specifically, not a generic/unbranded retail one -- worth noting given the rows below: this controller and the "Tri-mode" variant reported separately are the same sub-family (colourway aside) yet use different PIDs here (`109b` vs `1003`), so colourway or pre-production-vs-retail status, not "Tri-mode-ness" itself, looks like the actual variable. Unconfirmed which. |
+| XInput, with keyboard/mouse interface | `3537:100a` | "Xbox 360 Controller for Windows". Presented when the active profile uses *any* member of the confirmed trigger bundle -- a button or Motion output bound to a keyboard/mouse key, **or** 1000Hz report rate on its own, no keyboard/mouse content required -- that second HID interface (`xpad` + `usbhid`) is what actually emits remapped keyboard/mouse events when present, and is confirmed genuinely HID-class-shaped under the report-rate-only trigger too (`lsusb -v`, 2026-08-29), not just nominally sharing the PID. Equally capable of the config/telemetry protocol as `109b` -- not independently reconfirmed on this exact PID as of 2026-08-29, but nothing in the corrected model gives either PID a reason to differ, and the two were shown fully interchangeable for the config protocol's purposes throughout this project's history. |
 | Wireless dongle | `3537:109c` | The dongle's counterpart to `109b`, same physical unit and serial, same two-interfaces-or-one story as the wired identities above -- **but the bind-content trigger has only been confirmed wired**; whether it holds identically over RF is untested. Historically documented as re-entered by the same handshake from an idle `100a` dongle state and falling back there once heartbeats stop -- that framing predates the 2026-08-29 correction and needs re-verification under the corrected model, not assumed to still be accurate as stated. See `pyg7/device.py:enter_vendor_mode()` and `find_writable_device()`. |
 | Native GameSir identity | `3537:1022` | "GameSir-G7 Pro" (no manufacturer string, unlike `109b`). A genuinely different, third identity -- not affected by the correction above. Reached by holding **Menu+Share** (GameSir's own manual calls this combo "Xbox button + Share", switching between "GIP (Xbox Gaming Device)" and "XInput" -- this PID is the GIP side). Two plain HID-class interfaces (`0x82`/`0x02` and `0x84`/`0x04`, no vendor-specific class-255 interface at all), confirmed via Steam's own controller test **to lack vibration**, unlike both `100a` and `109b` which have it. Neither interface answers the standard `CMD_HEARTBEAT` payload or streams anything unprompted -- not the same protocol as `109b`/`109c`, and not reverse-engineered. `pyg7/device.py:find_native_identity()` recognizes this PID so a user stuck here gets a "hold Menu+Share" message instead of a generic "device not found." |
 | Other variant, no keyboard/mouse interface | `3537:1003` | Reported 2026-08-19 from a community bug report on a "Tri-mode" G7 Pro (pre-production unit, firmware `2.44`) -- not this project's own hardware. Same interface-1 descriptor shape as `109b`, which is why `find_writable_device()`/`enter_vendor_mode()` also check it. **Confirmed the same day**: the reporter read real config back over it, a genuine round trip. The bind-content trigger is not independently reconfirmed on this variant. Needs its own `udev` rule line, same as every PID here. `100a` is this variant's other identity too, same relationship as the default rows above. |
@@ -88,8 +120,9 @@ actually established versus still a working guess.
 
 Switching the active profile *can* make the controller drop off the USB
 bus and come back at a different PID -- but only when the switch actually
-changes whether any bound button is a keyboard/mouse key, per the
-corrected model above. Originally documented (2026-08-08) as a direct,
+changes whether the landing profile trips the trigger bundle above
+(keyboard/mouse content, or 1000Hz report rate), per the corrected model.
+Originally documented (2026-08-08) as a direct,
 mechanical consequence of pressing a profile combo at all, landing
 specifically at `109b` then `100a` on a ~45s timer -- that framing was
 the pre-correction model's read of a real, correctly-observed event
@@ -858,6 +891,12 @@ scoping").
 Note: the real Nexus app disables native trigger vibration when this is
 set to 1000Hz (observed in the Nexus app's own UI, not independently
 verified at the protocol level) -- likely a genuine bandwidth constraint, not a bug.
+
+**Setting this to 1000Hz alone, with no keyboard/mouse binds at all, moves
+the controller off `109b` onto `100a`** -- confirmed live 2026-08-29, see
+"Device identities" above. It's a second, independent member of the same
+trigger bundle keyboard/mouse remapping belongs to, not a separate
+mechanism.
 
 ## Curve payload (shared: Sticks `0x44`, Triggers `0xDC`)
 
