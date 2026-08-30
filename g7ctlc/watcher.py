@@ -24,13 +24,38 @@ import usb.core
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from pyg7 import state as state_mod
-from pyg7.device import find_hid_device, find_native_identity, find_writable_device, switch_to_xid
+from pyg7.device import (
+    HANDSHAKE_MIN_INTERVAL,
+    find_hid_device,
+    find_native_identity,
+    find_writable_device,
+    switch_to_xid,
+)
 from pyg7.session import VendorSession
 
 log = logging.getLogger(__name__)
 
 POLL_INTERVAL = 1.0        # how often to check for the device while disconnected
 HEARTBEAT_INTERVAL = 0.25  # matches the app's observed heartbeat cadence while connected
+
+# How long to hold off re-establishing after a failed liveness probe, rather
+# than retrying at the normal POLL_INTERVAL cadence.
+#
+# Raised 2026-08-30 from real daily use, the day after probe_controller_live()
+# became unconditional (2026-08-29 detection redesign): a controller landing
+# from PID_HID sometimes re-enumerated an extra time or two on its own during
+# the settle/probe window, and once visibly hit the same fault this project's
+# own churn testing associates with the rapid-re-enumeration wedge (a
+# vibration alert plus a re-enumeration) -- it didn't wedge that time, but
+# retrying a fresh claim/settle/probe cycle every single POLL_INTERVAL while
+# the device is still doing that on its own is exactly the kind of added
+# re-enumeration-adjacent activity HANDSHAKE_MIN_INTERVAL already exists to
+# pace against for handshake sends specifically. This covers the other path
+# that pacing doesn't: re-establishing on an already-baseline device needs no
+# handshake at all, so it never went through _pace_handshake(). Reuses
+# HANDSHAKE_MIN_INTERVAL's own value rather than inventing a second pacing
+# constant -- same reasoning, same firmware behavior being paced against.
+PROBE_FAILURE_BACKOFF = HANDSHAKE_MIN_INTERVAL
 
 # How often to sample battery off the input stream. Charge moves on the scale
 # of minutes, so this is deliberately lazy -- the cost is not the read (frames
@@ -89,6 +114,7 @@ class DeviceWatcher(QObject):
         self._active_last = None
         self._battery_due = 0.0   # monotonic deadline for the next sample
         self._battery_last = None  # (percent, charging), for change-only emits
+        self._probe_backoff_until = 0.0  # see PROBE_FAILURE_BACKOFF
 
     def request_sync(self, state: dict) -> None:
         """Thread-safe: call from the GUI thread. Applied on this loop's
@@ -162,11 +188,26 @@ class DeviceWatcher(QObject):
                     continue
 
                 if session is None:
+                    # See PROBE_FAILURE_BACKOFF -- skip attempting a fresh
+                    # claim entirely while still cooling down from a failed
+                    # liveness probe, rather than retrying every
+                    # POLL_INTERVAL while the device may still be
+                    # re-enumerating on its own.
+                    if time.time() < self._probe_backoff_until:
+                        time.sleep(POLL_INTERVAL)
+                        continue
                     try:
                         session = self._establish()
                     except usb.core.USBError as exc:
                         self._emit_error(f"USB error: {exc}")
                         session = None
+                        # Same reasoning as PROBE_FAILURE_BACKOFF -- any
+                        # USBError surfacing here (not just the errno-19
+                        # case probe_controller_live() already handles
+                        # itself) is just as plausibly re-enum-related, so
+                        # back off the same way rather than retrying
+                        # immediately.
+                        self._probe_backoff_until = time.time() + PROBE_FAILURE_BACKOFF
                     if session is None:
                         time.sleep(POLL_INTERVAL)
                         continue
@@ -184,6 +225,19 @@ class DeviceWatcher(QObject):
                     session = None
                     self._forget_battery()
                     self._set_state("disconnected")
+                    # Same reasoning as PROBE_FAILURE_BACKOFF, and likely the
+                    # actual dominant path for it in practice (real
+                    # 2026-08-30 capture: a sustained 100a<->109b
+                    # oscillation, 6 re-enum events across ~36s, polled
+                    # externally) -- if a session that started on
+                    # HID-needing content loses its heartbeat here, tearing
+                    # down releases it, which round-trips it straight back
+                    # to PID_HID (confirmed release behavior, see
+                    # pause()'s own docstring above). Reconnecting
+                    # immediately just re-sends the handshake into that and
+                    # repeats the cycle. Back off before retrying, same as
+                    # the establish-time failure.
+                    self._probe_backoff_until = time.time() + PROBE_FAILURE_BACKOFF
         finally:
             if session is not None:
                 self._teardown(session)
@@ -386,13 +440,19 @@ class DeviceWatcher(QObject):
             # no different from any other disconnected-and-waiting state.
             # Runs unconditionally now (2026-08-29 detection redesign)
             # rather than gated on session.via_dongle -- that flag is
-            # cosmetic-only as of this redesign, and the cost against a
-            # genuinely-wired connection is one harmless extra read. See
+            # cosmetic-only as of this redesign. See
             # VendorSession.probe_controller_live() for what this can't
             # tell apart (powered off vs. unpaired vs. possibly switched to
             # its native GameSir identity mid-session).
             self._teardown(session)
             self._set_state("no_controller")
+            # See PROBE_FAILURE_BACKOFF: a failure here can mean the device
+            # is still re-enumerating on its own (real 2026-08-30 finding,
+            # not the "harmless extra read" this was assumed to be the day
+            # before) -- back off before run() tries to re-establish, rather
+            # than retrying a fresh claim every POLL_INTERVAL while that's
+            # still settling.
+            self._probe_backoff_until = time.time() + PROBE_FAILURE_BACKOFF
             return None
 
         self._set_state("connected")

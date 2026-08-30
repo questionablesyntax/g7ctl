@@ -100,6 +100,23 @@ class EstablishSessionTest(unittest.TestCase):
         self.assertTrue(session.torn_down)
         self.assertEqual(watcher._state, "no_controller")
 
+    def test_no_controller_sets_a_probe_failure_backoff(self):
+        # Raised 2026-08-30 from real daily use, the day after the liveness
+        # probe became unconditional: a controller landing from PID_HID
+        # sometimes kept losing its session shortly after connecting,
+        # round-tripping back to PID_HID on release (confirmed release
+        # behavior) and re-handshaking immediately -- a sustained
+        # 100a<->109b oscillation, captured live (6 re-enum events across
+        # ~36s). run()'s loop checks _probe_backoff_until before retrying
+        # _establish() at all; this pins that a failed probe actually sets
+        # it, in the future, not left at its initial 0.0.
+        import time
+        session = _FakeSession(via_dongle=False, live=False)
+        watcher = self._watcher(session)
+        before = time.time()
+        watcher._establish()
+        self.assertGreater(watcher._probe_backoff_until, before)
+
     def test_no_device_found_leaves_state_disconnected(self):
         watcher = self._watcher(None)
         result = watcher._establish()
