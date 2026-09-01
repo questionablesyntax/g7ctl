@@ -196,7 +196,8 @@ def seconds_since_enumeration(dev: usb.core.Device) -> Optional[float]:
         return None
 
 
-def _pace_handshake(dev: usb.core.Device, min_interval: float) -> None:
+def _pace_handshake(dev: usb.core.Device, min_interval: float,
+                     age: Optional[float] = None) -> None:
     """Sleep until `dev` has been enumerated for at least `min_interval`.
 
     Deliberately a sleep rather than a refusal: a command that mysteriously
@@ -204,10 +205,21 @@ def _pace_handshake(dev: usb.core.Device, min_interval: float) -> None:
     has no useful alternative. Anyone hitting this repeatedly wants
     `g7ctl batch`, which holds one session for many commands -- so the log
     line says so.
+
+    `age`, if given, is a `seconds_since_enumeration(dev)` the caller
+    already read for this exact `dev` snapshot -- reused here instead of
+    reading sysfs a second time for the same object. Omit it (the default)
+    to have this read it itself, same as before. `_find_stable_hid_device()`
+    is the one real caller that has this to give: it already computes `age`
+    to decide whether to call this function at all, and `seconds_since_enumeration()`
+    is real filesystem I/O (a `/sys/bus/usb/devices/*` scan), not a free
+    lookup -- no reason to pay for it twice for the same unchanged `dev`
+    within the same settle-wait iteration.
     """
     if min_interval <= 0:
         return
-    age = seconds_since_enumeration(dev)
+    if age is None:
+        age = seconds_since_enumeration(dev)
     if age is None:
         # No sysfs (unusual kernel, container, non-Linux). Degrade to no
         # pacing rather than failing -- a safety aid must never be the
@@ -503,7 +515,7 @@ def _find_stable_hid_device(min_interval: float,
             return dev
         if time.time() >= deadline:
             return None
-        _pace_handshake(dev, min_interval)
+        _pace_handshake(dev, min_interval, age=age)  # reuse the age just read above, not a second sysfs scan
         dev = find_hid_device()  # re-find fresh -- may have re-enumerated during that sleep
         if dev is None:
             return None

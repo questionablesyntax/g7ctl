@@ -97,6 +97,17 @@ class PacingTest(unittest.TestCase):
         never be the reason a command cannot run."""
         self.assertEqual(self._pace(age=None), [])
 
+    def test_a_precomputed_age_is_reused_instead_of_read_again(self):
+        """_find_stable_hid_device() already reads seconds_since_enumeration()
+        once per iteration to decide whether to call this function at all --
+        handing that value in via `age` must skip reading sysfs a second
+        time for the same unchanged dev, not discard it and re-read."""
+        with mock.patch.object(device, "seconds_since_enumeration") as age_fn, \
+             mock.patch.object(device.time, "sleep") as sleep:
+            device._pace_handshake(_FakeDev(), min_interval=5.0, age=1.5)
+        age_fn.assert_not_called()
+        sleep.assert_called_once_with(3.5)
+
 
 class FindStableHidDeviceTest(unittest.TestCase):
     """_find_stable_hid_device() -- from a real incident where a stale
@@ -137,15 +148,17 @@ class FindStableHidDeviceTest(unittest.TestCase):
         sleep.assert_not_called()
 
     def test_unsettled_device_waits_then_returns_it(self):
-        """Same device both times (no re-enumeration). Three reads of
+        """Same device both times (no re-enumeration). Two reads of
         seconds_since_enumeration for one un-settled pass: this function's
-        own check, _pace_handshake()'s internal check (the one that decides
-        how long to sleep), then this function's re-check of the freshly
-        re-found device afterward -- which is what actually confirms it
-        settled, not just "we slept the planned amount"."""
+        own check (also handed to _pace_handshake() as its precomputed
+        `age`, rather than that function reading sysfs a second time for
+        the same unchanged dev -- see _pace_handshake()'s own docstring),
+        then this function's re-check of the freshly re-found device
+        afterward -- which is what actually confirms it settled, not just
+        "we slept the planned amount"."""
         dev = _FakeDev()
         with mock.patch.object(device, "find_hid_device", return_value=dev), \
-             mock.patch.object(device, "seconds_since_enumeration", side_effect=[1.0, 1.0, 5.0]), \
+             mock.patch.object(device, "seconds_since_enumeration", side_effect=[1.0, 5.0]), \
              mock.patch.object(device.time, "sleep") as sleep:
             result = device._find_stable_hid_device(min_interval=5.0)
         self.assertIs(result, dev)
@@ -161,7 +174,7 @@ class FindStableHidDeviceTest(unittest.TestCase):
         second_dev = _FakeDev(address=9)  # re-enumerated to a new address
         with mock.patch.object(device, "find_hid_device",
                                 side_effect=[first_dev, second_dev]), \
-             mock.patch.object(device, "seconds_since_enumeration", side_effect=[1.0, 1.0, 5.0]), \
+             mock.patch.object(device, "seconds_since_enumeration", side_effect=[1.0, 5.0]), \
              mock.patch.object(device.time, "sleep") as sleep:
             result = device._find_stable_hid_device(min_interval=5.0)
         # Settles on the SECOND device, not the stale first one -- this is
