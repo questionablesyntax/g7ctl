@@ -412,7 +412,8 @@ class OffScaleVibrationTest(unittest.TestCase):
 
     def test_read_state_accepts_a_level_the_device_really_holds(self):
         from .fakes import FakeSession
-        state = state_mod.read_state(FakeSession(self._blob_with(47)), slot=1)
+        state = state_mod.read_state(FakeSession(self._blob_with(47)), slot=1,
+                                     interval=0, pre_heartbeats=0)
         # Reported as-is, not snapped: rounding here would mean a later sync
         # silently wrote a different value than the one on the device.
         self.assertEqual(state["vibration"]["left_grip"], 47)
