@@ -542,6 +542,37 @@ class UnconfiguredCurveTest(unittest.TestCase):
         self.assertEqual(out["curve"]["points"], [[94, 23], [176, 79], [232, 161]],
                          "should seed from Concave, the preset that was showing")
 
+    def test_switching_to_custom_never_emits_changed_with_unseeded_points(self):
+        """Real bug, found 2026-09-01: curve.currentIndexChanged used to
+        connect _emit_changed() before _update_curve_points_enabled() (Qt
+        fires slots in connection order), so switching to "custom" emitted
+        `changed` -- which the real app wires straight to save_into(),
+        writing into MainWindow's live state -- one signal-fire BEFORE the
+        seeding step replaced the widget's placeholder zeros with the
+        shown preset's shape. The test above doesn't catch this: it calls
+        save_into() manually, after both slots have already run in
+        whatever order, so it only ever sees the final, correct widget
+        state. This test instead captures what curve_points actually held
+        at the moment each `changed` fired, which is what a real listener
+        (MainWindow) would have saved."""
+        from g7ctlc.views.sticks_view import SticksView
+        state = state_mod.default_state_dict("t")
+        state["sticks"]["left"]["curve"] = {"preset": "concave", "points": None}
+        view = SticksView()
+        view.load_state(state)
+        side = view.sides["left"]
+
+        captured = []
+        side.changed.connect(lambda: captured.append(side.curve_points.points()))
+        side.curve.setCurrentText("custom")
+
+        self.assertTrue(captured, "switching preset must emit changed at least once")
+        for points in captured:
+            self.assertNotEqual(
+                points, [[0, 0], [0, 0], [0, 0]],
+                "changed fired with the widget's unseeded placeholder zeros -- "
+                "seeding must happen before this signal, not after")
+
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
 class ButtonsViewContinuousTriggerTest(unittest.TestCase):

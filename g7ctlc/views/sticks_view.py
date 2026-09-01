@@ -164,9 +164,19 @@ class _StickSideWidget(CategorySideWidget):
         outer.addWidget(adv_box)
         outer.addStretch(1)
 
-        for w in (self.trajectory, self.curve):
-            w.currentIndexChanged.connect(self._emit_changed)
+        self.trajectory.currentIndexChanged.connect(self._emit_changed)
+        # Connection order matters here -- Qt fires slots in the order
+        # they're connected on the same signal. _update_curve_points_enabled
+        # must run BEFORE _emit_changed: switching to "custom" seeds
+        # curve_points from the shown preset there, and _emit_changed flows
+        # to save_into(), which reads curve_points immediately. Real bug,
+        # found 2026-09-01, with these connected in the opposite order:
+        # switching to "custom" on an unconfigured curve wrote the widget's
+        # pre-seed value (all zeros) into state, one signal-fire before the
+        # seed that was supposed to replace it -- silently wrong data synced
+        # or exported, never shown on screen.
         self.curve.currentIndexChanged.connect(self._update_curve_points_enabled)
+        self.curve.currentIndexChanged.connect(self._emit_changed)
         for w in (self.dz_initial, self.dz_max, self.adz_initial, self.adz_max,
                   self.resolution_bits, self.sensitivity, self.overlap_area, self.dpi):
             w.valueChanged.connect(self._emit_changed)

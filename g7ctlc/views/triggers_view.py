@@ -95,8 +95,19 @@ class _TriggerSideWidget(CategorySideWidget):
         outer.addStretch(1)
 
         self.hair_trigger_mode.currentIndexChanged.connect(self._emit_changed)
-        self.curve.currentIndexChanged.connect(self._emit_changed)
+        # Connection order matters here -- Qt fires slots in the order
+        # they're connected on the same signal. _update_curve_points_enabled
+        # must run BEFORE _emit_changed: switching to "custom" seeds
+        # curve_points from the shown preset there, and _emit_changed flows
+        # to save_into(), which reads curve_points immediately. Real bug,
+        # found 2026-09-01, with these connected in the opposite order:
+        # switching to "custom" on an unconfigured curve wrote the widget's
+        # pre-seed value (all zeros) into state, one signal-fire before the
+        # seed that was supposed to replace it -- silently wrong data synced
+        # or exported, never shown on screen. See sticks_view.py, which had
+        # the identical bug.
         self.curve.currentIndexChanged.connect(self._update_curve_points_enabled)
+        self.curve.currentIndexChanged.connect(self._emit_changed)
         for w in (self.dz_initial, self.dz_max, self.adz_initial, self.adz_max):
             w.valueChanged.connect(self._emit_changed)
             w.valueChanged.connect(self._sync_curve_editor)
