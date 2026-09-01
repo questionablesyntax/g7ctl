@@ -69,8 +69,8 @@ class EstablishSessionTest(unittest.TestCase):
         # Redesigned 2026-08-29: the liveness probe now runs
         # unconditionally, wired or dongle alike -- real wired/dongle
         # detection turned out not to be possible at all (confirmed via
-        # jieli-re's extracted-firmware corpus: a wired baseline and its
-        # dongle counterpart share an identical descriptor shape). This
+        # an extracted-firmware corpus: a wired baseline and its dongle
+        # counterpart share an identical descriptor shape). This
         # test used to assert the opposite (wired must skip the probe
         # entirely) -- a healthy wired connection just passes it the same
         # way any other read succeeds, at the cost of one harmless extra

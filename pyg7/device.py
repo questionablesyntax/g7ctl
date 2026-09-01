@@ -30,10 +30,10 @@ detection to work, only for `identify_variant()`'s cosmetic colourway
 name. `XID_PID_CANDIDATES` survives only as a cosmetic dongle-label
 lookup now -- see its own comment. Also dropped: `via_dongle` no longer
 picks a settle/timeout value or gates `probe_controller_live()` --
-confirmed via real firmware extraction (`jieli-re`'s corpus) that
-GameSir's own compiled descriptors give wired and dongle baselines the
-identical shape, so there was never a reliable signal to detect here in
-the first place. See `PROTOCOL.md` and `session.py` for the rest.
+confirmed via a real firmware-extraction pass that GameSir's own
+compiled descriptors give wired and dongle baselines the identical
+shape, so there was never a reliable signal to detect here in the
+first place. See `PROTOCOL.md` and `session.py` for the rest.
 
 Progress here goes through `logging`, not print(): this module is imported
 by the GUI as well as the CLI, and a bare print() from a background watcher
@@ -101,8 +101,8 @@ HANDSHAKE_MIN_INTERVAL = 5.0
 # purely to label a *known* PID as "via the dongle" for display/logging,
 # e.g. main.py's "Using wireless dongle" message. Real detection of wired
 # vs. dongle was never possible here in the first place: confirmed via
-# jieli-re's extracted-firmware corpus (2026-08-29) that GameSir's own
-# compiled descriptors give a wired baseline and its dongle counterpart the
+# an extracted-firmware corpus (2026-08-29) that GameSir's own compiled
+# descriptors give a wired baseline and its dongle counterpart the
 # identical shape (device class 255, same layout) -- the PID is the only
 # difference, so an *unknown* PID has no way to earn a label here and
 # defaults to "not confidently a dongle" (see _cosmetic_is_dongle()), never

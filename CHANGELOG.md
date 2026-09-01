@@ -71,7 +71,7 @@ adheres to [semantic versioning](https://semver.org/).
 
 - **BREAKING (pyg7 API): `VendorSession` stopped trying to detect wired
   vs. dongle for timeouts.** Confirmed via real firmware extraction
-  (`jieli-re`'s corpus of GameSir's own compiled firmware images, not
+  (an extracted corpus of GameSir's own compiled firmware images, not
   guessed) that a wired baseline identity and its dongle counterpart
   share an identical USB descriptor shape end to end -- the PID is the
   only thing that differs, and GameSir's own firmware doesn't create a

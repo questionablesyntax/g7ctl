@@ -70,9 +70,9 @@ PID_DONGLE = 0x109c   # 2.4GHz wireless dongle counterpart to PID_XID, same
                       # read-through, not assumed away.
                       #
                       # RESOLVED, same day, by real firmware evidence (not
-                      # hardware, since that's still broken): jieli-re's
-                      # extracted-firmware corpus contains the Tri-mode
-                      # variant's own dongle firmware (dongle_tool_container.bin),
+                      # hardware, since that's still broken): an extracted
+                      # firmware corpus contains the Tri-mode variant's own
+                      # dongle firmware (dongle_tool_container.bin),
                       # and its compiled-in USB device descriptor table has
                       # BOTH 0x100a (PID_HID's own shared value, class 0 --
                       # composite) AND 0x1004 (PID_DONGLE_TRIMODE, class 255 --

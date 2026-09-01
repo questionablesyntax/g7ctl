@@ -71,7 +71,7 @@ class BatteryStatus(NamedTuple):
 # to be two separate constants (a wired default and a doubled "_DONGLE"
 # relaxation, raised 2026-07-30 for the extra RF hop through the dongle:
 # controller -> RF -> dongle -> USB). Picking between them required already
-# knowing via_dongle, which real firmware evidence (jieli-re's extracted
+# knowing via_dongle, which real firmware evidence (an extracted firmware
 # corpus) confirmed is not reliably detectable at all -- a wired baseline
 # and its dongle counterpart share an identical descriptor shape, only the
 # PID differs. So rather than guess (and risk the wrong guess: a genuinely
