@@ -177,6 +177,12 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
     # the session.
     ap.add_argument("--version", action="version", version=_version_string())
     ap.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="Log at DEBUG level instead of INFO -- diagnostic detail (structural "
+             "USB classification, pacing decisions, teardown errors) not needed for "
+             "normal use, but worth attaching to a bug report. See also 'diag' for a "
+             "one-shot device-identity snapshot.")
+    ap.add_argument(
         "--unsafe-no-wait", action="store_true",
         help=f"Skip the {HANDSHAKE_MIN_INTERVAL:.0f}s pause before switching identity again. "
              "That pause exists because rapid re-enumeration wedges the controller's "
@@ -1011,10 +1017,24 @@ def _handle_diag(min_interval: float) -> None:
 def main() -> None:
     args = build_parser().parse_args()
 
-    # Message-only format: library progress from pyg7.* is routed
-    # through logging, and on a CLI it should look exactly like the plain
-    # print()s it replaced -- no level prefixes or timestamps.
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    # Message-only format at the normal INFO level: library progress from
+    # pyg7.* is routed through logging, and on a CLI it should look exactly
+    # like the plain print()s it replaced -- no level prefixes or
+    # timestamps. --verbose changes both: DEBUG-level lines (structural
+    # classification, pacing, teardown errors -- see device.py/session.py)
+    # need a prefix to stay distinguishable from normal output once they're
+    # actually visible, which they otherwise never are (see
+    # DEBUGGING-INFRA-PLAN-2026-09-01.md -- these existed unreachable before
+    # --verbose gave them a way out).
+    # force=True: logging.basicConfig() is a no-op once the root logger
+    # already has a handler, which real usage never hits (main() runs once
+    # per real process) but a test harness invoking main() more than once
+    # in-process would -- without this, only the first such call in the
+    # whole test run would actually take effect.
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s] %(message)s", force=True)
+    else:
+        logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
 
     if args.action == "list":
         _print_list()

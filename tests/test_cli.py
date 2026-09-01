@@ -14,6 +14,7 @@ at all.
 import contextlib
 import io
 import json
+import logging
 import sys
 import tempfile
 import unittest
@@ -211,6 +212,45 @@ class MainErrorHandlingTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("Permission denied", stderr)
         self.assertNotIn("Traceback", stderr)
+
+
+class VerboseFlagTest(unittest.TestCase):
+    """--verbose actually lowers the configured logging level -- otherwise
+    the debug-level instrumentation already written into device.py/
+    session.py stays permanently unreachable regardless of the flag
+    existing at all. See DEBUGGING-INFRA-PLAN-2026-09-01.md."""
+
+    def setUp(self):
+        self._orig_argv = sys.argv
+        # basicConfig(force=True) rebuilds the root logger's handlers on
+        # every call (needed for exactly this kind of repeated in-process
+        # test), but leaving a DEBUG-level handler installed after this
+        # test class runs would make every other test's log output noisier
+        # -- restore both the level and the handler list afterward.
+        self._orig_level = logging.root.level
+        self._orig_handlers = list(logging.root.handlers)
+
+    def tearDown(self):
+        sys.argv = self._orig_argv
+        logging.root.handlers[:] = self._orig_handlers
+        logging.root.setLevel(self._orig_level)
+
+    def _run(self, argv):
+        sys.argv = ["g7ctl", *argv]
+        with contextlib.redirect_stdout(io.StringIO()):
+            cli_main.main()
+
+    def test_default_level_is_info(self):
+        self._run(["list"])
+        self.assertEqual(logging.root.getEffectiveLevel(), logging.INFO)
+
+    def test_verbose_lowers_the_level_to_debug(self):
+        self._run(["--verbose", "list"])
+        self.assertEqual(logging.root.getEffectiveLevel(), logging.DEBUG)
+
+    def test_short_flag_does_the_same_thing(self):
+        self._run(["-v", "list"])
+        self.assertEqual(logging.root.getEffectiveLevel(), logging.DEBUG)
 
 
 class _DeadControllerSession(_NoOpSettleSession):
