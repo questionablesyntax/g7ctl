@@ -552,5 +552,13 @@ class DeviceWatcher(QObject):
     def _teardown(session: VendorSession) -> None:
         try:
             session.__exit__(None, None, None)
-        except Exception:
-            pass
+        except Exception as e:
+            # VendorSession.__exit__() already catches and logs its own
+            # internal release_interface()/attach_kernel_driver() failures
+            # (see its own comment: "shouldn't vanish with zero trace
+            # anywhere") -- this is the outer net for anything that gets
+            # past that. Bare `pass` here contradicted the exact philosophy
+            # __exit__() states right next to what this wraps, in the one
+            # place (a background thread, no console) where it's hardest
+            # to ever find out. Not fatal on its own, same reasoning.
+            log.debug("session teardown failed: %s", e)

@@ -487,3 +487,30 @@ class PauseDrainsQueuedJobTest(unittest.TestCase):
             watcher.run()  # must not raise
 
         self.assertTrue(any("Lost connection" in e for e in errors))
+
+
+class _RaisingExitSession:
+    """__exit__() itself raises, past whatever internal handling
+    VendorSession.__exit__() already does for release_interface()/
+    attach_kernel_driver() -- exercises _teardown()'s own outer net."""
+
+    def __exit__(self, *exc) -> bool:
+        raise usb.core.USBError("gone mid-teardown")
+        return False  # pragma: no cover - unreachable, mirrors real __exit__'s shape
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class TeardownDoesNotVanishSilentlyTest(unittest.TestCase):
+    """Real gap, found by a dedicated active-debugging-infrastructure pass,
+    2026-09-01: _teardown()'s `except Exception: pass` contradicted this
+    codebase's own stated philosophy, quoted directly from
+    VendorSession.__exit__()'s own comment right next to what this wraps --
+    "shouldn't vanish with zero trace anywhere." See
+    DEBUGGING-INFRA-PLAN-2026-09-01.md."""
+
+    def test_a_teardown_exception_is_logged_not_swallowed_silently(self):
+        from g7ctlc.watcher import DeviceWatcher
+
+        with self.assertLogs("g7ctlc.watcher", level="DEBUG") as ctx:
+            DeviceWatcher._teardown(_RaisingExitSession())  # must not raise
+        self.assertTrue(any("session teardown failed" in line for line in ctx.output))
