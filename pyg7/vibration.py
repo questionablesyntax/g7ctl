@@ -97,6 +97,18 @@ def set_value(session: VendorSession, setting: str, value: SettingValue, profile
     elif setting in FLAGS_SETTING_IDS:
         sid = FLAGS_SETTING_IDS[setting]
         if isinstance(value, int):
+            # Real gap, found 2026-09-01: unlike the string-token path just
+            # below (which can only ever produce 0-3 via flags_byte()) and
+            # _level()'s own validator above, this accepted any int 0-255
+            # unvalidated. Only bits 0-1 (Force/Sync) are documented and
+            # confirmed by this module's own docstring -- an out-of-range
+            # value sets undefined upper bits on real hardware with
+            # unconfirmed effect. pyg7 is a public library meant for direct
+            # third-party use (see pyg7/__init__.py), so this path is
+            # reachable outside g7ctl/g7ctlc's own callers, which only ever
+            # construct the validated string form.
+            if not 0 <= value <= 3:
+                raise ValueError(f"flags value must be an int 0-3, or 'force,sync' e.g. 'on,off' -- got {value}")
             val = value
         else:
             # "force,sync" as two on/off tokens, e.g. "on,off"

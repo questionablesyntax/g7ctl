@@ -230,6 +230,25 @@ class VibrationTest(unittest.TestCase):
         vibration.set_value(sess, "left_trigger_flags", "on,off", profile=1)
         self.assertEqual(sess.only_payload(), bytes([0x03, 0x01, 0x00, 0x24, 0x01, 0x01]))
 
+    def test_flags_accept_every_in_range_int(self):
+        for flags in (0x00, 0x01, 0x02, 0x03):
+            with self.subTest(flags=flags):
+                sess = FakeSession()
+                vibration.set_value(sess, "left_trigger_flags", flags, profile=1)
+                self.assertEqual(sess.only_payload()[-1], flags)
+
+    def test_out_of_range_flags_int_rejected(self):
+        # Real gap, found 2026-09-01: only bits 0-1 (Force/Sync) are
+        # documented/confirmed -- unlike the string-token form, which can
+        # only ever produce 0-3, the int path used to accept any int 0-255
+        # unvalidated, setting undefined upper bits on real hardware.
+        with self.assertRaises(ValueError):
+            vibration.set_value(FakeSession(), "left_trigger_flags", 4)
+
+    def test_negative_flags_int_rejected(self):
+        with self.assertRaises(ValueError):
+            vibration.set_value(FakeSession(), "left_trigger_flags", -1)
+
     def test_out_of_range_level_rejected(self):
         with self.assertRaises(ValueError):
             vibration.set_value(FakeSession(), "left_grip", 101)
