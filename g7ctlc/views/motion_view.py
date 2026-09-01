@@ -41,7 +41,7 @@ from ..widgets import (
 from .sticks_view import OUTPUT_MODE_OPTIONS
 
 X_AXIS_OUTPUT_MODE_OPTIONS = [("yaw", "Yaw"), ("yaw_roll", "Yaw + Roll")]
-# Confirmed 2026-08-18 (owner, reading Nexus's own dropdown) -- see
+# Confirmed 2026-08-18, reading Nexus's own dropdown directly -- see
 # pyg7/motion.py's ACTIVATE_METHODS.
 ACTIVATE_METHOD_OPTIONS = [
     ("off", "Off"), ("hold_to_activate", "Hold to Activate"),

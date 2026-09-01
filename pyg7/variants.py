@@ -2,19 +2,18 @@
 and which GameSir Nexus-family devices are confirmed NOT to be a G7 Pro
 at all.
 
-Split out of constants.py 2026-09-01 -- all PID data, no exceptions.
-Every earlier attempt to carve out some PIDs as a separate "identity-class"
-category (used regardless of variant, therefore belonging somewhere else)
-was overruled directly: there is no such category. A PID is a fact about
-one specific piece of hardware -- this project's own reference unit
-("Shadow Ember") included -- not a more fundamental thing than a per-SKU
-PID just because it currently happens to be confirmed shared with at
-least one other variant (true of 0x100a and 0x1022 -- NOT true of every
-variant this project has data on at all; see KNOWN_VARIANTS' own comment
-for exactly which values are confirmed for which SKU and which are real,
-flagged gaps). No separate module-level PID_* constants either -- each
-variant's identities are inlined directly into its own KNOWN_VARIANTS
-entry, not duplicated as a name-then-reference pair.
+Every USB PID this project knows about lives here, not in constants.py --
+a PID is a fact about one specific piece of hardware, not something to
+split across modules by how many variants happen to share a value. This
+project's own reference unit ("Shadow Ember") is one variant among
+several, not a more fundamental case than any other, even though its
+`0x100a`/`0x1022` values are currently confirmed shared with at least one
+other variant (NOT with every variant this project has data on -- see
+KNOWN_VARIANTS' own comment for exactly which values are confirmed for
+which SKU and which are real, flagged gaps). No separate module-level
+PID_* constants either -- each variant's identities are inlined directly
+into its own KNOWN_VARIANTS entry, not declared once and referenced
+from there.
 
 This module covers: a cosmetic name for a *known* baseline PID
 (identify_variant()), and a way to recognize a PID confirmed to belong to
@@ -148,9 +147,9 @@ def is_known_dongle_pid(pid: int) -> bool:
 #
 # Absence from this dict is NOT confirmation of G7 Pro compatibility --
 # see identify_unsupported()'s own docstring. Real detection stays fully
-# permissive for anything not listed here, by design (owner's call,
-# 2026-09-01): a genuinely new, unreported G7 Pro variant must keep working
-# out of the box, the whole point of the 2026-08-29 detection redesign.
+# permissive for anything not listed here, by design: a genuinely new,
+# unreported G7 Pro variant must keep working out of the box, the whole
+# point of the 2026-08-29 detection redesign.
 # This dict exists to intercept only PIDs already confirmed to be
 # something else entirely.
 UNSUPPORTED_PIDS: dict[int, str] = {

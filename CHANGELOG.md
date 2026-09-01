@@ -29,15 +29,12 @@ adheres to [semantic versioning](https://semver.org/).
 - **BREAKING (pyg7 API): every USB identity PID moved out of
   `pyg7.constants` into a new `pyg7.variants` module, and out of named
   module-level constants entirely.** No PID lives in `pyg7.constants`
-  anymore, shared-across-variants or not -- `pyg7.variants` is where USB
-  identity data lives, full stop, not split by how many variants
-  currently happen to share a value. `PID_HID`/`PID_XID`/`PID_DONGLE`/
-  `PID_NATIVE` briefly existed there as their own named constants too,
-  reasoned as an "identity-class" category distinct from per-SKU data --
-  overruled: a PID is a fact about specific hardware (this project's own
-  reference unit, "Shadow Ember", included), not a more fundamental thing
-  just because it's currently confirmed shared across every variant
-  checked so far. `identify_variant()` and `VARIANT_NAMES` (renamed
+  anymore -- `pyg7.variants` is where USB identity data lives, full stop,
+  not split by how many variants currently happen to share a value: a PID
+  is a fact about specific hardware, including this project's own
+  reference unit ("Shadow Ember"), not a more fundamental thing just
+  because it's currently confirmed shared with another variant.
+  `identify_variant()` and `VARIANT_NAMES` (renamed
   `KNOWN_VARIANTS`, a tuple of `Variant(name, xid_pid, dongle_pid, hid_pid,
   native_pid)`, the last two `Optional` and filled in only where
   independently confirmed, instead of a plain dict) moved the same way --
@@ -57,11 +54,10 @@ adheres to [semantic versioning](https://semver.org/).
   across confirmed variants (0x100a: Shadow Ember + White Trimode; 0x1022:
   Shadow Ember + Zenless Zone Zero, a real hardware fact per
   `VARIANT_PIDS.md`, not a code gap), so today's data still returns `None`
-  honestly rather than guessing one name out of a genuine collision. Also
-  corrected an overclaim this same rewrite's own comment made: 0x100a and
-  0x1022 are NOT confirmed for every known variant -- White Trimode's
-  native PID and Zenless Zone Zero's HID PID are explicitly unconfirmed
-  per `VARIANT_PIDS.md`'s "Gaps" section.
+  honestly rather than guessing one name out of a genuine collision. Note
+  that 0x100a and 0x1022 are NOT confirmed for every known variant --
+  White Trimode's native PID and Zenless Zone Zero's HID PID are
+  explicitly unconfirmed per `VARIANT_PIDS.md`'s "Gaps" section.
 
 ## [0.3.0] - 2026-08-30
 

@@ -395,7 +395,7 @@ class MotionWriteTest(unittest.TestCase):
             motion.set_value(FakeSession(), "aim", "x_axis_output_mode", "pitch", profile=1)
 
     def test_activate_method_encoding(self):
-        # Confirmed 2026-08-18 (owner, reading Nexus's own dropdown labels).
+        # Confirmed 2026-08-18, reading Nexus's own dropdown labels directly.
         cases = (("off", 0x00), ("hold_to_activate", 0x01),
                  ("press_to_activate", 0x02), ("always_on", 0x03))
         for name, expected in cases:

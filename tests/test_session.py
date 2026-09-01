@@ -342,9 +342,9 @@ class FirmwareVersionTest(unittest.TestCase):
         self.assertEqual(info.groups, ("0209",))
 
     def test_extra_groups_are_carried_but_not_decoded(self):
-        # The second group is NOT the dongle's firmware: the owner's dongle
-        # reports v2.0.9 while this field reads 0152. It matches bcdDevice
-        # instead. Carried through raw rather than labelled.
+        # The second group is NOT the dongle's firmware: this project's own
+        # reference dongle reports v2.0.9 while this field reads 0152. It
+        # matches bcdDevice instead. Carried through raw rather than labelled.
         info = VendorSession(_FakeReadDevice([_fw("02440152")])).read_firmware_version()
         self.assertEqual(info.groups, ("0244", "0152"))
         self.assertEqual(info.raw, "02440152")

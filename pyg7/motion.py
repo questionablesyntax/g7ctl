@@ -52,8 +52,8 @@ _OUTPUT_MODE_NAMES = {v: k for k, v in OUTPUT_MODES.items()}
 X_AXIS_OUTPUT_MODES = {"yaw": 0x01, "yaw_roll": 0x03}
 _X_AXIS_OUTPUT_MODE_NAMES = {v: k for k, v in X_AXIS_OUTPUT_MODES.items()}
 
-# Confirmed 2026-08-18 (owner, reading Nexus's own Activate Method dropdown
-# directly) -- not inferred from convention the way the earlier guess that
+# Confirmed 2026-08-18, reading Nexus's own Activate Method dropdown
+# directly -- not inferred from convention the way the earlier guess that
 # 0x00 = "Off" was. Matches the guess for 0x00, but the other three values
 # had no candidate names before this.
 ACTIVATE_METHODS = {

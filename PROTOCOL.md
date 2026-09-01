@@ -75,7 +75,7 @@ Motion's own Output selector instead of a button binding (`Motion output
 alongside the report-rate finding above).
 
 **The bundle is confirmed closed, not just a floor of two known
-members.** The owner tested every setting category on real hardware
+members.** Every setting category was tested on real hardware
 (2026-08-29): the only two triggers found anywhere are (1) anything that
 outputs to a keyboard or mouse (any button bind, Motion-as-Mouse) and (2)
 1000Hz report rate. Nothing else in the settings -- Sticks, Triggers,
@@ -338,7 +338,7 @@ address a write correctly. It exists so a UI can show which profile is in
 use.
 
 **Selector `0x09` is the controller's firmware version.** Confirmed
-2026-08-12 against the version the owner reads off the controller itself:
+2026-08-12 against the version read directly off the controller itself:
 
 | value | when | firmware |
 |---|---|---|
@@ -352,10 +352,11 @@ connection.
 
 **The second group is not the dongle's firmware either.** Current firmware
 answers `"02440152"`; the obvious guess is that `0152` is the dongle, and it
-is wrong -- the owner's dongle reports v2.0.9, not v1.5.2. `0152` does match
-the USB descriptor's `bcdDevice` exactly, so a hardware/descriptor revision
-is the better guess, but it stays a guess. `pyg7` returns extra groups raw
-and unlabelled, and `g7ctl firmware` prints them marked "undecoded".
+is wrong -- this project's own reference dongle reports v2.0.9, not v1.5.2.
+`0152` does match the USB descriptor's `bcdDevice` exactly, so a
+hardware/descriptor revision is the better guess, but it stays a guess.
+`pyg7` returns extra groups raw and unlabelled, and `g7ctl firmware`
+prints them marked "undecoded".
 
 **Do not read the leading zero as part of a two-digit major**, and note the
 format cannot express a component above 9 -- a v2.10.0 would have to encode
@@ -1208,7 +1209,7 @@ capture, not by resemblance.** Same category prefix `03 [PROFILE] 01`
 
 | Setting | `SETTING_ID` | Payload after prefix | Notes |
 |---|---|---|---|
-| Activate Method | `0x9C` | `[id] 01 [00=Off\|01=Hold to Activate\|02=Press to Activate\|03=Always On]` | Confirmed 2026-08-18 (owner, reading Nexus's own dropdown labels directly -- not inferred from convention) |
+| Activate Method | `0x9C` | `[id] 01 [00=Off\|01=Hold to Activate\|02=Press to Activate\|03=Always On]` | Confirmed 2026-08-18, reading Nexus's own dropdown labels directly -- not inferred from convention |
 | Activate Button | `0x9D` | `[id] 01 [KEYCODE]` | Which button, held/pressed, activates motion input |
 | X-Axis Output Mode | `0x9E` | `[id] 01 [01=Yaw\|03=Yaw+Roll]` | Gates whether an invert control exists at all -- see below |
 | Deadzone Initial | `0xA0` | long form, **suffix must be read live -- same reasoning as Sticks** | |
@@ -1236,8 +1237,8 @@ then decides *which* byte/label shows once that gate is open: `0xB4`
 labelled "Invert Yaw" outside Button Binds, `0xB2` labelled "Invert Roll"
 inside it (Aim only -- Tilt shows no equivalent control under Button
 Binds). Both bytes are real, independently addressed, and were confirmed
-in the same evening's capture without needing a raw blob read -- the owner
-found the actual gate by hand, live in Nexus, once the address arithmetic
+in the same evening's capture without needing a raw blob read -- the
+actual gate was found by hand, live in Nexus, once the address arithmetic
 alone produced a contradiction (see below).
 
 ### Aim/Tilt are `0x22` apart, not the `0x20` a stick's Left/Right uses
@@ -1303,8 +1304,8 @@ points yet.
 - **Mouse output mode may have its own extra field**, the way Sticks' Mouse
   mode has DPI. Never captured, no capture attempted.
 
-`activate_method`'s named enum was the third item here; closed 2026-08-18
-(owner read Nexus's dropdown directly) -- see the table above.
+`activate_method`'s named enum was the third item here; closed 2026-08-18,
+reading Nexus's dropdown directly -- see the table above.
 
 ## The `CMD_READ` wedge, and what it costs
 

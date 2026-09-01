@@ -1,14 +1,9 @@
 """Low-level protocol constants -- wire format only. See PROTOCOL.md.
 
 USB identity data (PIDs, per-variant or shared) lives in variants.py
-instead, not here -- moved out entirely 2026-09-01 (initially only the
-per-SKU PIDs moved; the reference hardware's own PID_HID/PID_XID/
-PID_DONGLE/PID_NATIVE were kept here at first on the reasoning that they
-were "identity-class, used regardless of variant" -- overruled directly:
-they're real PID values tied to specific hardware identities the same way
-every other variant's PIDs are, and variants.py is where PID data lives,
-full stop, not split by how many variants currently happen to share a
-value). This module has zero USB product IDs in it now.
+instead, not here -- a PID is a fact about specific hardware, not
+something to split across modules by how many variants happen to share a
+value. This module has zero USB product IDs in it.
 """
 
 VID = 0x3537

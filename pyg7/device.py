@@ -122,14 +122,12 @@ def _candidate_devices():
     find_hid_device()/find_writable_device() -- one blacklist gate, not
     three near-duplicate checks.
 
-    Added 2026-09-01, requested directly (owner: "we could filter out
-    controllers we know we cant support but dont actually have the PID
-    for" -- string-based filtering was ruled out the same conversation:
-    `iProduct` is both unstable across real re-enumerations of the same
-    PID, confirmed live, and not even meaningful when stable -- this
+    Added 2026-09-01. A product-string filter (`iProduct`) was considered
+    and ruled out first: it's unstable across real re-enumerations of the
+    same PID, confirmed live, and not even meaningful when stable -- this
     project's own native identity (`1022`) and baseline identity (`109b`)
     have reported the identical string despite being structurally
-    unrelated, see FINDINGS.md).
+    unrelated, see FINDINGS.md.
 
     A device whose PID ISN'T on that list is still a candidate, even if
     it's genuinely some other, as-yet-unreported GameSir Nexus-family
@@ -137,11 +135,10 @@ def _candidate_devices():
     positively confirm "this is definitely a G7 Pro" without either its
     PID already being known-bad or known-good, or real hardware to test.
     Absence from the unsupported list is deliberately NOT read as
-    confirmation of G7 Pro compatibility (owner's explicit call,
-    2026-09-01): a genuinely new, unreported G7 Pro variant must keep
-    working immediately, the whole point of the 2026-08-29 redesign.
-    Each finder below still applies its own structural check on top of
-    what this yields.
+    confirmation of G7 Pro compatibility: a genuinely new, unreported G7
+    Pro variant must keep working immediately, the whole point of the
+    2026-08-29 redesign. Each finder below still applies its own
+    structural check on top of what this yields.
     """
     for dev in all_vid_devices():
         unsupported = identify_unsupported(dev.idProduct)
@@ -531,15 +528,14 @@ def switch_to_xid(timeout_s: float = 10.0,
     (see PROTOCOL.md "The handshake" for exactly what that does and
     doesn't mean).
 
-    **Still checks the current state first before handshaking, on
-    purpose, by the owner's own call** -- not because handshaking a
-    no-HID device is unsafe (it's confirmed harmless), but because the
-    check avoids an unnecessary interface claim/release cycle (a real
-    `xpad` detach/reattach, a fresh input-node registration) when nothing
-    actually needs to change. Revisit dropping this gate as its own
-    deliberate decision if that overhead ever matters in practice; it
-    isn't a safety mechanism, so there's no correctness reason it has to
-    stay.
+    **Still checks the current state first before handshaking, deliberately
+    -- not because handshaking a no-HID device is unsafe** (it's confirmed
+    harmless), but because the check avoids an unnecessary interface
+    claim/release cycle (a real `xpad` detach/reattach, a fresh input-node
+    registration) when nothing actually needs to change. Revisit dropping
+    this gate as its own deliberate decision if that overhead ever matters
+    in practice; it isn't a safety mechanism, so there's no correctness
+    reason it has to stay.
 
     Returns `(device, via_dongle)`, the same shape `find_writable_device()`
     returns. `via_dongle` is cosmetic-only as of the 2026-08-29 detection
