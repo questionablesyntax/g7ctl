@@ -4,9 +4,13 @@ icon together.
 Closing the window hides it rather than quitting (tray-app behavior) --
 use the tray menu's Quit to actually exit.
 """
+import argparse
 import ctypes
 import logging
+import logging.handlers
+import os
 import sys
+from pathlib import Path
 
 from PyQt6.QtCore import QThread
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
@@ -16,6 +20,21 @@ from .main_window import MainWindow
 from .theme import STYLESHEET
 from .tray import TrayIcon
 from .watcher import DeviceWatcher
+
+# Same XDG_CONFIG_HOME convention main_window.py's _GEOMETRY_PATH already
+# uses -- one config directory for this app, not a second convention for
+# the log file.
+_LOG_PATH = (
+    Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    / "g7ctl" / "g7ctlc.log"
+)
+# Placeholder, not measured against real debug-level chattiness over a
+# real session -- starting point per DEBUGGING-INFRA-PLAN-2026-09-01.md,
+# revisit if it turns out too small (truncates useful history) or too
+# large (unbounded growth was the thing worth avoiding in the first
+# place).
+_LOG_MAX_BYTES = 1_000_000
+_LOG_BACKUP_COUNT = 3
 
 # Matches packaging/g7ctlc.desktop's filename (without the
 # extension). Without this, Qt/KWin identify the window/app_id as just
@@ -48,16 +67,55 @@ def _rename_process(name: str = DESKTOP_FILE_NAME) -> None:
         pass
 
 
+def _parse_args(argv: list) -> argparse.Namespace:
+    """`-v`/`--verbose` only -- parse_known_args() so Qt's own flags
+    (-style, -platform, ...) pass through untouched to QApplication(sys.argv)
+    below rather than being rejected as unrecognized by this parser."""
+    parser = argparse.ArgumentParser(prog="g7ctlc", add_help=True)
+    parser.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="Log at DEBUG level instead of INFO, in both the log file and stderr -- "
+             "diagnostic detail not needed for normal use, but worth attaching to a "
+             "bug report alongside the log file itself. See also `g7ctl diag`.")
+    args, _unknown = parser.parse_known_args(argv)
+    return args
+
+
+def _configure_logging(verbose: bool) -> None:
+    """Stderr always (matches the pre-2026-09-01 behavior, since a
+    terminal launch should still see it live); a rotating file always too
+    -- the GUI has no visible console for the normal desktop-icon launch
+    path, so without a durable file, raising the level here doesn't
+    actually help anyone but a user who happened to launch from a
+    terminal and think to redirect it. See DEBUGGING-INFRA-PLAN-2026-09-01.md.
+    """
+    level = logging.DEBUG if verbose else logging.INFO
+    fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    handlers = [logging.StreamHandler(sys.stderr)]
+    try:
+        _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(logging.handlers.RotatingFileHandler(
+            _LOG_PATH, maxBytes=_LOG_MAX_BYTES, backupCount=_LOG_BACKUP_COUNT))
+    except OSError:
+        # Best-effort: a log file this process can't create (read-only
+        # home, permissions, disk full) must not stop the app from
+        # launching at all -- stderr alone still works, same as before
+        # this existed. Logged once the (stderr-only) handler is in place
+        # below, not raised.
+        logging.basicConfig(level=level, format=fmt, handlers=handlers, force=True)
+        logging.warning("could not open log file %s -- logging to stderr only", _LOG_PATH,
+                        exc_info=True)
+        return
+    logging.basicConfig(level=level, format=fmt, handlers=handlers, force=True)
+
+
 def main() -> int:
+    args = _parse_args(sys.argv[1:])
     # The protocol library and the watcher thread report progress through
-    # logging rather than print(). Send it to stderr with the logger name
-    # attached -- unlike the CLI, here the records come from a background
-    # thread and knowing which component spoke is worth the extra prefix.
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(levelname)s %(name)s: %(message)s",
-        stream=sys.stderr,
-    )
+    # logging rather than print(). Includes the logger name -- unlike the
+    # CLI, here the records come from a background thread and knowing
+    # which component spoke is worth the extra prefix.
+    _configure_logging(args.verbose)
     _rename_process()
 
     app = QApplication(sys.argv)
