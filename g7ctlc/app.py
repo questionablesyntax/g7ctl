@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QThread
-from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
+from PyQt6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
 
 from . import __version__
 from .main_window import MainWindow
@@ -109,6 +109,44 @@ def _configure_logging(verbose: bool) -> None:
     logging.basicConfig(level=level, format=fmt, handlers=handlers, force=True)
 
 
+def _install_crash_hook(main_window: "MainWindow") -> None:
+    """A slot exception -- same-thread or the watcher thread's own
+    cross-thread queued signals alike -- does NOT abort this app on the
+    installed PyQt6 version (6.11.0): confirmed empirically 2026-09-01
+    (both shapes tested directly, not assumed from documentation -- see
+    DEBUGGING-INFRA-PLAN-2026-09-01.md's phase 3), not just hoped for.
+    Qt's own default handling already prints a traceback and keeps the
+    event loop running; what's missing without this is a durable record
+    of it anywhere -- the default traceback only ever reaches whatever
+    terminal happened to launch this, invisible on the normal
+    desktop-icon launch path and gone the moment that terminal closes.
+
+    Installed once real app state exists (main_window, for a dialog
+    parent) -- not around QApplication's own construction, which fails
+    fast and is already visible via stderr/the log immediately.
+    """
+    previous_hook = sys.excepthook
+
+    def _hook(exc_type: type, exc_value: BaseException, exc_tb) -> None:
+        logging.critical(
+            "Unhandled exception in a Qt slot -- the app is still running, "
+            "but this specific action may not have completed. Log file: %s",
+            _LOG_PATH, exc_info=(exc_type, exc_value, exc_tb))
+        previous_hook(exc_type, exc_value, exc_tb)
+        _show_crash_dialog(main_window, exc_type, exc_value)
+
+    sys.excepthook = _hook
+
+
+def _show_crash_dialog(parent, exc_type: type, exc_value: BaseException) -> None:
+    QMessageBox.critical(
+        parent, "Something went wrong",
+        f"{exc_type.__name__}: {exc_value}\n\n"
+        "The app is still running, but this specific action may not have "
+        f"completed. Details were written to {_LOG_PATH} -- "
+        "attach it if you use Help → Report an Issue.")
+
+
 def main() -> int:
     args = _parse_args(sys.argv[1:])
     # The protocol library and the watcher thread report progress through
@@ -132,6 +170,7 @@ def main() -> int:
 
     window = MainWindow()
     window.show()
+    _install_crash_hook(window)
 
     if not QSystemTrayIcon.isSystemTrayAvailable():
         logging.warning("no system tray available on this session -- "
