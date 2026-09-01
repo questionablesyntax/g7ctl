@@ -779,3 +779,73 @@ class UnconfirmedStateDisplayTest(unittest.TestCase):
         for scroll in scrolls:
             self.assertTrue(scroll.isEnabled())
             self.assertTrue(scroll.verticalScrollBar().isEnabled())
+
+
+class ImportExportSyncingGuardTest(unittest.TestCase):
+    """Real race, found 2026-09-01: Import/Export were never gated on
+    _syncing at all, unlike every other state-affecting control
+    (sync_btn/read_btn/release_btn/profile_combo). Export reads self._state
+    while the watcher thread may be iterating that same dict object
+    mid-sync; Import replaces self._state outright, so a sync that finishes
+    after an Import lands calls set_sync_finished() -- which clears the
+    dirty flag as if the *imported* state had just been synced, when the
+    device actually still holds whatever was pushed before the import."""
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+        w = MainWindow()
+        w.set_connection_state("connected")
+        w.set_read_finished(True, "read ok", state_mod.default_state_dict("read"))
+        return w
+
+    def test_import_export_button_disabled_during_a_sync(self):
+        w = self._window()
+        with mock.patch.object(w, "_confirm", return_value=True):
+            w.request_sync_now()
+        self.assertFalse(w.import_export_btn.isEnabled())
+
+        w.set_sync_finished(True, "State applied")
+        self.assertTrue(w.import_export_btn.isEnabled())
+
+    def test_import_export_button_disabled_during_a_read(self):
+        w = self._window()
+        w._dirty = False  # no confirm prompt needed for this path
+        w.request_read_from_device()
+        self.assertFalse(w.import_export_btn.isEnabled())
+
+        w.set_read_finished(True, "read ok", state_mod.default_state_dict("read"))
+        self.assertTrue(w.import_export_btn.isEnabled())
+
+    def test_import_does_not_replace_state_mid_sync(self):
+        w = self._window()
+        original_state = w._state
+        with mock.patch.object(w, "_confirm", return_value=True):
+            w.request_sync_now()
+
+        with mock.patch.object(
+            state_mod, "load_state", return_value=state_mod.default_state_dict("imported")
+        ), mock.patch(
+            "g7ctlc.main_window.QFileDialog.getOpenFileName",
+            return_value=("/tmp/snapshot.json", ""),
+        ):
+            w._on_import()
+
+        self.assertIs(w._state, original_state, "Import must not swap self._state while a sync is in flight")
+
+    def test_export_does_not_read_state_mid_sync(self):
+        w = self._window()
+        with mock.patch.object(w, "_confirm", return_value=True):
+            w.request_sync_now()
+
+        with mock.patch.object(state_mod, "save_state") as save_state, mock.patch(
+            "g7ctlc.main_window.QFileDialog.getSaveFileName",
+            return_value=("/tmp/snapshot.json", ""),
+        ):
+            w._on_export()
+
+        save_state.assert_not_called()

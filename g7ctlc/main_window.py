@@ -686,6 +686,16 @@ class MainWindow(QMainWindow):
         # watcher.py's own fix), but there's no reason to let a click
         # through mid-sync in the first place, same as sync_btn/read_btn.
         self.release_btn.setEnabled(False)
+        # Real race, found 2026-09-01: Import/Export were never gated on
+        # _syncing at all, unlike every other state-affecting control here.
+        # Export reads self._state while the watcher thread is iterating
+        # that same dict object mid-sync (see _refresh_confirmed_display()'s
+        # docstring); Import replaces self._state outright, so a sync that
+        # finishes after an Import lands calls set_sync_finished() -> the
+        # dirty flag clears as if the *imported* state had just been synced,
+        # when the device actually still holds whatever was pushed before
+        # the import.
+        self.import_export_btn.setEnabled(False)
         self._refresh_confirmed_display()  # locks every tab for the duration
         self.sync_status_label.setText("Syncing…")
         self.sync_requested.emit(self._state)
@@ -705,6 +715,7 @@ class MainWindow(QMainWindow):
         self.read_btn.setEnabled(self._connection_state == "connected")
         self.release_btn.setEnabled(self._connection_state == "connected")
         self.profile_combo.setEnabled(True)
+        self.import_export_btn.setEnabled(True)
         if success:
             self._set_dirty(False)  # the device now matches what we just pushed
         else:
@@ -735,6 +746,7 @@ class MainWindow(QMainWindow):
         self.read_btn.setEnabled(False)
         self.profile_combo.setEnabled(False)
         self.release_btn.setEnabled(False)  # same reasoning as request_sync_now()
+        self.import_export_btn.setEnabled(False)  # same reasoning as request_sync_now()
         self._refresh_confirmed_display()  # locks every tab for the duration
         self.sync_status_label.setText("Reading from device…")
         slot = self._state.get("controller_slot") or 1
@@ -751,6 +763,7 @@ class MainWindow(QMainWindow):
         self.read_btn.setEnabled(self._connection_state == "connected")
         self.release_btn.setEnabled(self._connection_state == "connected")
         self.profile_combo.setEnabled(True)
+        self.import_export_btn.setEnabled(True)
         if not success or device_state is None:
             if not success:
                 # Same reasoning as set_sync_finished()'s warning -- a
@@ -922,6 +935,14 @@ class MainWindow(QMainWindow):
         return str(_LEGACY_PROFILES_DIR if _LEGACY_PROFILES_DIR.is_dir() else Path.home())
 
     def _on_export(self) -> None:
+        # Also guarded by import_export_btn being disabled during a sync/read
+        # (see request_sync_now()/request_read_from_device()) -- checked here
+        # too, same belt-and-suspenders reasoning as request_read_from_device()'s
+        # own self._syncing check. self._state is the exact dict object the
+        # watcher thread may be iterating mid-sync; reading it concurrently
+        # here would be a data race.
+        if self._syncing:
+            return
         path, _filter = QFileDialog.getSaveFileName(
             self, "Export State", self._default_snapshot_dir(), "JSON files (*.json)",
         )
@@ -935,6 +956,13 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"Exported to {Path(path).name}")
 
     def _on_import(self) -> None:
+        # Same guard as _on_export(): replacing self._state mid-sync would
+        # leave the in-flight job's set_sync_finished()/set_read_finished()
+        # clearing the dirty flag against the *imported* state once it lands,
+        # as if the imported state -- not what was actually pushed -- had
+        # just been synced.
+        if self._syncing:
+            return
         path, _filter = QFileDialog.getOpenFileName(
             self, "Import State", self._default_snapshot_dir(), "JSON files (*.json)",
         )
