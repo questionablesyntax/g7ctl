@@ -351,6 +351,42 @@ class DeadzoneLiveSuffixTest(unittest.TestCase):
         self.assertEqual(right.reads[0][1], 0xCF + 0x1C + triggers.STORAGE_BASE + 1)
 
 
+class LongFormMarkerSuffixLengthTest(unittest.TestCase):
+    """MARKER (the wire LEN byte) must equal 1 + len(suffix) -- the value
+    byte plus the live-read suffix that follows it -- for every long-form
+    Deadzone/Anti-Deadzone write in sticks.py/triggers.py/motion.py.
+
+    Real bug, found 2026-09-01 (second bug-hunt pass): sticks.py's
+    deadzone_initial/deadzone_max constants violated this by one byte --
+    the captured suffix hex strings had accidentally included the write's
+    own value byte as part of the "suffix". Nothing caught it: the only
+    existing coverage (DeadzoneLiveSuffixTest above) checks that the
+    suffix bytes match the live blob, never that the length is right.
+    This test checks the actual invariant directly, module by module, so
+    a future capture-extraction slip fails immediately instead of
+    silently sending a mis-sized payload.
+    """
+
+    def _check(self, module, prefix):
+        for name in ("DEADZONE_INITIAL", "DEADZONE_MAX",
+                     "ANTI_DEADZONE_INITIAL", "ANTI_DEADZONE_MAX"):
+            marker = getattr(module, f"_{name}_MARKER")
+            suffix_len = getattr(module, f"_{name}_SUFFIX_LEN")
+            with self.subTest(module=prefix, setting=name):
+                self.assertEqual(marker, 1 + suffix_len,
+                                  f"{prefix}._{name}_MARKER ({marker}) must equal "
+                                  f"1 + _{name}_SUFFIX_LEN ({suffix_len})")
+
+    def test_sticks_markers_match_their_suffix_lengths(self):
+        self._check(sticks, "sticks")
+
+    def test_triggers_markers_match_their_suffix_lengths(self):
+        self._check(triggers, "triggers")
+
+    def test_motion_markers_match_their_suffix_lengths(self):
+        self._check(motion, "motion")
+
+
 class TriggerWriteTest(unittest.TestCase):
     def test_right_side_shifts_setting_id_by_0x1c(self):
         # Deliberately different from Sticks' +0x20 -- confirmed per-category.

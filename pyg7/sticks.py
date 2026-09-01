@@ -80,9 +80,20 @@ STORAGE_BASE = 0x100
 # confirmed-good payload size), extracted from the stored live USB
 # captures for exactness, not from memory.
 _DEADZONE_INITIAL_MARKER = 0x0E
-_DEADZONE_INITIAL_SUFFIX_LEN = len(bytes.fromhex("640064010064000026298080d900"))
+# Real bug, found 2026-09-01 (second bug-hunt pass): this hex string used
+# to be "640064010064000026298080d900" -- one byte too long for its own
+# marker (marker must equal 1 + len(suffix), the same invariant
+# triggers.py enforces with an explicit assert and motion.py states
+# outright). The leading "64" was the write's own VALUE byte, accidentally
+# captured as part of the suffix -- confirmed by comparing shapes: with it
+# dropped, this string's own leading bytes exactly match
+# _DEADZONE_MAX_SUFFIX_LEN's below ("0064010064000...", differing only in
+# the setting-specific tail), the same relationship every other adjacent
+# pair in this family already has.
+_DEADZONE_INITIAL_SUFFIX_LEN = len(bytes.fromhex("0064010064000026298080d900"))
 _DEADZONE_MAX_MARKER = 0x0D
-_DEADZONE_MAX_SUFFIX_LEN = len(bytes.fromhex("0064010064000029298080d600"))
+# Same bug, same fix: leading "00" trimmed -- was "0064010064000029298080d600".
+_DEADZONE_MAX_SUFFIX_LEN = len(bytes.fromhex("64010064000029298080d600"))
 _ANTI_DEADZONE_INITIAL_MARKER = 0x0D
 _ANTI_DEADZONE_INITIAL_SUFFIX_LEN = len(bytes.fromhex("64010064000028278080d7d8"))
 _ANTI_DEADZONE_MAX_MARKER = 0x0C
@@ -161,15 +172,19 @@ def set_value(session: VendorSession, side: str, setting: str, value: SettingVal
         return write_curve_points(session, prefix, sid, parse_points(value))
     elif setting == "deadzone_initial":
         suffix = session.read_live_suffix(profile, sid + STORAGE_BASE, _DEADZONE_INITIAL_SUFFIX_LEN)
+        assert len(suffix) + 1 == _DEADZONE_INITIAL_MARKER, "suffix length drifted from the captured template"
         payload = prefix + bytes([sid, _DEADZONE_INITIAL_MARKER, _percent(value)]) + suffix
     elif setting == "deadzone_max":
         suffix = session.read_live_suffix(profile, sid + STORAGE_BASE, _DEADZONE_MAX_SUFFIX_LEN)
+        assert len(suffix) + 1 == _DEADZONE_MAX_MARKER, "suffix length drifted from the captured template"
         payload = prefix + bytes([sid, _DEADZONE_MAX_MARKER, _percent(value)]) + suffix
     elif setting == "anti_deadzone_initial":
         suffix = session.read_live_suffix(profile, sid + STORAGE_BASE, _ANTI_DEADZONE_INITIAL_SUFFIX_LEN)
+        assert len(suffix) + 1 == _ANTI_DEADZONE_INITIAL_MARKER, "suffix length drifted from the captured template"
         payload = prefix + bytes([sid, _ANTI_DEADZONE_INITIAL_MARKER, _percent(value)]) + suffix
     elif setting == "anti_deadzone_max":
         suffix = session.read_live_suffix(profile, sid + STORAGE_BASE, _ANTI_DEADZONE_MAX_SUFFIX_LEN)
+        assert len(suffix) + 1 == _ANTI_DEADZONE_MAX_MARKER, "suffix length drifted from the captured template"
         payload = prefix + bytes([sid, _ANTI_DEADZONE_MAX_MARKER, _percent(value)]) + suffix
     elif setting == "resolution_bits":
         bits = int(value)
