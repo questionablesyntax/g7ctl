@@ -435,6 +435,51 @@ class RightTriggerPageBoundaryTest(unittest.TestCase):
         self.assertEqual(len(right.payloads), 2)
 
 
+class CurvePresetCustomFormTest(unittest.TestCase):
+    """Real regression, found 2026-09-01 (second bug-hunt pass): routing
+    triggers.py's "curve" setting through send_addressed() -- which derives
+    the wire LEN byte from the actual data length -- broke the "custom"
+    preset specifically. curve_preset_payload("custom")'s hardware-confirmed
+    shape is [sid, LEN=1, 0x03, 0x00]: LEN deliberately does NOT count the
+    trailing 0x00 (see its own docstring), so send_addressed() turned that
+    into LEN=2 on every single "set curve to custom" call -- not a rare
+    edge case, and not caught by any existing test: the only curve-preset
+    byte-exact tests before this one covered motion.py, which has its own,
+    differently-shaped Custom form (no trailing byte at all) and was never
+    touched by the regression. sticks.py, which never went through
+    send_addressed() at all, also had zero dedicated test coverage for
+    this despite being correct -- added here too, for the same reason.
+    """
+
+    def test_sticks_custom_preset_matches_the_captured_bytes(self):
+        sess = FakeSession()
+        sticks.set_value(sess, "left", "curve", "custom", profile=1)
+        self.assertEqual(sess.only_payload(), bytes([0x03, 0x01, 0x01, 0x44, 0x01, 0x03, 0x00]))
+
+    def test_trigger_custom_preset_matches_the_captured_bytes(self):
+        sess = FakeSession()
+        triggers.set_value(sess, "left", "curve", "custom", profile=1)
+        self.assertEqual(sess.only_payload(), bytes([0x03, 0x01, 0x00, 0xDC, 0x01, 0x03, 0x00]))
+
+    def test_trigger_custom_preset_on_the_right_side_too(self):
+        # Not offset-dependent -- the bug fired identically on both sides.
+        sess = FakeSession()
+        triggers.set_value(sess, "right", "curve", "custom", profile=1)
+        self.assertEqual(sess.only_payload(),
+                          bytes([0x03, 0x01, 0x00, 0xDC + 0x1C, 0x01, 0x03, 0x00]))
+
+    def test_trigger_named_presets_still_go_through_send_addressed_correctly(self):
+        # Contrast case: named presets' LEN genuinely matches their byte
+        # count, so routing them through send_addressed() is correct --
+        # this must keep working exactly as before.
+        sess = FakeSession()
+        triggers.set_value(sess, "left", "curve", "standard", profile=1)
+        payload = sess.only_payload()
+        self.assertEqual(payload[3], 0xDC)  # setting_id
+        self.assertEqual(payload[4], 0x0A)  # LEN=10, matches the 10 bytes of real shape data
+        self.assertEqual(len(payload), 5 + 10)
+
+
 class MotionWriteTest(unittest.TestCase):
     """See pyg7/motion.py -- every address here traces back to a live
     capture (test72-test77), not to the +0x22 stride alone; the two

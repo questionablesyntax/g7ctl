@@ -12,7 +12,7 @@ scoping" and sticks.py's module docstring (an
 earlier single test had wrongly suggested no profile targeting existed
 here).
 """
-from .constants import RIGHT_TRIGGER_OFFSET, prefix_triggers_vibration
+from .constants import CMD_WRITE, RIGHT_TRIGGER_OFFSET, prefix_triggers_vibration
 from .curves import (
     CURVE_PRESET_NAMES,
     curve_preset_payload,
@@ -118,8 +118,27 @@ def set_value(session: VendorSession, side: str, setting: str, value: SettingVal
             raise ValueError(f"hair_trigger_mode must be one of {list(HAIR_TRIGGER_MODES)}")
         data = bytes([val])
     elif setting == "curve":
+        if str(value).lower() == "custom":
+            # Real regression, found 2026-09-01: curve_preset_payload()'s
+            # "custom" shape is [sid, LEN=1, 0x03, 0x00] -- LEN deliberately
+            # does NOT count the trailing 0x00 (see its own docstring: "1
+            # for Custom", not 2, even though 2 bytes follow -- this is the
+            # hardware-confirmed capture, not a choice made here). Routing
+            # it through send_addressed() below turns that into LEN=2,
+            # since send_addressed() derives LEN from the actual byte
+            # count -- silently wrong on every single "set curve to
+            # custom" call, not a rare edge case. Never needs
+            # send_addressed()'s page-splitting either (4 bytes total,
+            # nowhere near a page boundary for any offset in this
+            # protocol), so sending it exactly as captured is both
+            # correct and simpler than teaching send_addressed() to
+            # special-case a LEN that lies about its own payload size.
+            return session.send_raw(CMD_WRITE, prefix + curve_preset_payload(sid, value))
         # curve_preset_payload() returns [sid][LEN][...]; strip that 2-byte
-        # header back off since send_addressed() rebuilds it itself.
+        # header back off since send_addressed() rebuilds it itself. Safe
+        # here specifically because every NAMED preset's LEN genuinely
+        # matches its byte count (10 bytes of real shape data) -- unlike
+        # "custom" above.
         data = curve_preset_payload(sid, value)[2:]
     elif setting == "curve_points":
         # Three writes, heartbeat-paced -- see curves.write_curve_points().
