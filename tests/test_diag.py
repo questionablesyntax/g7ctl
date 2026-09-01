@@ -14,9 +14,16 @@ from unittest import mock
 
 from g7ctl import main as cli_main
 from pyg7.device import HID_INTERFACE_CLASS
-from pyg7.variants import PID_DONGLE, PID_NATIVE, PID_XID
 
 from .fakes import FakeSession
+
+# Representative PIDs for building fake devices below -- test fixture data
+# only, variants.py no longer exports named PID constants (see its own
+# comment on why: a PID is a fact about specific hardware, not something
+# that needs its own module-level name).
+XID_PID = 0x109b       # baseline identity, wired (Shadow Ember's own)
+DONGLE_PID = 0x109c    # baseline identity, dongle (Shadow Ember's own)
+NATIVE_PID = 0x1022    # native/GIP identity
 
 
 class _FakeInterface:
@@ -138,7 +145,7 @@ class DiagTest(unittest.TestCase):
         self.assertNotIn("No GameSir-VID device found at all", report)
 
     def test_native_only_advises_the_menu_share_switch_and_stops_there(self):
-        cli_main.find_native_identity = lambda: _FakeDevice(PID_NATIVE, hid_on_iface1=False)
+        cli_main.find_native_identity = lambda: _FakeDevice(NATIVE_PID, hid_on_iface1=False)
         report = self._run()
         self.assertIn("native GameSir identity", report)
         self.assertIn("Menu+Share", report)
@@ -148,7 +155,7 @@ class DiagTest(unittest.TestCase):
 
     def test_hid_found_sends_handshake_and_reports_both_states(self):
         xdev = _FakeDevice(0x100a, hid_on_iface1=True)
-        vdev = _FakeDevice(PID_XID, hid_on_iface1=False)
+        vdev = _FakeDevice(XID_PID, hid_on_iface1=False)
         cli_main.find_hid_device = lambda: xdev
         cli_main.switch_to_xid = lambda **k: (vdev, False)
 
@@ -156,7 +163,7 @@ class DiagTest(unittest.TestCase):
 
         self.assertIn("sending the real handshake", report)
         self.assertIn(f"{0x100a:04x}", report)
-        self.assertIn(f"{PID_XID:04x}", report)
+        self.assertIn(f"{XID_PID:04x}", report)
         self.assertIn("Shadow Ember", report)
         self.assertIn("confirmed", report)
         self.assertIn("Firmware version: 2.44", report)
@@ -173,7 +180,7 @@ class DiagTest(unittest.TestCase):
         self.assertNotIn("Firmware version:", report)
 
     def test_readable_without_a_handshake_sends_no_handshake(self):
-        already = _FakeDevice(PID_XID, hid_on_iface1=False)
+        already = _FakeDevice(XID_PID, hid_on_iface1=False)
         cli_main.find_writable_device = lambda: (already, False)
         handshake_calls = []
         cli_main.switch_to_xid = lambda **k: handshake_calls.append(1) or (None, False)
@@ -181,7 +188,7 @@ class DiagTest(unittest.TestCase):
         report = self._run()
 
         self.assertIn("accepts config reads right now", report)
-        self.assertIn(f"{PID_XID:04x}", report)
+        self.assertIn(f"{XID_PID:04x}", report)
         self.assertEqual(handshake_calls, [])
 
     def test_readable_state_does_not_claim_it_was_already_left_that_way(self):
@@ -192,7 +199,7 @@ class DiagTest(unittest.TestCase):
         # while it was, a moment before, genuinely and functionally sitting
         # in XInput (xpad bound, working in-game) -- see g7ctl/main.py's
         # _handle_diag() docstring on this branch for the real incident.
-        already = _FakeDevice(PID_XID, hid_on_iface1=False, driver_bound=True)
+        already = _FakeDevice(XID_PID, hid_on_iface1=False, driver_bound=True)
         cli_main.find_writable_device = lambda: (already, False)
 
         report = self._run()
@@ -210,7 +217,7 @@ class DiagTest(unittest.TestCase):
         # here. A bug report benefits from being told this combination is
         # known-ambiguous, not just shown the two raw facts side by side
         # with no context.
-        already = _FakeDevice(PID_XID, hid_on_iface1=False, driver_bound=True)
+        already = _FakeDevice(XID_PID, hid_on_iface1=False, driver_bound=True)
         cli_main.find_writable_device = lambda: (already, False)
 
         report = self._run()
@@ -218,7 +225,7 @@ class DiagTest(unittest.TestCase):
         self.assertIn("Known-ambiguous combination", report)
 
     def test_does_not_flag_when_the_driver_is_not_bound(self):
-        already = _FakeDevice(PID_XID, hid_on_iface1=False, driver_bound=False)
+        already = _FakeDevice(XID_PID, hid_on_iface1=False, driver_bound=False)
         cli_main.find_writable_device = lambda: (already, False)
 
         report = self._run()
@@ -227,7 +234,7 @@ class DiagTest(unittest.TestCase):
 
     def test_unconfirmed_pid_says_so_honestly_not_a_guess(self):
         xdev = _FakeDevice(0x100a, hid_on_iface1=True)
-        vdev = _FakeDevice(PID_DONGLE, hid_on_iface1=False)  # not a variant PID
+        vdev = _FakeDevice(DONGLE_PID, hid_on_iface1=False)  # not a variant PID
         cli_main.find_hid_device = lambda: xdev
         cli_main.switch_to_xid = lambda **k: (vdev, False)
 

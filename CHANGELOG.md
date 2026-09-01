@@ -27,14 +27,22 @@ adheres to [semantic versioning](https://semver.org/).
 ### Changed
 
 - **BREAKING (pyg7 API): every USB identity PID moved out of
-  `pyg7.constants` into a new `pyg7.variants` module** -- `PID_HID`,
-  `PID_XID`, `PID_DONGLE`, `PID_NATIVE`, `PID_XID_TRIMODE`, `PID_XID_ZZZ`,
-  `PID_DONGLE_TRIMODE`, `identify_variant()`, and `VARIANT_NAMES` (renamed
-  `KNOWN_VARIANTS`, now a tuple of `Variant(name, xid_pid, dongle_pid)`
-  instead of a plain dict) all moved under the same or updated names, no
-  aliases (pre-1.0, same no-back-compat policy as the 0.3.0 rename). No
-  PID lives in `pyg7.constants` anymore, shared-across-variants or not --
-  `pyg7.variants` is where USB identity data lives, full stop.
+  `pyg7.constants` into a new `pyg7.variants` module, and out of named
+  module-level constants entirely.** No PID lives in `pyg7.constants`
+  anymore, shared-across-variants or not -- `pyg7.variants` is where USB
+  identity data lives, full stop, not split by how many variants
+  currently happen to share a value. `PID_HID`/`PID_XID`/`PID_DONGLE`/
+  `PID_NATIVE` briefly existed there as their own named constants too,
+  reasoned as an "identity-class" category distinct from per-SKU data --
+  overruled: a PID is a fact about specific hardware (this project's own
+  reference unit, "Shadow Ember", included), not a more fundamental thing
+  just because it's currently confirmed shared across every variant
+  checked so far. `identify_variant()` and `VARIANT_NAMES` (renamed
+  `KNOWN_VARIANTS`, a tuple of `Variant(name, xid_pid, dongle_pid)`
+  instead of a plain dict) moved the same way -- each variant's PIDs are
+  now inlined directly into its own `KNOWN_VARIANTS` entry as literals,
+  not a separately-declared constant referenced once. No aliases for any
+  of this (pre-1.0, same no-back-compat policy as the 0.3.0 rename).
   `pyg7.device.XID_PID_CANDIDATES` is gone -- replaced by
   `pyg7.variants.is_known_dongle_pid()`, equivalent data minus a redundant
   half (a wired PID could never satisfy that lookup anyway). `device.py`'s

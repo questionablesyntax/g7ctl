@@ -12,9 +12,9 @@ from pyg7 import variants
 
 class IdentifyVariantTest(unittest.TestCase):
     def test_known_xid_pids_resolve_to_their_confirmed_names(self):
-        self.assertEqual(variants.identify_variant(variants.PID_XID), "Shadow Ember")
-        self.assertEqual(variants.identify_variant(variants.PID_XID_TRIMODE), "White Trimode")
-        self.assertEqual(variants.identify_variant(variants.PID_XID_ZZZ), "Zenless Zone Zero")
+        self.assertEqual(variants.identify_variant(0x109b), "Shadow Ember")
+        self.assertEqual(variants.identify_variant(0x1003), "White Trimode")
+        self.assertEqual(variants.identify_variant(0x105d), "Zenless Zone Zero")
 
     def test_unconfirmed_pid_returns_none_not_a_guess(self):
         # e.g. Dragon's Dogma 2 / WUCHANG editions -- believed compatible
@@ -25,14 +25,15 @@ class IdentifyVariantTest(unittest.TestCase):
     def test_dongle_and_hid_pids_are_not_variant_lookups(self):
         # Deliberately keyed on the baseline (XID-style) PID only -- a
         # dongle PID is its own wired counterpart + 1 wherever confirmed,
-        # not a separate lookup here, and PID_HID/PID_NATIVE aren't
-        # independently confirmed to vary per-variant the same way. Passing
-        # one of those in isn't meaningful input, and should read as
-        # "unknown", not silently match something by accident.
-        self.assertIsNone(variants.identify_variant(variants.PID_DONGLE))
-        self.assertIsNone(variants.identify_variant(variants.PID_DONGLE_TRIMODE))
-        self.assertIsNone(variants.identify_variant(variants.PID_HID))
-        self.assertIsNone(variants.identify_variant(variants.PID_NATIVE))
+        # not a separate lookup here, and 0x100a/0x1022 (the HID-presenting
+        # and native identities) aren't independently confirmed to vary
+        # per-variant the same way. Passing one of those in isn't
+        # meaningful input, and should read as "unknown", not silently
+        # match something by accident.
+        self.assertIsNone(variants.identify_variant(0x109c))    # dongle
+        self.assertIsNone(variants.identify_variant(0x1004))    # dongle, Trimode
+        self.assertIsNone(variants.identify_variant(0x100a))    # HID-presenting
+        self.assertIsNone(variants.identify_variant(0x1022))    # native/GIP
 
 
 class IsKnownDonglePidTest(unittest.TestCase):
@@ -41,12 +42,12 @@ class IsKnownDonglePidTest(unittest.TestCase):
     could never satisfy this check anyway."""
 
     def test_known_dongle_pids_are_recognized(self):
-        self.assertTrue(variants.is_known_dongle_pid(variants.PID_DONGLE))
-        self.assertTrue(variants.is_known_dongle_pid(variants.PID_DONGLE_TRIMODE))
+        self.assertTrue(variants.is_known_dongle_pid(0x109c))   # Shadow Ember
+        self.assertTrue(variants.is_known_dongle_pid(0x1004))   # White Trimode
 
     def test_wired_pids_are_not_dongle_pids(self):
-        self.assertFalse(variants.is_known_dongle_pid(variants.PID_XID))
-        self.assertFalse(variants.is_known_dongle_pid(variants.PID_XID_TRIMODE))
+        self.assertFalse(variants.is_known_dongle_pid(0x109b))  # Shadow Ember
+        self.assertFalse(variants.is_known_dongle_pid(0x1003))  # White Trimode
 
     def test_a_variant_with_no_confirmed_dongle_pid_matches_nothing(self):
         # Zenless Zone Zero's dongle PID is unconfirmed (see variants.py's
