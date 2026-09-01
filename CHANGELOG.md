@@ -4,6 +4,40 @@ Notable changes to this project. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **A reject list for other GameSir Nexus-family devices confirmed NOT to
+  be a G7 Pro.** `pyg7.variants.UNSUPPORTED_PIDS` (empty today -- grows
+  only as a PID gets confirmed via a community report) is checked before
+  any finder claims or handshakes a device, so a known-bad PID is refused
+  outright instead of being attempted and failing confusingly downstream.
+  `g7ctl diag` reports a matching device by name even though it now skips
+  it everywhere else. A product-string filter (`iProduct`) was considered
+  and ruled out: confirmed unstable across real re-enumerations of the
+  *same* PID, and not even meaningful when stable -- this project's own
+  native and baseline identities have reported the identical string
+  despite being structurally unrelated. An unrecognized PID is still
+  attempted, deliberately -- the reject list only intercepts PIDs already
+  confirmed to be something else, never gates on the absence of
+  confirmation, so a genuinely new G7 Pro variant keeps working immediately
+  (the point of the 2026-08-29 detection redesign).
+
+### Changed
+
+- **BREAKING (pyg7 API): per-SKU variant data split out of `pyg7.constants`
+  into a new `pyg7.variants` module.** `pyg7.constants.identify_variant()`,
+  `VARIANT_NAMES`, `PID_XID_TRIMODE`, `PID_XID_ZZZ`, and
+  `PID_DONGLE_TRIMODE` moved to `pyg7.variants` under the same names, no
+  aliases (pre-1.0, same no-back-compat policy as the 0.3.0 rename).
+  `pyg7.device.XID_PID_CANDIDATES` is gone -- replaced by
+  `pyg7.variants.is_known_dongle_pid()`, equivalent data minus a redundant
+  half (a wired PID could never satisfy that lookup anyway).
+  `pyg7.constants` keeps only the identity-class PIDs (`PID_HID`/
+  `PID_XID`/`PID_DONGLE`/`PID_NATIVE`) used regardless of which specific
+  variant is attached.
+
 ## [0.3.0] - 2026-08-30
 
 ### Changed

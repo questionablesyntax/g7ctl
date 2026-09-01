@@ -9,7 +9,7 @@ import itertools
 import unittest
 from unittest import mock
 
-from pyg7 import constants, device
+from pyg7 import constants, device, variants
 
 
 class _FakeIntf:
@@ -83,6 +83,55 @@ def _patched(*devices):
     device.py calls it the same way (find_all=True, idVendor=VID) since the
     2026-08-29 redesign, so there's only one call shape to model."""
     return mock.patch("usb.core.find", return_value=list(devices))
+
+
+class UnsupportedPidGateTest(unittest.TestCase):
+    """_candidate_devices(), added 2026-09-01: every finder skips a PID
+    variants.identify_unsupported() confirms belongs to a different GameSir
+    product, before any structural check ever runs on it. Patches
+    device.identify_unsupported() directly rather than depending on real
+    entries existing in variants.UNSUPPORTED_PIDS (empty by design today --
+    see variants.py's own comment)."""
+
+    def _unsupported(self, pid, name="GameSir T7 Pro"):
+        return mock.patch("pyg7.device.identify_unsupported",
+                           side_effect=lambda p: name if p == pid else None)
+
+    def test_find_native_identity_skips_a_known_unsupported_pid(self):
+        blocked = _native_shaped(0xBEEF)
+        with self._unsupported(0xBEEF), _patched(blocked):
+            self.assertIsNone(device.find_native_identity())
+
+    def test_find_hid_device_skips_a_known_unsupported_pid(self):
+        blocked = _hid_shaped(0xBEEF)
+        with self._unsupported(0xBEEF), _patched(blocked):
+            self.assertIsNone(device.find_hid_device())
+
+    def test_find_writable_device_skips_a_known_unsupported_pid(self):
+        blocked = _xid_shaped(0xBEEF)
+        with self._unsupported(0xBEEF), _patched(blocked):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIsNone(dev)
+        self.assertFalse(via_dongle)
+
+    def test_scanning_continues_past_a_rejected_device_to_a_real_one(self):
+        # Order matters, same as the existing "gamepad at the baseline PID
+        # does not mask the dongle" case: a rejected candidate must not
+        # stop the scan before it reaches a genuine one behind it.
+        blocked = _xid_shaped(0xBEEF)
+        real = _xid_shaped(constants.PID_XID)
+        with self._unsupported(0xBEEF), _patched(blocked, real):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIs(dev, real)
+        self.assertFalse(via_dongle)
+
+    def test_an_unlisted_pid_is_never_gated(self):
+        # No real entries exist yet -- confirms the gate is a no-op for
+        # every genuinely unknown PID, not just documented as one.
+        target = _xid_shaped(constants.PID_XID)
+        with _patched(target):
+            dev, via_dongle = device.find_writable_device()
+        self.assertIs(dev, target)
 
 
 class FindNativeIdentityTest(unittest.TestCase):
@@ -190,14 +239,14 @@ class FindWritableDeviceTest(unittest.TestCase):
         self.assertTrue(via_dongle)
 
     def test_finds_a_genuine_baseline_device_at_the_other_variant_pid(self):
-        target = _xid_shaped(constants.PID_XID_TRIMODE)
+        target = _xid_shaped(variants.PID_XID_TRIMODE)
         with _patched(target):
             dev, via_dongle = device.find_writable_device()
         self.assertIs(dev, target)
         self.assertFalse(via_dongle)
 
     def test_finds_the_other_variant_dongle(self):
-        target = _xid_shaped(constants.PID_DONGLE_TRIMODE)
+        target = _xid_shaped(variants.PID_DONGLE_TRIMODE)
         with _patched(target):
             dev, via_dongle = device.find_writable_device()
         self.assertIs(dev, target)
@@ -209,7 +258,7 @@ class FindWritableDeviceTest(unittest.TestCase):
         # it happens regardless of which identity is present. Only
         # interface 1's descriptor shape (checked by has_hid_interface())
         # tells the two apart, and this one reads as baseline (no HID).
-        target = _xid_shaped(constants.PID_XID_ZZZ)
+        target = _xid_shaped(variants.PID_XID_ZZZ)
         with _patched(target):
             dev, via_dongle = device.find_writable_device()
         self.assertIs(dev, target)
@@ -347,7 +396,7 @@ class SwitchToXidLandingIdentityTest(unittest.TestCase):
         # Real payoff of identify_variant() (roadmap item 36): a user
         # connecting a confirmed variant sees which one, not just a PID.
         with self.assertLogs(device.log, level="INFO") as logs:
-            self._run(constants.PID_XID_TRIMODE)
+            self._run(variants.PID_XID_TRIMODE)
         self.assertTrue(any("White Trimode" in line for line in logs.output),
                          logs.output)
 
@@ -365,17 +414,17 @@ class SwitchToXidLandingIdentityTest(unittest.TestCase):
         # Regression target: a reported-but-unconfirmed other-variant
         # baseline PID (see PID_XID_TRIMODE's comment) must not be a wait
         # this function can never win.
-        (dev, via_dongle), landed = self._run(constants.PID_XID_TRIMODE)
+        (dev, via_dongle), landed = self._run(variants.PID_XID_TRIMODE)
         self.assertIs(dev, landed)
         self.assertFalse(via_dongle)
 
     def test_other_variant_dongle_landing_is_recognized_too(self):
-        (dev, via_dongle), landed = self._run(constants.PID_DONGLE_TRIMODE)
+        (dev, via_dongle), landed = self._run(variants.PID_DONGLE_TRIMODE)
         self.assertIs(dev, landed)
         self.assertTrue(via_dongle)
 
     def test_zzz_edition_landing_is_recognized_too(self):
-        (dev, via_dongle), landed = self._run(constants.PID_XID_ZZZ)
+        (dev, via_dongle), landed = self._run(variants.PID_XID_ZZZ)
         self.assertIs(dev, landed)
         self.assertFalse(via_dongle)
 

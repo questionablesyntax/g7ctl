@@ -27,13 +27,23 @@ signature every usable identity has and the native/GIP identity lacks
 entirely). A brand-new variant this project has never seen a PID for
 works the moment it's plugged in; no PID needs adding anywhere for
 detection to work, only for `identify_variant()`'s cosmetic colourway
-name. `XID_PID_CANDIDATES` survives only as a cosmetic dongle-label
-lookup now -- see its own comment. Also dropped: `via_dongle` no longer
-picks a settle/timeout value or gates `probe_controller_live()` --
-wired and dongle baselines were confirmed to give an identical
-descriptor shape, so there was never a reliable signal to detect
-here in the first place (see FINDINGS.md for the full account). See
-`PROTOCOL.md` and `session.py` for the rest.
+name (variants.py, split out 2026-09-01 along with `is_known_dongle_pid()`,
+the old `XID_PID_CANDIDATES` lookup's replacement). Also dropped:
+`via_dongle` no longer picks a settle/timeout value or gates
+`probe_controller_live()` -- wired and dongle baselines were confirmed to
+give an identical descriptor shape, so there was never a reliable signal
+to detect here in the first place (see FINDINGS.md for the full account).
+
+**Unsupported-PID reject list, added 2026-09-01**: every finder scans
+through `_candidate_devices()` now rather than `usb.core.find()` directly
+-- it's the same VID-wide scan, minus any PID variants.py's
+`UNSUPPORTED_PIDS` already confirms belongs to a different GameSir
+product, so a known-bad device is never claimed or handshaked at all. See
+`_candidate_devices()`'s own docstring for why a product-string filter
+was ruled out instead, and why an *unrecognized* PID still passes
+through unfiltered (deliberate, not a gap in this list).
+
+See `PROTOCOL.md` and `session.py` for the rest.
 
 Progress here goes through `logging`, not print(): this module is imported
 by the GUI as well as the CLI, and a bare print() from a background watcher
@@ -56,16 +66,12 @@ from .constants import (
     EP_OUT,
     HANDSHAKE_CHUNKS,
     IFACE,
-    PID_DONGLE,
-    PID_DONGLE_TRIMODE,
     PID_HID,
     PID_NATIVE,
     PID_XID,
-    PID_XID_TRIMODE,
-    PID_XID_ZZZ,
     VID,
-    identify_variant,
 )
+from .variants import identify_unsupported, identify_variant, is_known_dongle_pid
 
 log = logging.getLogger(__name__)
 
@@ -95,31 +101,58 @@ SYSFS_USB_ROOT = "/sys/bus/usb/devices"
 # known to be safe."
 HANDSHAKE_MIN_INTERVAL = 5.0
 
-# Cosmetic-only now (2026-08-29 detection redesign) -- find_writable_device()/
-# switch_to_xid() no longer consult this to find anything; they scan by VID
-# and classify structurally instead (see module docstring). This survives
-# purely to label a *known* PID as "via the dongle" for display/logging,
-# e.g. main.py's "Using wireless dongle" message. Real detection of wired
-# vs. dongle was never possible here in the first place: a wired baseline
-# and its dongle counterpart were confirmed (2026-08-29) to share an
-# identical descriptor shape (device class 255, same layout) -- the PID
-# is the only difference, so an *unknown* PID has no way to earn a label
-# here and defaults to "not confidently a dongle" (see
-# _cosmetic_is_dongle()), never "wired" as a confirmed fact. Extend this
-# list only to improve a log message for a newly-confirmed variant;
-# nothing functional depends on it anymore. See FINDINGS.md for the
-# full account of how this was confirmed.
-XID_PID_CANDIDATES = (
-    (PID_XID, False),
-    (PID_DONGLE, True),
-    (PID_XID_TRIMODE, False),
-    (PID_DONGLE_TRIMODE, True),
-    (PID_XID_ZZZ, False),
-)
-
-
 def find_device(pid: int) -> Optional[usb.core.Device]:
     return usb.core.find(idVendor=VID, idProduct=pid)
+
+
+def all_vid_devices() -> list:
+    """Every VID-matching USB device, completely unfiltered -- the one
+    place in this module that calls usb.core.find() directly. Exists as
+    its own importable function (rather than inlined) so callers that need
+    the raw list -- specifically `g7ctl diag`, which must still be able to
+    report a confirmed-unsupported device by name even though every other
+    finder now skips it -- can monkeypatch it the same way main.py's other
+    tests already patch find_native_identity()/find_hid_device()/etc.,
+    instead of reaching past this module into real USB access.
+    """
+    return list(usb.core.find(find_all=True, idVendor=VID))
+
+
+def _candidate_devices():
+    """Every VID-matching USB device, minus any PID already confirmed to
+    belong to a different GameSir product entirely (variants.py's
+    UNSUPPORTED_PIDS). Shared scan helper for find_native_identity()/
+    find_hid_device()/find_writable_device() -- one blacklist gate, not
+    three near-duplicate checks.
+
+    Added 2026-09-01, requested directly (owner: "we could filter out
+    controllers we know we cant support but dont actually have the PID
+    for" -- string-based filtering was ruled out the same conversation:
+    `iProduct` is both unstable across real re-enumerations of the same
+    PID, confirmed live, and not even meaningful when stable -- this
+    project's own native identity (`1022`) and baseline identity (`109b`)
+    have reported the identical string despite being structurally
+    unrelated, see FINDINGS.md).
+
+    A device whose PID ISN'T on that list is still a candidate, even if
+    it's genuinely some other, as-yet-unreported GameSir Nexus-family
+    product (T7 Pro, Kaleid, Tarantula Pro, ...) -- there is no way to
+    positively confirm "this is definitely a G7 Pro" without either its
+    PID already being known-bad or known-good, or real hardware to test.
+    Absence from the unsupported list is deliberately NOT read as
+    confirmation of G7 Pro compatibility (owner's explicit call,
+    2026-09-01): a genuinely new, unreported G7 Pro variant must keep
+    working immediately, the whole point of the 2026-08-29 redesign.
+    Each finder below still applies its own structural check on top of
+    what this yields.
+    """
+    for dev in all_vid_devices():
+        unsupported = identify_unsupported(dev.idProduct)
+        if unsupported is not None:
+            log.debug("Skipping %04x:%04x -- confirmed %s, not a G7 Pro.",
+                      VID, dev.idProduct, unsupported)
+            continue
+        yield dev
 
 
 def _sysfs_node(dev: usb.core.Device) -> Optional[str]:
@@ -222,7 +255,7 @@ def find_native_identity() -> Optional[usb.core.Device]:
     see _has_vendor_interface()'s own docstring for why that has to be
     "don't know", not "must be native".
     """
-    for dev in usb.core.find(find_all=True, idVendor=VID):
+    for dev in _candidate_devices():
         if _has_vendor_interface(dev) is False:
             return dev
     return None
@@ -278,19 +311,6 @@ def _has_vendor_interface(dev: usb.core.Device) -> Optional[bool]:
     except Exception:  # pragma: no cover - depends on live USB state
         return None
     return any(i.bInterfaceClass == VENDOR_INTERFACE_CLASS for i in cfg)
-
-
-def _cosmetic_is_dongle(pid: int) -> bool:
-    """Best-effort, display-only "does this look like a dongle" label for
-    a *known* PID -- never gates behavior, and callers must not treat a
-    False here as "confirmed wired." See XID_PID_CANDIDATES's comment for
-    why real detection isn't possible: GameSir's own compiled firmware
-    gives a wired baseline and its dongle counterpart the identical
-    descriptor shape, confirmed 2026-08-29. Defaults to False for any PID
-    not on the known list, including every future/unrecognized variant --
-    that's "no confident label," not "confirmed wired."
-    """
-    return any(pid == candidate and via_dongle for candidate, via_dongle in XID_PID_CANDIDATES)
 
 
 def has_hid_interface(dev: usb.core.Device) -> bool:
@@ -374,7 +394,7 @@ def find_hid_device() -> Optional[usb.core.Device]:
     tell those two apart, since it only looks at interface 1. Returns None
     if nothing VID-matching currently presents that interface.
     """
-    for dev in usb.core.find(find_all=True, idVendor=VID):
+    for dev in _candidate_devices():
         if _has_vendor_interface(dev) and has_hid_interface(dev):
             return dev
     return None
@@ -413,14 +433,14 @@ def find_writable_device() -> tuple[Optional[usb.core.Device], bool]:
     all, so it's excluded before has_hid_interface() is even asked.
 
     Redesigned 2026-08-29: scans every VID-matching device rather than a
-    fixed candidate list (`XID_PID_CANDIDATES`, kept only as a cosmetic
-    dongle label now -- see that constant's comment) -- a brand-new
+    fixed candidate list (`variants.is_known_dongle_pid()` now supplies
+    just the cosmetic dongle label -- see its own comment) -- a brand-new
     variant's baseline PID is recognized the first time, no code change
     needed.
     """
-    for dev in usb.core.find(find_all=True, idVendor=VID):
+    for dev in _candidate_devices():
         if _has_vendor_interface(dev) and not has_hid_interface(dev):
-            return dev, _cosmetic_is_dongle(dev.idProduct)
+            return dev, is_known_dongle_pid(dev.idProduct)
     return None, False
 
 
@@ -600,9 +620,9 @@ def switch_to_xid(timeout_s: float = 10.0,
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         # Redesigned 2026-08-29: reuses find_writable_device() rather than
-        # looping XID_PID_CANDIDATES directly -- same VID-wide scan,
-        # structural classification, recognizes a brand-new variant's PID
-        # with no code change needed. The interface-1 check inside it is
+        # looping known PIDs directly -- same VID-wide scan, structural
+        # classification, recognizes a brand-new variant's PID with no
+        # code change needed. The interface-1 check inside it is
         # what makes this a wait at all on firmware/variants where the HID
         # interface presents at what's otherwise the baseline PID: the
         # device is at that PID both before and after the handshake, so
@@ -616,7 +636,7 @@ def switch_to_xid(timeout_s: float = 10.0,
             # CMD=0x01 sweep. variant is None for a PID this project
             # hasn't had a confirmed report on yet (e.g. Dragon's Dogma
             # 2/WUCHANG); that's an honest "don't know yet", not a bug.
-            # See constants.identify_variant().
+            # See variants.identify_variant().
             variant = identify_variant(vdev.idProduct)
             suffix = f" -- {variant}" if variant else ""
             log.info("Now at a baseline (no-HID) identity (%04x:%04x, bus=%s addr=%s)%s.",

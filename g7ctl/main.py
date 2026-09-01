@@ -60,9 +60,10 @@ import usb.util
 
 from pyg7 import buttons, dock_settings, dpad_options, motion, report_rate, sticks, triggers, vibration
 from pyg7 import state as state_mod
-from pyg7.constants import IFACE, VID, identify_variant
+from pyg7.constants import IFACE, VID
 from pyg7.device import (
     HANDSHAKE_MIN_INTERVAL,
+    all_vid_devices,
     find_hid_device,
     find_native_identity,
     find_writable_device,
@@ -70,6 +71,7 @@ from pyg7.device import (
     switch_to_xid,
 )
 from pyg7.session import VendorSession
+from pyg7.variants import identify_unsupported, identify_variant
 
 from . import __version__
 
@@ -878,6 +880,30 @@ def _handle_diag(min_interval: float) -> None:
     print("# g7ctl diagnostic capture")
     print()
 
+    # Raw scan via all_vid_devices(), deliberately bypassing
+    # find_native_identity()/find_hid_device()/find_writable_device()'s own
+    # unsupported-PID gate (added 2026-09-01, see pyg7/device.py's
+    # _candidate_devices()) -- diag's whole point is reporting what's
+    # actually connected, so a confirmed-unsupported device should be named
+    # here, not silently invisible the way it now is to every other
+    # command. Read-only: identify_unsupported() is a PID lookup, nothing
+    # here claims an interface or writes anything.
+    #
+    # unsupported_found also gates the "nothing found" messages below --
+    # without it, a confirmed GameSir T7 Pro being reported here wouldn't
+    # stop diag from *also* claiming "No GameSir-VID device found at all"
+    # two paragraphs later, since every other finder correctly can't see
+    # a device this scan deliberately excludes them from.
+    unsupported_found = False
+    for dev in all_vid_devices():
+        name = identify_unsupported(dev.idProduct)
+        if name is not None:
+            unsupported_found = True
+            print(f"Found a confirmed {name} (PID {dev.idProduct:04x}, "
+                  f"bus={dev.bus:03d} address={dev.address:03d}) -- not a "
+                  "G7 Pro, not supported by this tool.")
+            print()
+
     reports = []
 
     native = find_native_identity()
@@ -935,13 +961,13 @@ def _handle_diag(min_interval: float) -> None:
                   "was already presenting the baseline identity before "
                   "this ran.")
             print()
-        elif native is None:
+        elif native is None and not unsupported_found:
             print("No device found presenting the keyboard/mouse interface "
                   "either.")
             print()
 
     if not reports:
-        if native is None:
+        if native is None and not unsupported_found:
             print("No GameSir-VID device found at all. Make sure it's plugged in "
                   "(or its dongle is, with the controller powered on).")
         return

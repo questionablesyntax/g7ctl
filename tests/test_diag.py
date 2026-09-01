@@ -78,6 +78,7 @@ class _FakeSessionCM:
 class DiagTest(unittest.TestCase):
     def setUp(self):
         self._orig = {
+            "all_vid_devices": cli_main.all_vid_devices,
             "find_native_identity": cli_main.find_native_identity,
             "find_hid_device": cli_main.find_hid_device,
             "find_writable_device": cli_main.find_writable_device,
@@ -85,6 +86,12 @@ class DiagTest(unittest.TestCase):
             "VendorSession": cli_main.VendorSession,
             "argv": sys.argv,
         }
+        # Empty by default -- diag's own raw unsupported-device scan (added
+        # 2026-09-01) has nothing to report unless a test overrides this.
+        # Patched here, not left calling the real usb.core.find(), for the
+        # same reason every other finder below is faked: this suite must
+        # not depend on what's actually plugged into the test machine.
+        cli_main.all_vid_devices = lambda: []
         cli_main.find_native_identity = lambda: None
         cli_main.find_hid_device = lambda: None
         cli_main.find_writable_device = lambda: (None, False)
@@ -92,6 +99,7 @@ class DiagTest(unittest.TestCase):
         cli_main.VendorSession = _FakeSessionCM
 
     def tearDown(self):
+        cli_main.all_vid_devices = self._orig["all_vid_devices"]
         cli_main.find_native_identity = self._orig["find_native_identity"]
         cli_main.find_hid_device = self._orig["find_hid_device"]
         cli_main.find_writable_device = self._orig["find_writable_device"]
@@ -109,6 +117,25 @@ class DiagTest(unittest.TestCase):
     def test_nothing_found_says_so_plainly(self):
         report = self._run()
         self.assertIn("No GameSir-VID device found at all", report)
+
+    def test_a_confirmed_unsupported_device_is_named_not_silently_skipped(self):
+        # Added 2026-09-01: every other finder now skips a device on
+        # variants.UNSUPPORTED_PIDS entirely (pyg7/device.py's
+        # _candidate_devices()) -- diag's own raw scan must still surface
+        # it, since silently reporting "no device found" for hardware that
+        # IS plugged in would be actively misleading.
+        blocked = _FakeDevice(0xBEEF, hid_on_iface1=False)
+        cli_main.all_vid_devices = lambda: [blocked]
+        with mock.patch("g7ctl.main.identify_unsupported",
+                         side_effect=lambda pid: "GameSir T7 Pro" if pid == 0xBEEF else None):
+            report = self._run()
+        self.assertIn("GameSir T7 Pro", report)
+        self.assertIn(f"{0xBEEF:04x}", report)
+        self.assertIn("not supported", report)
+        # Nothing else found it (find_hid_device/find_writable_device are
+        # still faked to None/False by setUp), so the generic message
+        # should NOT also fire -- a real, named device was reported above.
+        self.assertNotIn("No GameSir-VID device found at all", report)
 
     def test_native_only_advises_the_menu_share_switch_and_stops_there(self):
         cli_main.find_native_identity = lambda: _FakeDevice(PID_NATIVE, hid_on_iface1=False)

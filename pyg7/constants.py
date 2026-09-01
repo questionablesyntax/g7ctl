@@ -1,6 +1,10 @@
-"""USB identities and low-level protocol constants. See PROTOCOL.md."""
+"""USB identities and low-level protocol constants. See PROTOCOL.md.
 
-from typing import Optional
+Per-SKU data (which colourway a PID belongs to, which PIDs are confirmed
+to be a different GameSir product entirely) lives in variants.py instead,
+split out 2026-09-01 -- everything here is identity-class, used regardless
+of which specific G7 Pro variant is attached.
+"""
 
 VID = 0x3537
 # Renamed 2026-08-29, retiring the "vendor mode" misconception from the
@@ -81,42 +85,6 @@ PID_DONGLE = 0x109c   # 2.4GHz wireless dongle counterpart to PID_XID, same
                       # reconfirmed for 109c, but there's no reason to expect
                       # this variant's firmware architecture to differ on
                       # this point.
-PID_XID_TRIMODE = 0x1003   # baseline (no-HID-interface) identity on at least
-                      # one other G7 Pro variant -- reported 2026-08-19 from a
-                      # community bug report, not this project's own hardware. Same
-                      # interface-1 descriptor shape as PID_XID (isochronous
-                      # alt-setting pair, no HID keyboard/mouse), just under a
-                      # different PID. CONFIRMED 2026-08-19: the reporter read real
-                      # config back over it (manually, before this constant existed) --
-                      # a genuine round trip, not just a descriptor-shape match. The
-                      # bind-content trigger (see PID_HID/PID_XID above) is not
-                      # independently reconfirmed on this variant. See PROTOCOL.md
-                      # "Device identities".
-PID_XID_ZZZ = 0x105d  # baseline (no-HID-interface) identity on a G7 Pro
-                      # "Zenless Zone Zero" edition, reported 2026-08-19 -- another
-                      # community report, not this project's own hardware. Same
-                      # story as PID_XID_TRIMODE: interface 1's descriptor shape
-                      # matches PID_XID's exactly. CONFIRMED 2026-08-19: the
-                      # reporter tested this branch directly and read real config
-                      # back over it end to end -- a genuine round trip, not just a
-                      # descriptor-shape match. The reporter initially took `xpad`
-                      # binding and a working Steam pad here as evidence this PID was
-                      # the "XInput identity" -- reasonably, under the pre-2026-08-29
-                      # model, but not actually surprising at all once you know both
-                      # PIDs are always-XInput (see has_hid_interface() -- it isn't
-                      # evidence of a "personality" either way). See PROTOCOL.md
-                      # "Device identities".
-PID_DONGLE_TRIMODE = 0x1004   # the Tri-mode variant's 2.4GHz dongle counterpart --
-                      # PID_XID_TRIMODE's counterpart, exactly one PID higher,
-                      # same relationship PID_XID (109b) has to PID_DONGLE (109c).
-                      # Reported and CONFIRMED 2026-08-19 by the same reporter as
-                      # PID_XID_TRIMODE: found by hand ("vendor ID for white Tri-mode
-                      # is 1004"), receiver connection worked after a brute constants.py
-                      # edit -- a genuine round trip. The "+1" relationship held on two
-                      # separate SKUs now (this project's own 109b/109c, and this one) --
-                      # worth testing as a real pattern before more variants get their
-                      # own hardcoded pair, but not assumed here yet. See PROTOCOL.md
-                      # "Device identities".
 PID_NATIVE = 0x1022   # the controller's own "default GameSir identity" -- a genuinely
                       # different, third identity, not affected by the PID_HID/
                       # PID_XID correction above. Reached by holding Menu+Share
@@ -133,44 +101,6 @@ PID_NATIVE = 0x1022   # the controller's own "default GameSir identity" -- a gen
                       # a user in this identity gets a clear "press Menu+Share to
                       # switch back" message instead of "no device found". See
                       # PROTOCOL.md "Device identities".
-# PID_XID (and its per-variant equivalents) -> human-readable variant
-# name. Real answer to roadmap item 36's original question ("how does
-# software know which G7 Pro colourway is attached") -- not via the
-# CMD=0x01 selector sweep that item spent six sessions mapping (all 256
-# selectors now behaviorally known; none carries a colourway value anywhere
-# in the space, see ROADMAP.md), but via this specific PID itself: three
-# SKUs, three distinct PIDs, zero counterexamples (n=3, 2026-08-19 -- see
-# VARIANT_PIDS.md). The original "it cannot be coming from USB descriptors"
-# framing that started the sweep checked product string/bcdDevice/serial on
-# this project's own single unit; it never had a second PID to compare
-# against, because at the time there was only one. Deliberately keyed on
-# PID_XID specifically (not PID_HID/PID_NATIVE/PID_DONGLE) purely because
-# *that* PID is the one confirmed to vary per-variant with a real round trip
-# on each -- not because it's any more special than PID_HID is (neither PID
-# is a "vendor" identity, see the correction at the top of this file). The
-# other PIDs aren't independently confirmed to vary per-variant the same
-# way (see VARIANT_PIDS.md's "Gaps" section), and a dongle's own per-variant
-# PID is its wired counterpart + 1 wherever confirmed, not looked up here
-# separately.
-VARIANT_NAMES = {
-    PID_XID: "Shadow Ember",
-    PID_XID_TRIMODE: "White Trimode",
-    PID_XID_ZZZ: "Zenless Zone Zero",
-}
-
-
-def identify_variant(xid_pid: int) -> Optional[str]:
-    """Human-readable colourway/edition name for a known PID_XID-style
-    (baseline, no-HID-interface) PID, or None for one this project hasn't
-    seen a confirmed report on yet
-    (e.g. Dragon's Dogma 2 and WUCHANG editions -- see README.md "Hardware
-    support"). None is a real, expected answer here, not a bug: this is a
-    lookup against confirmed reports, not a formula that covers every PID
-    GameSir might ever assign.
-    """
-    return VARIANT_NAMES.get(xid_pid)
-
-
 EP_OUT = 0x02
 EP_IN = 0x82
 IFACE = 0

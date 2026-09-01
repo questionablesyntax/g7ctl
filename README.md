@@ -268,7 +268,7 @@ a configuration you synced, which is the main reason "Read from Device" exists.
 
 **The GameSir G7 Pro and its confirmed color/special editions — White
 Trimode, Shadow Ember, Zenless Zone.** Confirmed on real hardware, each
-its own USB product ID (see `pyg7/constants.py`) — this is not one
+its own USB product ID (see `pyg7/variants.py`) — this is not one
 signature that happens to cover three colorways, it's three separately
 reverse-engineered identities. These are the only hardware this has
 actually run on.
