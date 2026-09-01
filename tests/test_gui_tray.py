@@ -83,5 +83,29 @@ class ReleaseActionSyncGuardTest(unittest.TestCase):
         self.assertTrue(tray.release_action.isEnabled())
 
 
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class IconBuildDedupTest(unittest.TestCase):
+    """_STATE_ICON_FILES maps "connecting" and "no_controller" to the same
+    icon_yellow.png -- _state_icon() re-scales into all 9 _ICON_SIZES on
+    every call, no reason to pay for that twice for identical pixmap
+    content. Found by a dedicated efficiency pass, 2026-09-01."""
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_state_icon_is_built_once_per_unique_filename(self):
+        from g7ctlc import tray as tray_mod
+        with mock.patch.object(tray_mod, "_state_icon",
+                               side_effect=tray_mod._state_icon) as build:
+            t = tray_mod.TrayIcon(mock.Mock())
+        unique_files = set(tray_mod._STATE_ICON_FILES.values())
+        self.assertEqual(build.call_count, len(unique_files))
+        # And the two states sharing a file must end up with the same
+        # object, not two separately-built QIcons with identical content.
+        self.assertIs(t._icons["connecting"], t._icons["no_controller"])
+
+
 if __name__ == "__main__":
     unittest.main()

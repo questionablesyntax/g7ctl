@@ -77,7 +77,16 @@ class TrayIcon(QSystemTrayIcon):
         self.main_window = main_window
         self._state = "disconnected"
         self._syncing = False
-        self._icons = {state: _state_icon(fname) for state, fname in _STATE_ICON_FILES.items()}
+        # Built per unique filename, not per state: "connecting" and
+        # "no_controller" share icon_yellow.png (_STATE_ICON_FILES above),
+        # and _state_icon() re-scales into all 9 _ICON_SIZES on every call --
+        # no reason to do that work twice for identical pixmap content.
+        by_file: dict = {}
+        self._icons = {}
+        for state, fname in _STATE_ICON_FILES.items():
+            if fname not in by_file:
+                by_file[fname] = _state_icon(fname)
+            self._icons[state] = by_file[fname]
 
         menu = QMenu()
         show_action = QAction("Show Window", menu)
