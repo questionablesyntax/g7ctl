@@ -221,6 +221,37 @@ systemd-logind's `uaccess` mechanism, the same one stock rules already use for
 USB mice, cameras and scanners, which grants access to whoever's logged in at
 the physical seat.
 
+## Filing a bug report
+
+**One command covers the CLI side:**
+
+```
+g7ctl diag
+```
+
+Finds the controller, captures its USB identity, and pastes-in the
+firmware version, a filtered `dmesg` tail (catches re-enumeration churn
+around when something went wrong), and — if you've run the GUI at all —
+its recent log too. No config writes. Paste the whole output into the
+issue.
+
+**For the GUI**, run it with `-v`/`--verbose` first to capture full
+diagnostic detail rather than just normal-use progress:
+
+```
+g7ctlc -v
+```
+
+Whether or not you remembered `-v` beforehand, the GUI always keeps a
+log at `~/.config/g7ctl/g7ctlc.log` (rotated automatically, so it won't
+grow without bound) — `g7ctl diag` already includes its recent content,
+so you usually don't need to attach it separately. If the app closes
+unexpectedly, the dialog it shows points back at this same file.
+
+See "Hardware support" below specifically for reporting a variant this
+project hasn't seen a USB product ID for yet — same `g7ctl diag`
+command, that section covers what it's actually being used to confirm.
+
 ## On-device features (no software needed)
 
 The controller does a lot on its own, via button combos. Worth knowing about
@@ -278,8 +309,10 @@ of product-ID data: **Dragon's Dogma 2** and **WUCHANG**. If you own one,
 the process is the same as it's always been — find the product ID and
 report it, either result is useful.
 
-**Reporting one is one command.** Check out the repo, install it (see
-Installation above), and run:
+**Reporting one is one command** — the same `g7ctl diag` covered in "Filing
+a bug report" above, used here specifically to capture the USB product ID
+this project keys variant identification on. Check out the repo, install
+it (see Installation above), and run:
 
 ```
 g7ctl diag

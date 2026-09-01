@@ -8,6 +8,24 @@ adheres to [semantic versioning](https://semver.org/).
 
 ### Added
 
+- **Active-debugging infrastructure**, closing a real gap: real debug
+  instrumentation already existed in `pyg7`/`g7ctlc` but had no way to
+  ever actually reach anyone. `g7ctl -v`/`--verbose` and `g7ctlc -v` both
+  now lower logging to DEBUG level; the GUI additionally keeps a rotating
+  log at `~/.config/g7ctl/g7ctlc.log` regardless (the app has no visible
+  console on a normal desktop-icon launch, so raising the level alone
+  wouldn't have helped). An unhandled exception in a GUI slot -- confirmed
+  not to abort the app on the shipped PyQt6 version, same/cross-thread
+  alike -- now logs at CRITICAL and shows a dialog pointing at the log
+  file, instead of vanishing into whatever terminal happened to launch
+  it. `pyg7/device.py`'s structural USB classification (every finder's
+  own foundation since the PID-agnostic detection redesign) now logs why
+  a device's descriptors couldn't be read, specifically calling out a
+  likely missing-udev-rule permissions problem rather than treating it
+  identically to a benign mid-re-enumeration blip. `g7ctl diag` now tails
+  the GUI's log alongside its existing `dmesg` capture. See README's new
+  "Filing a bug report" section.
+
 - **A reject list for other GameSir Nexus-family devices confirmed NOT to
   be a G7 Pro.** `pyg7.variants.UNSUPPORTED_PIDS` (empty today -- grows
   only as a PID gets confirmed via a community report) is checked before
