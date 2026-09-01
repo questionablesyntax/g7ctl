@@ -66,9 +66,6 @@ from .constants import (
     EP_OUT,
     HANDSHAKE_CHUNKS,
     IFACE,
-    PID_HID,
-    PID_NATIVE,
-    PID_XID,
     VID,
 )
 from .variants import identify_unsupported, identify_variant, is_known_dongle_pid
@@ -571,12 +568,24 @@ def switch_to_xid(timeout_s: float = 10.0,
     # pacing if the device re-enumerates again during the wait.
     dev = _find_stable_hid_device(min_interval)
     if dev is None:
-        if find_native_identity() is not None:
+        native = find_native_identity()
+        if native is not None:
+            # native.idProduct, not the hardcoded PID_NATIVE -- same fix
+            # main.py's diag already needed (see its own comment):
+            # find_native_identity() is a structural check now (2026-08-29
+            # detection redesign), so the device it finds isn't guaranteed
+            # to be sitting at exactly this project's own PID_NATIVE value
+            # on a variant this project hasn't seen yet. This spot called
+            # find_native_identity() as a bare boolean and logged the
+            # constant anyway -- caught 2026-09-01, never actually wrong
+            # yet since PID_NATIVE is confirmed stable on the two variants
+            # checked so far, but would have silently misreported the PID
+            # in a bug report the moment that stopped holding.
             log.error(
                 "Controller is in its native GameSir identity (%04x:%04x), not "
                 "XInput mode -- this tool can't talk to it there yet. Hold "
                 "Menu+Share on the controller to switch back to XInput, then "
-                "try again.", VID, PID_NATIVE)
+                "try again.", VID, native.idProduct)
         elif find_hid_device() is not None:
             log.error(
                 "Device is present but keeps re-enumerating -- it never settled "
