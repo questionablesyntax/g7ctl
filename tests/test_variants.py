@@ -47,8 +47,10 @@ class IdentifyVariantTest(unittest.TestCase):
         # unambiguous on either field today (see the collision test
         # above). variants.Variant is a NamedTuple (immutable), so this
         # patches the whole KNOWN_VARIANTS tuple, not individual fields.
-        solo_hid = variants.Variant("Solo Edition", 0x1234, None, hid_pid=0xAAAA)
-        solo_native = variants.Variant("Other Edition", 0x5678, None, native_pid=0xBBBB)
+        solo_hid = variants.Variant("Solo Edition", xid_pid=0x1234, dongle_pid=None,
+                                     hid_pid=0xAAAA)
+        solo_native = variants.Variant("Other Edition", xid_pid=0x5678, dongle_pid=None,
+                                        native_pid=0xBBBB)
         with mock.patch.object(variants, "KNOWN_VARIANTS",
                                 variants.KNOWN_VARIANTS + (solo_hid, solo_native)):
             self.assertEqual(variants.identify_variant(0xAAAA), "Solo Edition")
