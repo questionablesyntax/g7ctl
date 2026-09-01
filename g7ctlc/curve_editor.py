@@ -63,6 +63,15 @@ class CurveEditor(QWidget):
         self._adz = [0, 100]       # initial, max   (percent)
         self._points = [[40, 41], [128, 128], [215, 214]]
         self._configured = True
+        # _plot_rect() cache: mouseMoveEvent's hover path (setMouseTracking
+        # above) calls it once per handle via _handle_positions()/_hit() on
+        # every mouse move over the widget, not just drags -- a real,
+        # continuous, high-frequency path. Keyed on (width, height) rather
+        # than invalidated via resizeEvent so it self-corrects regardless of
+        # whether that event reliably fires in every environment (headless
+        # test widgets included), not just the common case.
+        self._plot_rect_cache: Optional[QRectF] = None
+        self._plot_rect_size: Optional[tuple[int, int]] = None
         self._drag = None          # ("end", 0|1) | ("pt", i) | None
         self._hover = None
         self._enabled_points = True
@@ -93,9 +102,14 @@ class CurveEditor(QWidget):
     # --- coordinate mapping --------------------------------------------
 
     def _plot_rect(self) -> QRectF:
-        return QRectF(_MARGIN_L, _MARGIN_T,
-                      max(1, self.width() - _MARGIN_L - _MARGIN_R),
-                      max(1, self.height() - _MARGIN_T - _MARGIN_B))
+        size = (self.width(), self.height())
+        if self._plot_rect_cache is None or self._plot_rect_size != size:
+            self._plot_rect_cache = QRectF(
+                _MARGIN_L, _MARGIN_T,
+                max(1, self.width() - _MARGIN_L - _MARGIN_R),
+                max(1, self.height() - _MARGIN_T - _MARGIN_B))
+            self._plot_rect_size = size
+        return self._plot_rect_cache
 
     def _pct_to_px(self, x_pct: float, y_pct: float) -> QPointF:
         r = self._plot_rect()

@@ -501,6 +501,22 @@ class CurveEditorTest(unittest.TestCase):
         ed.set_points_editable(True)
         self.assertEqual(ed._hit(QPointF(target))[0], "pt")
 
+    def test_plot_rect_is_cached_but_still_tracks_a_real_resize(self):
+        """_plot_rect() is called once per handle on every hover mouse-move
+        (setMouseTracking), not just drags -- cached to avoid rebuilding a
+        QRectF from scratch on that path. The cache must still notice a real
+        size change, not go stale and keep answering with the old geometry."""
+        from g7ctlc.curve_editor import _MARGIN_B, _MARGIN_L, _MARGIN_R, _MARGIN_T
+        ed = self._editor()
+        first = ed._plot_rect()
+        self.assertIs(ed._plot_rect(), first, "same size -- must reuse the cached rect, not rebuild")
+
+        ed.resize(500, 400)
+        second = ed._plot_rect()
+        self.assertIsNot(second, first, "a real resize must invalidate the cache")
+        self.assertEqual((second.width(), second.height()),
+                         (500 - _MARGIN_L - _MARGIN_R, 400 - _MARGIN_T - _MARGIN_B))
+
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
 class UnconfiguredCurveTest(unittest.TestCase):
