@@ -231,7 +231,7 @@ def _pace_handshake(dev: usb.core.Device, min_interval: float) -> None:
 
 def find_native_identity() -> Optional[usb.core.Device]:
     """The controller in its own "default GameSir identity" -- not usable
-    by this tool; see `PID_NATIVE`'s comment in constants.py.
+    by this tool; see `PID_NATIVE`'s comment in variants.py.
     A caller that can't find the device at any identity it *does* know how
     to talk to should check this before reporting a generic "no device
     found", so a user who's holding it in the wrong identity gets told how

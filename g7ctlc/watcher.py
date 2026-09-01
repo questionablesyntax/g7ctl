@@ -481,7 +481,7 @@ class DeviceWatcher(QObject):
         if xdev is None:
             # Distinguish "genuinely not connected" from "connected, but in
             # the native GameSir identity this tool can't talk to yet" --
-            # see PID_NATIVE's comment in constants.py. _emit_error() already
+            # see PID_NATIVE's comment in variants.py. _emit_error() already
             # dedupes against the last message, so this won't spam once per
             # poll cycle while the user's deciding what to do.
             if find_native_identity() is not None:

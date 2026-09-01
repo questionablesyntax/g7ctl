@@ -26,17 +26,21 @@ adheres to [semantic versioning](https://semver.org/).
 
 ### Changed
 
-- **BREAKING (pyg7 API): per-SKU variant data split out of `pyg7.constants`
-  into a new `pyg7.variants` module.** `pyg7.constants.identify_variant()`,
-  `VARIANT_NAMES`, `PID_XID_TRIMODE`, `PID_XID_ZZZ`, and
-  `PID_DONGLE_TRIMODE` moved to `pyg7.variants` under the same names, no
-  aliases (pre-1.0, same no-back-compat policy as the 0.3.0 rename).
+- **BREAKING (pyg7 API): every USB identity PID moved out of
+  `pyg7.constants` into a new `pyg7.variants` module** -- `PID_HID`,
+  `PID_XID`, `PID_DONGLE`, `PID_NATIVE`, `PID_XID_TRIMODE`, `PID_XID_ZZZ`,
+  `PID_DONGLE_TRIMODE`, `identify_variant()`, and `VARIANT_NAMES` (renamed
+  `KNOWN_VARIANTS`, now a tuple of `Variant(name, xid_pid, dongle_pid)`
+  instead of a plain dict) all moved under the same or updated names, no
+  aliases (pre-1.0, same no-back-compat policy as the 0.3.0 rename). No
+  PID lives in `pyg7.constants` anymore, shared-across-variants or not --
+  `pyg7.variants` is where USB identity data lives, full stop.
   `pyg7.device.XID_PID_CANDIDATES` is gone -- replaced by
   `pyg7.variants.is_known_dongle_pid()`, equivalent data minus a redundant
-  half (a wired PID could never satisfy that lookup anyway).
-  `pyg7.constants` keeps only the identity-class PIDs (`PID_HID`/
-  `PID_XID`/`PID_DONGLE`/`PID_NATIVE`) used regardless of which specific
-  variant is attached.
+  half (a wired PID could never satisfy that lookup anyway). `device.py`'s
+  own detection logic no longer imports a single PID constant -- it's
+  fully structural end to end, only ever handling whatever `idProduct` it
+  already read off a real device.
 
 ## [0.3.0] - 2026-08-30
 

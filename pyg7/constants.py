@@ -1,106 +1,18 @@
-"""USB identities and low-level protocol constants. See PROTOCOL.md.
+"""Low-level protocol constants -- wire format only. See PROTOCOL.md.
 
-Per-SKU data (which colourway a PID belongs to, which PIDs are confirmed
-to be a different GameSir product entirely) lives in variants.py instead,
-split out 2026-09-01 -- everything here is identity-class, used regardless
-of which specific G7 Pro variant is attached.
+USB identity data (PIDs, per-variant or shared) lives in variants.py
+instead, not here -- moved out entirely 2026-09-01 (initially only the
+per-SKU PIDs moved; the reference hardware's own PID_HID/PID_XID/
+PID_DONGLE/PID_NATIVE were kept here at first on the reasoning that they
+were "identity-class, used regardless of variant" -- overruled directly:
+they're real PID values tied to specific hardware identities the same way
+every other variant's PIDs are, and variants.py is where PID data lives,
+full stop, not split by how many variants currently happen to share a
+value). This module has zero USB product IDs in it now.
 """
 
 VID = 0x3537
-# Renamed 2026-08-29, retiring the "vendor mode" misconception from the
-# names themselves, not just the comments (see PROTOCOL.md "Device
-# identities" for the full account): both PIDs are, and always were,
-# fully working XInput identities -- neither is a "vendor/config mode" a
-# gamepad has to leave. The only real difference is whether a second HID
-# interface (keyboard+mouse, for remapped key/mouse events) is presented,
-# which tracks the *active profile's own trigger-bundle content* -- NOT
-# just keyboard/mouse bind content: confirmed 2026-08-29 that 1000Hz
-# report rate is a second, independent trigger, with zero keyboard/mouse
-# binds involved (500Hz+all-native -> PID_XID, 1000Hz+all-native ->
-# PID_HID, `lsusb -v`-verified as a genuine HID-class interface 1 either
-# way, not a PID-only coincidence). Motion output set to Mouse is the same
-# trigger as a bound key, not a third one. GameSir's own manual already
-# describes "1000Hz polling and keyboard/mouse remapping" as one bundle
-# unlocked together (at the native-GIP-vs-XInput axis); this is the same
-# bundle governing this finer PID_HID/PID_XID split too. **The bundle is
-# now confirmed closed, not just a floor** -- owner tested every setting
-# category on real hardware (2026-08-29): the only two triggers are (1)
-# anything that outputs to a keyboard or mouse (any button bind, Motion
-# output set to Mouse) and (2) 1000Hz report rate. Nothing else in the
-# settings moves this PID. Not a switchable device "personality"
-# either way. Both PIDs equally answer the config/telemetry protocol this
-# whole package speaks. Old names, for anyone grepping history:
-# PID_XINPUT -> PID_HID, PID_VENDOR -> PID_XID.
-PID_HID = 0x100a      # "Xbox 360 Controller for Windows" -- presents the extra
-                      # HID keyboard/mouse interface. Reached from PID_XID by
-                      # the "gamesirapp" handshake when the active profile needs
-                      # that interface (keyboard/mouse binds OR 1000Hz report
-                      # rate -- see the trigger-bundle comment above); see
-                      # PROTOCOL.md "The handshake" for what is and isn't
-                      # established about that transition.
-PID_XID = 0x109b      # "GameSir-G7 Pro" -- baseline XInput identity, no extra HID
-                      # interface. Presented only when EVERY member of the
-                      # trigger bundle above is at its baseline (all-native
-                      # binds AND report rate below 1000Hz). Fully playable as a
-                      # gamepad, and answers this project's whole config/telemetry
-                      # protocol -- there is no gate between the two.
-PID_DONGLE = 0x109c   # 2.4GHz wireless dongle counterpart to PID_XID, same
-                      # endpoints. Historically documented as reached by the same
-                      # "gamesirapp" handshake from an idle PID_HID dongle state,
-                      # falling back there once heartbeats stop -- that framing
-                      # predates the 2026-08-29 correction above and has not been
-                      # re-verified under it (the bind-content trigger has only
-                      # been confirmed wired). Twice-corrected before that, both
-                      # times because this was only ever observed mid-session:
-                      # 2026-07-31, it does not keep working as a pad (xpad is not
-                      # bound); 2026-08-01, it is not a handshake-free always-on
-                      # identity either -- an idle dongle enumerates as PID_HID.
-                      # See PROTOCOL.md "Device identities".
-                      #
-                      # UNCONFIRMED HYPOTHESIS, raised 2026-08-29 (owner's,
-                      # hardware currently broken so untestable): the dongle
-                      # itself may only ever present this one PID, not
-                      # splitting into its own XID/HID pair the way the wired
-                      # connection does -- i.e. the active profile's
-                      # bind-content trigger (see PID_HID/PID_XID above)
-                      # might apply to the controller behind the RF link,
-                      # invisible on the USB side, with the dongle's own USB
-                      # identity staying fixed regardless. No PID_DONGLE_HID
-                      # has been added on this basis. Read literally, this
-                      # conflicts with the paragraph above's own confirmed
-                      # observation that an idle dongle enumerates as PID_HID
-                      # (100a), only landing here (109c) once handshaked --
-                      # a tension caught during a same-day post-rename
-                      # read-through, not assumed away.
-                      #
-                      # RESOLVED, same day (see FINDINGS.md's dongle-detection
-                      # entry for the full account -- kept private-notes-only,
-                      # not here): the dongle does split into an HID-shaped/
-                      # baseline pair on its own USB side, the same way the
-                      # wired connection does -- not a fixed single identity.
-                      # That also settles the tension above: an idle dongle
-                      # sitting at PID_HID is just this same split surfacing
-                      # on the USB side, not evidence against it. Confirmed
-                      # for the Tri-mode variant specifically; not directly
-                      # reconfirmed for 109c, but there's no reason to expect
-                      # this variant's firmware architecture to differ on
-                      # this point.
-PID_NATIVE = 0x1022   # the controller's own "default GameSir identity" -- a genuinely
-                      # different, third identity, not affected by the PID_HID/
-                      # PID_XID correction above. Reached by holding Menu+Share
-                      # (GameSir's own manual calls this "Xbox button + Share",
-                      # switching between "GIP (Xbox Gaming Device)" -- this PID --
-                      # and "XInput"; also the same combo that clears a rare CMD_READ
-                      # wedge). Two plain HID-class interfaces (no vendor-specific
-                      # class 255 interface at all), confirmed via Steam's own
-                      # controller test to lack vibration, unlike PID_HID/
-                      # PID_XID which both have it. Neither interface answers the
-                      # standard CMD_HEARTBEAT payload or streams anything unprompted
-                      # -- found 2026-07-30, not the same protocol as PID_XID/
-                      # PID_DONGLE and not reverse-engineered. Recognized here only so
-                      # a user in this identity gets a clear "press Menu+Share to
-                      # switch back" message instead of "no device found". See
-                      # PROTOCOL.md "Device identities".
+
 EP_OUT = 0x02
 EP_IN = 0x82
 IFACE = 0

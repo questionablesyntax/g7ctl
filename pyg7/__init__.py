@@ -17,7 +17,10 @@ usable from a script, a service, or a udev hook on its own.
 
 Reading the modules in this order makes the protocol easiest to follow:
 
-  constants.py  USB identities, command bytes, category prefixes
+  constants.py  low-level protocol wire format: command bytes, category prefixes
+  variants.py   USB identities (PID_HID/PID_XID/PID_DONGLE/PID_NATIVE and
+                every per-SKU equivalent), colourway naming, the
+                unsupported-device reject list
   device.py     finding the controller, handshaking it off PID_HID when needed
   session.py    the claimed USB session: heartbeat, raw send, chunked read
   buttons.py    button remap/unbind + the shared keycode table

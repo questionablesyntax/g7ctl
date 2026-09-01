@@ -7,12 +7,12 @@ reasoning.
 import unittest
 from unittest import mock
 
-from pyg7 import constants, variants
+from pyg7 import variants
 
 
 class IdentifyVariantTest(unittest.TestCase):
     def test_known_xid_pids_resolve_to_their_confirmed_names(self):
-        self.assertEqual(variants.identify_variant(constants.PID_XID), "Shadow Ember")
+        self.assertEqual(variants.identify_variant(variants.PID_XID), "Shadow Ember")
         self.assertEqual(variants.identify_variant(variants.PID_XID_TRIMODE), "White Trimode")
         self.assertEqual(variants.identify_variant(variants.PID_XID_ZZZ), "Zenless Zone Zero")
 
@@ -29,10 +29,10 @@ class IdentifyVariantTest(unittest.TestCase):
         # independently confirmed to vary per-variant the same way. Passing
         # one of those in isn't meaningful input, and should read as
         # "unknown", not silently match something by accident.
-        self.assertIsNone(variants.identify_variant(constants.PID_DONGLE))
+        self.assertIsNone(variants.identify_variant(variants.PID_DONGLE))
         self.assertIsNone(variants.identify_variant(variants.PID_DONGLE_TRIMODE))
-        self.assertIsNone(variants.identify_variant(constants.PID_HID))
-        self.assertIsNone(variants.identify_variant(constants.PID_NATIVE))
+        self.assertIsNone(variants.identify_variant(variants.PID_HID))
+        self.assertIsNone(variants.identify_variant(variants.PID_NATIVE))
 
 
 class IsKnownDonglePidTest(unittest.TestCase):
@@ -41,11 +41,11 @@ class IsKnownDonglePidTest(unittest.TestCase):
     could never satisfy this check anyway."""
 
     def test_known_dongle_pids_are_recognized(self):
-        self.assertTrue(variants.is_known_dongle_pid(constants.PID_DONGLE))
+        self.assertTrue(variants.is_known_dongle_pid(variants.PID_DONGLE))
         self.assertTrue(variants.is_known_dongle_pid(variants.PID_DONGLE_TRIMODE))
 
     def test_wired_pids_are_not_dongle_pids(self):
-        self.assertFalse(variants.is_known_dongle_pid(constants.PID_XID))
+        self.assertFalse(variants.is_known_dongle_pid(variants.PID_XID))
         self.assertFalse(variants.is_known_dongle_pid(variants.PID_XID_TRIMODE))
 
     def test_a_variant_with_no_confirmed_dongle_pid_matches_nothing(self):

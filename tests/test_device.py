@@ -9,7 +9,7 @@ import itertools
 import unittest
 from unittest import mock
 
-from pyg7 import constants, device, variants
+from pyg7 import device, variants
 
 
 class _FakeIntf:
@@ -119,7 +119,7 @@ class UnsupportedPidGateTest(unittest.TestCase):
         # does not mask the dongle" case: a rejected candidate must not
         # stop the scan before it reaches a genuine one behind it.
         blocked = _xid_shaped(0xBEEF)
-        real = _xid_shaped(constants.PID_XID)
+        real = _xid_shaped(variants.PID_XID)
         with self._unsupported(0xBEEF), _patched(blocked, real):
             dev, via_dongle = device.find_writable_device()
         self.assertIs(dev, real)
@@ -128,7 +128,7 @@ class UnsupportedPidGateTest(unittest.TestCase):
     def test_an_unlisted_pid_is_never_gated(self):
         # No real entries exist yet -- confirms the gate is a no-op for
         # every genuinely unknown PID, not just documented as one.
-        target = _xid_shaped(constants.PID_XID)
+        target = _xid_shaped(variants.PID_XID)
         with _patched(target):
             dev, via_dongle = device.find_writable_device()
         self.assertIs(dev, target)
@@ -143,12 +143,12 @@ class FindNativeIdentityTest(unittest.TestCase):
     for a variant this project hasn't seen yet."""
 
     def test_finds_a_device_with_no_vendor_interface(self):
-        target = _native_shaped(constants.PID_NATIVE)
+        target = _native_shaped(variants.PID_NATIVE)
         with _patched(target):
             self.assertIs(device.find_native_identity(), target)
 
     def test_skips_a_device_that_has_a_vendor_interface(self):
-        with _patched(_xid_shaped(constants.PID_XID)):
+        with _patched(_xid_shaped(variants.PID_XID)):
             self.assertIsNone(device.find_native_identity())
 
     def test_returns_none_when_nothing_is_connected(self):
@@ -159,7 +159,7 @@ class FindNativeIdentityTest(unittest.TestCase):
         # _has_vendor_interface() returning None ("don't know") must never
         # be misread as "definitely no vendor interface" -- that would
         # misclassify a transiently-unreadable *usable* device as native.
-        unreadable = _FakeDev(constants.PID_HID, None)
+        unreadable = _FakeDev(variants.PID_HID, None)
         with _patched(unreadable):
             self.assertIsNone(device.find_native_identity())
 
@@ -192,15 +192,15 @@ class HasHidInterfaceTest(unittest.TestCase):
     """
 
     def test_hid_interface_1_present(self):
-        self.assertTrue(device.has_hid_interface(_hid_shaped(constants.PID_XID)))
+        self.assertTrue(device.has_hid_interface(_hid_shaped(variants.PID_XID)))
 
     def test_non_hid_interface_1_absent(self):
-        self.assertFalse(device.has_hid_interface(_xid_shaped(constants.PID_XID)))
+        self.assertFalse(device.has_hid_interface(_xid_shaped(variants.PID_XID)))
 
     def test_unreadable_descriptors_answer_false_not_true(self):
         # "Don't know" must keep the module's previous behaviour rather than
         # making a device invisible to find_writable_device().
-        self.assertFalse(device.has_hid_interface(_FakeDev(constants.PID_XID, None)))
+        self.assertFalse(device.has_hid_interface(_FakeDev(variants.PID_XID, None)))
 
 
 class FindWritableDeviceTest(unittest.TestCase):
@@ -208,20 +208,20 @@ class FindWritableDeviceTest(unittest.TestCase):
         """The bug. Claiming this detached xpad, took the controller away
         mid-use, and left a heartbeat loop on an endpoint that answers
         nothing -- which looks exactly like a wedge."""
-        with _patched(_hid_shaped(constants.PID_XID)):
+        with _patched(_hid_shaped(variants.PID_XID)):
             dev, via_dongle = device.find_writable_device()
         self.assertIsNone(dev)
         self.assertFalse(via_dongle)
 
     def test_still_finds_a_genuine_baseline_device(self):
-        target = _xid_shaped(constants.PID_XID)
+        target = _xid_shaped(variants.PID_XID)
         with _patched(target):
             dev, via_dongle = device.find_writable_device()
         self.assertIs(dev, target)
         self.assertFalse(via_dongle)
 
     def test_still_finds_the_dongle(self):
-        target = _xid_shaped(constants.PID_DONGLE)
+        target = _xid_shaped(variants.PID_DONGLE)
         with _patched(target):
             dev, via_dongle = device.find_writable_device()
         self.assertIs(dev, target)
@@ -231,8 +231,8 @@ class FindWritableDeviceTest(unittest.TestCase):
         # Order matters: scanning must continue past a rejected candidate
         # (one presenting the HID interface at what would otherwise read
         # as baseline) rather than stopping at the first VID match.
-        rejected = _hid_shaped(constants.PID_XID)
-        dongle = _xid_shaped(constants.PID_DONGLE)
+        rejected = _hid_shaped(variants.PID_XID)
+        dongle = _xid_shaped(variants.PID_DONGLE)
         with _patched(rejected, dongle):
             dev, via_dongle = device.find_writable_device()
         self.assertIs(dev, dongle)
@@ -270,7 +270,7 @@ class FindWritableDeviceTest(unittest.TestCase):
         # though has_hid_interface() alone reads its interface 1 as "not
         # HID" too (both interfaces are plain HID there, see
         # _native_shaped()'s own docstring).
-        with _patched(_native_shaped(constants.PID_NATIVE)):
+        with _patched(_native_shaped(variants.PID_NATIVE)):
             dev, via_dongle = device.find_writable_device()
         self.assertIsNone(dev)
         self.assertFalse(via_dongle)
@@ -288,19 +288,19 @@ class FindWritableDeviceTest(unittest.TestCase):
 
 class FindHidDeviceTest(unittest.TestCase):
     def test_finds_it_at_the_classic_pid(self):
-        target = _hid_shaped(constants.PID_HID)
+        target = _hid_shaped(variants.PID_HID)
         with _patched(target):
             self.assertIs(device.find_hid_device(), target)
 
     def test_finds_it_at_the_baseline_pid_on_v244_firmware(self):
         """Without this, switch_to_xid() reports "no device found" for a
         controller that is plugged in and working."""
-        target = _hid_shaped(constants.PID_XID)
+        target = _hid_shaped(variants.PID_XID)
         with _patched(target):
             self.assertIs(device.find_hid_device(), target)
 
     def test_does_not_mistake_a_baseline_device_for_one_needing_a_handshake(self):
-        with _patched(_xid_shaped(constants.PID_XID)):
+        with _patched(_xid_shaped(variants.PID_XID)):
             self.assertIsNone(device.find_hid_device())
 
     def test_does_not_mistake_the_native_identity_for_one_needing_a_handshake(self):
@@ -309,7 +309,7 @@ class FindHidDeviceTest(unittest.TestCase):
         # can't tell it apart from a real PID_HID device. Regression target
         # for the 2026-08-29 detection redesign: excluded via
         # _has_vendor_interface(), not accidentally matched.
-        with _patched(_native_shaped(constants.PID_NATIVE)):
+        with _patched(_native_shaped(variants.PID_NATIVE)):
             self.assertIsNone(device.find_hid_device())
 
     def test_finds_a_genuinely_unknown_variant_pid(self):
@@ -330,7 +330,7 @@ class SwitchToXidMissingDeviceTest(unittest.TestCase):
         # identity (found 2026-07-30, held via Menu+Share) used to report
         # the same generic "no device found" as a genuinely unplugged
         # controller -- indistinguishable, and not actionable.
-        native = _native_shaped(constants.PID_NATIVE)
+        native = _native_shaped(variants.PID_NATIVE)
         with _patched(native):
             with self.assertLogs(device.log, level="ERROR") as cm:
                 dev, via_dongle = device.switch_to_xid()
@@ -363,7 +363,7 @@ class SwitchToXidLandingIdentityTest(unittest.TestCase):
     """
 
     def _run(self, landing_pid, timeout_s=1.0):
-        hid_dev = _hid_shaped(constants.PID_HID)
+        hid_dev = _hid_shaped(variants.PID_HID)
         landed_dev = _xid_shaped(landing_pid) if landing_pid is not None else None
 
         if landed_dev is not None:
@@ -383,12 +383,12 @@ class SwitchToXidLandingIdentityTest(unittest.TestCase):
             return device.switch_to_xid(timeout_s=timeout_s), landed_dev
 
     def test_dongle_landing_is_reported_as_via_dongle(self):
-        (dev, via_dongle), landed = self._run(constants.PID_DONGLE)
+        (dev, via_dongle), landed = self._run(variants.PID_DONGLE)
         self.assertIs(dev, landed)
         self.assertTrue(via_dongle)
 
     def test_wired_landing_is_not_reported_as_via_dongle(self):
-        (dev, via_dongle), landed = self._run(constants.PID_XID)
+        (dev, via_dongle), landed = self._run(variants.PID_XID)
         self.assertIs(dev, landed)
         self.assertFalse(via_dongle)
 
@@ -405,7 +405,7 @@ class SwitchToXidLandingIdentityTest(unittest.TestCase):
         # identify_variant() maps to a name (dongle PIDs aren't looked up
         # directly, see its own docstring). Must not print "None" or crash.
         with self.assertLogs(device.log, level="INFO") as logs:
-            self._run(constants.PID_DONGLE)
+            self._run(variants.PID_DONGLE)
         landing_lines = [line for line in logs.output if "Now at a baseline" in line]
         self.assertEqual(len(landing_lines), 1)
         self.assertNotIn("None", landing_lines[0])

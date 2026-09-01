@@ -13,8 +13,8 @@ import unittest
 from unittest import mock
 
 from g7ctl import main as cli_main
-from pyg7.constants import PID_DONGLE, PID_NATIVE, PID_XID
 from pyg7.device import HID_INTERFACE_CLASS
+from pyg7.variants import PID_DONGLE, PID_NATIVE, PID_XID
 
 from .fakes import FakeSession
 
