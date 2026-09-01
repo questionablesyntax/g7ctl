@@ -1101,15 +1101,31 @@ def _vibration_steps(v: dict, baseline: Optional[dict] = None, profile: int = 1)
     for side in ("left", "right"):
         force = v.get(f"{side}_trigger_force")
         sync = v.get(f"{side}_trigger_sync")
-        if force is not None or sync is not None:
-            val = f"{'on' if force else 'off'},{'on' if sync else 'off'}"
-            baseline_force = baseline.get(f"{side}_trigger_force")
-            baseline_sync = baseline.get(f"{side}_trigger_sync")
-            baseline_val = (f"{'on' if baseline_force else 'off'},{'on' if baseline_sync else 'off'}"
-                             if (baseline_force is not None or baseline_sync is not None) else None)
-            if baseline_val == val:
-                skipped += 1
-                continue
-            steps.append((f"Vibration: {side}_trigger_flags={val}",
-                           lambda sess, s=f"{side}_trigger_flags", val=val: vibration.set_value(sess, s, val, profile=profile)))
+        if force is None and sync is None:
+            continue
+        baseline_force = baseline.get(f"{side}_trigger_force")
+        baseline_sync = baseline.get(f"{side}_trigger_sync")
+        # Real bug, found 2026-09-01: this is one packed two-bit byte, so a
+        # write has to specify both bits even when only one was actually
+        # asked to change -- but the UNDECLARED half must carry forward the
+        # device's own current value (from baseline), not a hardcoded
+        # "off". The old code read `force`/`sync` directly into the
+        # f-string, so None (undeclared) was silently treated as falsy --
+        # e.g. declaring only right_trigger_sync would write
+        # right_trigger_force=off regardless of what it actually was.
+        # Falls back to "off" only when baseline has no answer either (the
+        # full-write-with-no-baseline path, e.g. a failed baseline read --
+        # see write_state()'s own baseline param) -- there is no honest
+        # value to preserve there, same as every other fresh/never-read
+        # field in a from-scratch write.
+        resolved_force = force if force is not None else baseline_force
+        resolved_sync = sync if sync is not None else baseline_sync
+        val = f"{'on' if resolved_force else 'off'},{'on' if resolved_sync else 'off'}"
+        baseline_val = (f"{'on' if baseline_force else 'off'},{'on' if baseline_sync else 'off'}"
+                         if (baseline_force is not None or baseline_sync is not None) else None)
+        if baseline_val == val:
+            skipped += 1
+            continue
+        steps.append((f"Vibration: {side}_trigger_flags={val}",
+                       lambda sess, s=f"{side}_trigger_flags", val=val: vibration.set_value(sess, s, val, profile=profile)))
     return steps, skipped

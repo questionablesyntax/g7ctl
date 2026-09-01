@@ -20,6 +20,7 @@ from .constants import (
     CMD_DEVICE_INFO,
     CMD_HEARTBEAT,
     CMD_READ,
+    CMD_WRITE,
     EP_IN,
     EP_OUT,
     IFACE,
@@ -84,6 +85,17 @@ class BatteryStatus(NamedTuple):
 SETTLE_HEARTBEATS = 24
 SETTLE_INTERVAL = 0.25
 READ_CHUNK_TIMEOUT = 4.0
+
+# Pacing between the two writes send_addressed() splits a page-crossing
+# write into -- same value and same reasoning as
+# pyg7.curves.CURVE_POINT_WRITE_INTERVAL (an unpaced second write right
+# behind the first gets silently dropped on real hardware). Resolved
+# inside send_addressed() itself, not bound as a default argument, so a
+# test can patch this down to 0 and have it take effect even through a
+# category module's set_value() -- which doesn't forward an `interval`
+# parameter of its own -- the same reason CURVE_POINT_WRITE_INTERVAL is
+# resolved that way rather than as curves.write_curve_points()'s default.
+SPLIT_WRITE_INTERVAL = 0.3
 
 
 # The Shift layer's category. ONE byte, for the whole device -- the Shift
@@ -210,6 +222,50 @@ class VendorSession:
 
     def heartbeat(self) -> bytes:
         return self.send_raw(CMD_HEARTBEAT, bytes([0xf2, 0x00]))
+
+    def send_addressed(self, prefix: bytes, setting_id: int, data: bytes,
+                        interval: Optional[float] = None) -> bytes:
+        """Send a `[setting_id][LEN][...data...]` config write under
+        `prefix` (category/profile/page).
+
+        This whole protocol addresses writes into one register file --
+        `prefix`'s third byte selects the page, `setting_id` the offset
+        within it -- and a write's data does NOT carry across a page on
+        its own if `setting_id + len(data)` runs past `0xFF`: real
+        hardware needs a fresh prefix with the page incremented and the
+        address reset to `0x00` for the remainder. Confirmed on the wire
+        2026-08-08 (test62, see pyg7.curves.curve_point_payloads()):
+        Right Trigger's third curve point crossing this exact boundary
+        emitted `03 01 01 00 02 e4 82` -- page 1, offset 0x00, a 2-byte
+        payload -- exactly the shape this method produces for any setting
+        whose data crosses, split at the byte that actually lands past
+        `0xFF` and paced with an intervening heartbeat the same way this
+        protocol's other multi-write settings already need (see
+        `pyg7.curves.CURVE_POINT_WRITE_INTERVAL`'s own comment on why a
+        second write right behind the first gets silently dropped
+        without one).
+
+        Right Trigger's curve block and three of its four long-form
+        Deadzone/Anti-Deadzone writes are the only settings in this
+        protocol that reach this case (`RIGHT_TRIGGER_OFFSET` pushes
+        their `setting_id` close enough to `0xFF` that a double-digit
+        payload tips over) -- every other caller's `setting_id + len(data)`
+        stays comfortably under `0x100`, so this is a no-op single write
+        for them, identical to what was sent before this method existed.
+        """
+        end = setting_id + len(data)
+        if end <= 0x100:
+            return self.send_raw(CMD_WRITE, prefix + bytes([setting_id, len(data)]) + data)
+        if interval is None:
+            interval = SPLIT_WRITE_INTERVAL
+        fits = 0x100 - setting_id
+        self.send_raw(CMD_WRITE, prefix + bytes([setting_id, fits]) + data[:fits])
+        time.sleep(interval)
+        self.heartbeat()
+        time.sleep(interval)
+        remainder = data[fits:]
+        next_prefix = prefix[:2] + bytes([prefix[2] + 1])
+        return self.send_raw(CMD_WRITE, next_prefix + bytes([0x00, len(remainder)]) + remainder)
 
     def settle(self, count: Optional[int] = None, interval: float = SETTLE_INTERVAL) -> None:
         """Warm up a freshly-claimed session before issuing any non-heartbeat

@@ -35,6 +35,23 @@ class FakeSession:
         self.heartbeats += 1
         return b""
 
+    def send_addressed(self, prefix: bytes, setting_id: int, data: bytes,
+                        interval: float = 0.3) -> bytes:
+        """Mirrors VendorSession.send_addressed() (see session.py) --
+        same page-crossing split, recorded the same way send_raw() is, so
+        a test asserting on .sent/.payloads sees exactly what real
+        hardware would."""
+        from pyg7.constants import CMD_WRITE
+        end = setting_id + len(data)
+        if end <= 0x100:
+            return self.send_raw(CMD_WRITE, prefix + bytes([setting_id, len(data)]) + data)
+        fits = 0x100 - setting_id
+        self.send_raw(CMD_WRITE, prefix + bytes([setting_id, fits]) + data[:fits])
+        self.heartbeat()
+        remainder = data[fits:]
+        next_prefix = prefix[:2] + bytes([prefix[2] + 1])
+        return self.send_raw(CMD_WRITE, next_prefix + bytes([0x00, len(remainder)]) + remainder)
+
     def read_chunk(self, category: int, offset: int, length: int, timeout: float = 2.0) -> bytes:
         self.reads.append((category, offset, length))
         chunk = self._blob[offset:offset + length]

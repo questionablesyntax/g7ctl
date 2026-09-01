@@ -7,6 +7,7 @@ most directly.
 """
 import unittest
 
+from pyg7.constants import CMD_HEARTBEAT, CMD_WRITE
 from pyg7.session import (
     READ_CHUNK_TIMEOUT,
     SETTLE_HEARTBEATS,
@@ -67,6 +68,99 @@ class SendRawTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.sess.send_raw(0x3C, bytes(61))
         self.assertEqual(self.dev.written, [])  # must fail before ever writing
+
+
+class SendAddressedTest(unittest.TestCase):
+    """VendorSession.send_addressed() -- added 2026-09-01 after a real bug:
+    Right Trigger's curve block (setting_id 0xF8, 10 bytes of data) spans
+    0xF8..0x101, crossing the 0xFF/0x100 page boundary that plain
+    send_raw()-based callers were assuming couldn't happen. See
+    pyg7.curves.curve_point_payloads()'s own comment for the hardware
+    capture this reproduces.
+    """
+
+    def setUp(self):
+        self.dev = _FakeDevice()
+        self.sess = VendorSession(self.dev)
+
+    def test_non_crossing_write_is_a_single_packet_unchanged(self):
+        # setting_id 0x44 (Left Stick's curve) + 10 bytes stays well under
+        # 0x100 -- must behave exactly like a plain send_raw() call, one
+        # packet, no heartbeat.
+        prefix = bytes([0x03, 0x01, 0x00])
+        data = bytes(range(10))
+        self.sess.send_addressed(prefix, 0x44, data)
+        self.assertEqual(len(self.dev.written), 1)
+        _endpoint, sent = self.dev.written[0]
+        self.assertEqual(sent[4:7], prefix)
+        self.assertEqual(sent[7], 0x44)         # setting_id
+        self.assertEqual(sent[8], len(data))    # LEN, derived not hardcoded
+        self.assertEqual(sent[9:19], data)
+
+    def test_crossing_write_splits_at_the_page_boundary_with_a_heartbeat_between(self):
+        # Right Trigger's curve: setting_id 0xF8, 10 bytes of data
+        # (index, scale, origin x2, P1 x2, P2 x2, P3 x2) -- P3 specifically
+        # lands past 0xFF. Uses real hardware-confirmed P3 bytes (e4 82)
+        # from the 2026-08-08 capture (test62): dragging Right Trigger's
+        # third curve point emitted `03 01 01 00 02 e4 82` on the wire --
+        # page 1, offset 0x00, a 2-byte payload. This test reproduces that
+        # exact second packet, not just a plausible-looking one.
+        prefix = bytes([0x03, 0x01, 0x00])   # profile 1, page 0
+        index, scale = 0x03, 0x64
+        origin = bytes([0x00, 0x00])
+        p1, p2, p3 = bytes([0x28, 0x29]), bytes([0x80, 0x80]), bytes([0xE4, 0x82])
+        data = bytes([index, scale]) + origin + p1 + p2 + p3
+        self.assertEqual(len(data), 10)
+
+        self.sess.send_addressed(prefix, 0xF8, data, interval=0)
+
+        # 3 packets: write, heartbeat, write -- a real heartbeat is required
+        # between the two writes (CURVE_POINT_WRITE_INTERVAL's own comment:
+        # an unpaced second write right behind the first gets silently
+        # dropped on real hardware), so send_addressed() must send one, not
+        # just sleep.
+        self.assertEqual(len(self.dev.written), 3)
+        cmd_bytes = [sent[3] for _endpoint, sent in self.dev.written]
+        self.assertEqual(cmd_bytes, [CMD_WRITE, CMD_HEARTBEAT, CMD_WRITE])
+
+        _e1, first = self.dev.written[0]
+        self.assertEqual(first[4:7], prefix)          # still page 0
+        self.assertEqual(first[7], 0xF8)               # setting_id, unchanged
+        self.assertEqual(first[8], 8)                   # LEN: only 8 bytes fit before 0x100
+        self.assertEqual(first[9:17], data[:8])
+
+        _e2, second = self.dev.written[2]
+        self.assertEqual(second[4:6], prefix[:2])       # same category/profile
+        self.assertEqual(second[6], 0x01)               # page incremented 0 -> 1
+        self.assertEqual(second[7], 0x00)               # address resets to 0 on the new page
+        self.assertEqual(second[8], 2)                  # LEN: the 2 bytes that didn't fit
+        self.assertEqual(second[9:11], data[8:])         # P3's own bytes: e4 82
+        self.assertEqual(bytes(second[6:11]), bytes([0x01, 0x00, 0x02, 0xE4, 0x82]))
+
+    def test_deadzone_max_crossing_case_also_splits_correctly(self):
+        # A second real crossing case, independent of the curve one:
+        # setting_id 0xEC (Right Trigger deadzone_max) + 21 bytes (a
+        # 1-byte value plus a 20-byte live-read suffix) spans 0xEC..0x101.
+        prefix = bytes([0x03, 0x02, 0x00])   # profile 2, page 0
+        data = bytes([0x32]) + bytes(range(20))  # value=0x32 + 20-byte suffix
+        self.assertEqual(0xEC + len(data), 0x101)
+
+        self.sess.send_addressed(prefix, 0xEC, data, interval=0)
+
+        self.assertEqual(len(self.dev.written), 3)  # write, heartbeat, write
+        cmd_bytes = [sent[3] for _endpoint, sent in self.dev.written]
+        self.assertEqual(cmd_bytes, [CMD_WRITE, CMD_HEARTBEAT, CMD_WRITE])
+
+        _e1, first = self.dev.written[0]
+        self.assertEqual(first[7], 0xEC)
+        self.assertEqual(first[8], 20)          # 0x100 - 0xEC = 20 bytes fit
+        self.assertEqual(first[9:29], data[:20])
+
+        _e2, second = self.dev.written[2]
+        self.assertEqual(second[6], 0x01)       # page incremented
+        self.assertEqual(second[7], 0x00)       # address resets
+        self.assertEqual(second[8], 1)          # 1 remaining byte
+        self.assertEqual(second[9], data[20])
 
 
 class _FakeReadDevice(_FakeDevice):

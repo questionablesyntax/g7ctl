@@ -12,7 +12,7 @@ scoping" and sticks.py's module docstring (an
 earlier single test had wrongly suggested no profile targeting existed
 here).
 """
-from .constants import CMD_WRITE, RIGHT_TRIGGER_OFFSET, prefix_triggers_vibration
+from .constants import RIGHT_TRIGGER_OFFSET, prefix_triggers_vibration
 from .curves import (
     CURVE_PRESET_NAMES,
     curve_preset_payload,
@@ -105,29 +105,42 @@ def set_value(session: VendorSession, side: str, setting: str, value: SettingVal
     sid = SETTING_IDS[setting] + offset
     prefix = prefix_triggers_vibration(profile)
 
+    # Every branch below builds `data` (the bytes after [sid][LEN]) and
+    # falls through to send_addressed(), which derives LEN from len(data)
+    # and -- the reason this isn't a plain send_raw() -- splits into two
+    # heartbeat-paced writes if sid + len(data) would cross a page. Right
+    # Trigger's +0x1C offset pushes deadzone_max/anti_deadzone_initial/
+    # anti_deadzone_max/curve right up against that boundary; nothing else
+    # in this function gets close. See send_addressed()'s own docstring.
     if setting == "hair_trigger_mode":
         val = HAIR_TRIGGER_MODES.get(str(value).lower())
         if val is None:
             raise ValueError(f"hair_trigger_mode must be one of {list(HAIR_TRIGGER_MODES)}")
-        payload = prefix + bytes([sid, 0x01, val])
+        data = bytes([val])
     elif setting == "curve":
-        payload = prefix + curve_preset_payload(sid, value)
+        # curve_preset_payload() returns [sid][LEN][...]; strip that 2-byte
+        # header back off since send_addressed() rebuilds it itself.
+        data = curve_preset_payload(sid, value)[2:]
     elif setting == "curve_points":
         # Three writes, heartbeat-paced -- see curves.write_curve_points().
         return write_curve_points(session, prefix, sid, parse_points(value))
     elif setting == "deadzone_initial":
         suffix = session.read_live_suffix(profile, sid + STORAGE_BASE, _DEADZONE_INITIAL_SUFFIX_LEN)
-        payload = prefix + bytes([sid, _DEADZONE_INITIAL_MARKER, _percent(value)]) + suffix
+        data = bytes([_percent(value)]) + suffix
+        assert len(data) == _DEADZONE_INITIAL_MARKER, "suffix length drifted from the captured template"
     elif setting == "deadzone_max":
         suffix = session.read_live_suffix(profile, sid + STORAGE_BASE, _DEADZONE_MAX_SUFFIX_LEN)
-        payload = prefix + bytes([sid, _DEADZONE_MAX_MARKER, _percent(value)]) + suffix
+        data = bytes([_percent(value)]) + suffix
+        assert len(data) == _DEADZONE_MAX_MARKER, "suffix length drifted from the captured template"
     elif setting == "anti_deadzone_initial":
         suffix = session.read_live_suffix(profile, sid + STORAGE_BASE, _ANTI_DEADZONE_INITIAL_SUFFIX_LEN)
-        payload = prefix + bytes([sid, _ANTI_DEADZONE_INITIAL_MARKER, _percent(value)]) + suffix
+        data = bytes([_percent(value)]) + suffix
+        assert len(data) == _ANTI_DEADZONE_INITIAL_MARKER, "suffix length drifted from the captured template"
     elif setting == "anti_deadzone_max":
         suffix = session.read_live_suffix(profile, sid + STORAGE_BASE, _ANTI_DEADZONE_MAX_SUFFIX_LEN)
-        payload = prefix + bytes([sid, _ANTI_DEADZONE_MAX_MARKER, _percent(value)]) + suffix
+        data = bytes([_percent(value)]) + suffix
+        assert len(data) == _ANTI_DEADZONE_MAX_MARKER, "suffix length drifted from the captured template"
     else:
         raise ValueError(f"unhandled setting {setting!r}")
 
-    return session.send_raw(CMD_WRITE, payload)
+    return session.send_addressed(prefix, sid, data)

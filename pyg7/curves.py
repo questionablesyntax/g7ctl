@@ -210,10 +210,14 @@ def write_curve_points(session, prefix: bytes, setting_id: int,
 
     points = list(points)
     if whole_block:
-        # One write, so there is nothing to pace and no page to carry into:
-        # the block starts at the curve's own SETTING_ID and is 10 bytes,
-        # which cannot cross a page for any curve we address.
-        return session.send_raw(CMD_WRITE, prefix + curve_block_payload(setting_id, points))
+        # Usually one write; VendorSession.send_addressed() splits it into
+        # two, paced, if setting_id's own +10 bytes would cross a page --
+        # Right Trigger's curve is the one case in this protocol where
+        # that happens (RIGHT_TRIGGER_OFFSET pushes it right up against
+        # the boundary). See send_addressed()'s own docstring for the
+        # hardware-confirmed wire format this reproduces.
+        full = curve_block_payload(setting_id, points)
+        return session.send_addressed(prefix, setting_id, full[2:], interval)
 
     base_page = prefix[2]
     pkt = b""

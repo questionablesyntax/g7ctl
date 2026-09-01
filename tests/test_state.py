@@ -446,6 +446,60 @@ class OffScaleVibrationTest(unittest.TestCase):
         self.assertEqual(labels, ["Report rate=250Hz"])
 
 
+class VibrationTriggerFlagsTest(unittest.TestCase):
+    """left/right_trigger_force and *_trigger_sync pack into one wire byte
+    (see vibration.py), so a write always has to specify both bits even
+    when only one was actually declared as changed. Real bug, found
+    2026-09-01: the undeclared half used to be read directly into the
+    f-string building that byte, so None (undeclared) was silently treated
+    as falsy and written as "off" regardless of the device's real current
+    value -- declaring only trigger_sync would silently clobber
+    trigger_force. The undeclared half must instead carry forward
+    baseline's own value.
+    """
+
+    def _labels(self, state, baseline):
+        return [label for label, _fn in state_mod._vibration_steps(state, baseline, profile=1)[0]]
+
+    def test_declaring_only_sync_preserves_forces_baseline_value(self):
+        # Baseline: force=True (on), sync=False (off). Declare ONLY a sync
+        # change -- force must carry forward as "on", not fall back to "off".
+        baseline = {"right_trigger_force": True, "right_trigger_sync": False}
+        state = {"right_trigger_sync": True}  # right_trigger_force absent
+        labels = self._labels(state, baseline)
+        self.assertEqual(labels, ["Vibration: right_trigger_flags=on,on"])
+
+    def test_declaring_only_force_preserves_syncs_baseline_value(self):
+        baseline = {"left_trigger_force": False, "left_trigger_sync": True}
+        state = {"left_trigger_force": True}  # left_trigger_sync absent
+        labels = self._labels(state, baseline)
+        self.assertEqual(labels, ["Vibration: left_trigger_flags=on,on"])
+
+    def test_matching_the_resolved_baseline_value_skips_the_write(self):
+        # Same case as the first test, but the declared sync value already
+        # matches baseline -- combined with force's preserved "on", nothing
+        # actually changes, so this must be skipped, not written.
+        baseline = {"right_trigger_force": True, "right_trigger_sync": False}
+        state = {"right_trigger_sync": False}
+        steps, skipped = state_mod._vibration_steps(state, baseline, profile=1)
+        self.assertEqual(steps, [])
+        self.assertEqual(skipped, 1)
+
+    def test_both_undeclared_produces_no_step_at_all(self):
+        baseline = {"right_trigger_force": True, "right_trigger_sync": False}
+        steps, skipped = state_mod._vibration_steps({}, baseline, profile=1)
+        self.assertEqual(steps, [])
+        self.assertEqual(skipped, 0)  # never considered, not "matched and skipped"
+
+    def test_no_baseline_at_all_defaults_the_undeclared_half_to_off(self):
+        # The one case where "off" for the undeclared half is correct, not
+        # a bug: a from-scratch write with nothing to preserve (e.g. a
+        # failed baseline read -- see write_state()'s own baseline param).
+        state = {"left_trigger_force": True}  # left_trigger_sync absent
+        labels = self._labels(state, baseline=None)
+        self.assertEqual(labels, ["Vibration: left_trigger_flags=on,off"])
+
+
 class SparseSubsectionTest(unittest.TestCase):
     """A state dict may legitimately omit an entire sub-section (not just
     hold it as `None`) to mean "leave this alone" -- validate_state() treats

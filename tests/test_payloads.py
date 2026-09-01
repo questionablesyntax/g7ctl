@@ -351,6 +351,71 @@ class TriggerWriteTest(unittest.TestCase):
             triggers.set_value(FakeSession(), "left", "hair_trigger_mode", "hairy")
 
 
+class RightTriggerPageBoundaryTest(unittest.TestCase):
+    """Real bug, found 2026-09-01: RIGHT_TRIGGER_OFFSET (+0x1C) pushes four
+    of Right Trigger's settings' data past 0xFF -- deadzone_max,
+    anti_deadzone_initial, anti_deadzone_max, and the curve block/preset --
+    which used to be sent as one send_raw() write assuming the whole
+    payload stayed on one page. It doesn't: real hardware needs a second,
+    heartbeat-paced write under the next page's prefix for the bytes that
+    land past the boundary (see VendorSession.send_addressed()). These
+    tests pin that every affected setting now produces TWO payloads, and
+    that Left Trigger's equivalents -- which never cross -- still produce
+    exactly one, unchanged.
+    """
+
+    def test_right_deadzone_max_splits_into_two_writes(self):
+        blob = bytes(range(256)) * 4
+        left, right = FakeSession(blob), FakeSession(blob)
+        triggers.set_value(left, "left", "deadzone_max", 50, profile=1)
+        triggers.set_value(right, "right", "deadzone_max", 50, profile=1)
+        self.assertEqual(len(left.payloads), 1)
+        self.assertEqual(len(right.payloads), 2)
+        first, second = right.payloads
+        self.assertEqual(first[3], 0xD0 + 0x1C)   # setting_id, unchanged
+        self.assertEqual(second[2], first[2] + 1)  # page incremented
+        self.assertEqual(second[3], 0x00)          # address resets on the new page
+
+    def test_right_anti_deadzone_initial_splits_into_two_writes(self):
+        blob = bytes(range(256)) * 4
+        right = FakeSession(blob)
+        triggers.set_value(right, "right", "anti_deadzone_initial", 50, profile=1)
+        self.assertEqual(len(right.payloads), 2)
+
+    def test_right_anti_deadzone_max_splits_into_two_writes(self):
+        blob = bytes(range(256)) * 4
+        right = FakeSession(blob)
+        triggers.set_value(right, "right", "anti_deadzone_max", 50, profile=1)
+        self.assertEqual(len(right.payloads), 2)
+
+    def test_right_deadzone_initial_does_not_cross_stays_one_write(self):
+        # The one Right Trigger long-form setting whose data stays inside
+        # page 0 (0xEB + 0x14 = 0xFF) -- must NOT be split.
+        blob = bytes(range(256)) * 4
+        right = FakeSession(blob)
+        triggers.set_value(right, "right", "deadzone_initial", 50, profile=1)
+        self.assertEqual(len(right.payloads), 1)
+
+    def test_right_curve_preset_splits_into_two_writes_matching_left(self):
+        left, right = FakeSession(), FakeSession()
+        triggers.set_value(left, "left", "curve", "standard", profile=1)
+        triggers.set_value(right, "right", "curve", "standard", profile=1)
+        self.assertEqual(len(left.payloads), 1)
+        self.assertEqual(len(right.payloads), 2)
+        # Both writes together must carry the exact same curve data Left
+        # Trigger sent in its one write -- setting_id + LEN byte aside,
+        # splitting must not drop or reorder any actual curve bytes.
+        left_data = left.only_payload()[5:]     # strip [prefix][sid][LEN]
+        first, second = right.payloads
+        right_data = first[5:] + second[5:]       # strip [prefix][sid][LEN] from each half
+        self.assertEqual(right_data, left_data)
+
+    def test_right_curve_points_splits_into_two_writes(self):
+        right = FakeSession()
+        triggers.set_value(right, "right", "curve_points", "10,20,30,40,50,60", profile=1)
+        self.assertEqual(len(right.payloads), 2)
+
+
 class MotionWriteTest(unittest.TestCase):
     """See pyg7/motion.py -- every address here traces back to a live
     capture (test72-test77), not to the +0x22 stride alone; the two
