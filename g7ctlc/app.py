@@ -87,6 +87,7 @@ def main() -> int:
     thread.started.connect(watcher.run)
     watcher.state_changed.connect(tray.set_state)
     watcher.state_changed.connect(window.set_connection_state)
+    window.syncing_changed.connect(tray.set_syncing)
     watcher.error.connect(window.set_error)
     watcher.sync_progress.connect(window.set_sync_progress)
     watcher.sync_finished.connect(window.set_sync_finished)

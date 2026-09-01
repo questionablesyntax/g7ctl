@@ -74,6 +74,14 @@ class MainWindow(QMainWindow):
     release_toggled = pyqtSignal(bool)  # True = release to XInput, False = reconnect
     sync_requested = pyqtSignal(dict)   # the state dict to push to the device
     read_requested = pyqtSignal(int)    # the controller_slot to read bindings back from
+    # Emitted every time self._syncing changes -- so anything outside this
+    # class (the tray icon's own Release Device action, currently) can stay
+    # in step without reaching into a private attribute. Added 2026-09-01:
+    # the tray had no way to know a sync/read was in flight at all, so its
+    # own Release Device action -- the one release-trigger every OTHER
+    # entry point in this file is deliberately guarded against firing
+    # mid-sync -- bypassed that protection entirely.
+    syncing_changed = pyqtSignal(bool)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -663,7 +671,15 @@ class MainWindow(QMainWindow):
         if not self._confirm("Sync to controller?", message):
             return
         self._syncing = True
+        self.syncing_changed.emit(True)
         self.sync_btn.setEnabled(False)
+        # Real gap, found 2026-09-01: this used to leave read_btn enabled,
+        # unlike request_read_from_device() right below (which disables
+        # both sync_btn and read_btn). Clicking it mid-sync was silently
+        # swallowed by that method's own `or self._syncing: return` guard
+        # -- no message, no queued job -- a dead, unexplained click on an
+        # otherwise-live-looking button while a sync was visibly running.
+        self.read_btn.setEnabled(False)
         self.profile_combo.setEnabled(False)
         # Not the only thing preventing a dropped job anymore (the watcher
         # now drains a queued job before actually pausing -- see
@@ -682,6 +698,7 @@ class MainWindow(QMainWindow):
 
     def set_sync_finished(self, success: bool, message: str) -> None:
         self._syncing = False
+        self.syncing_changed.emit(False)
         self.sync_status_label.setText(message)
         self._refresh_sync_btn()
         self._refresh_confirmed_display()  # unlocks the tabs request_sync_now() locked
@@ -713,6 +730,7 @@ class MainWindow(QMainWindow):
         ):
             return
         self._syncing = True
+        self.syncing_changed.emit(True)
         self.sync_btn.setEnabled(False)
         self.read_btn.setEnabled(False)
         self.profile_combo.setEnabled(False)
@@ -724,6 +742,7 @@ class MainWindow(QMainWindow):
 
     def set_read_finished(self, success: bool, message: str, device_state: Optional[dict]) -> None:
         self._syncing = False
+        self.syncing_changed.emit(False)
         self.sync_status_label.setText(message)
         if success and device_state is not None:
             self._state_confirmed = True

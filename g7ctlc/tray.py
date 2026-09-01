@@ -79,6 +79,7 @@ class TrayIcon(QSystemTrayIcon):
         super().__init__(parent)
         self.main_window = main_window
         self._state = "disconnected"
+        self._syncing = False
         self._icons = {state: _state_icon(fname) for state, fname in _STATE_ICON_FILES.items()}
 
         menu = QMenu()
@@ -112,7 +113,16 @@ class TrayIcon(QSystemTrayIcon):
         self.setToolTip(f"G7 Control Center -- {_STATE_LABELS.get(state, state)}")
         if state == "connected":
             self.release_action.setText("Release Device")
-            self.release_action.setEnabled(True)
+            # Real bug, found 2026-09-01: this used to be an unconditional
+            # True. main_window.py deliberately disables its own release_btn
+            # during a sync/read (request_sync_now()'s own comment: "no
+            # reason to let a click through mid-sync"), and
+            # _auto_release_if_still_unfocused() separately re-checks
+            # _syncing before ever emitting release_toggled -- but the
+            # tray's own Release Device action had neither protection,
+            # bypassing the one guard every other release-trigger in the
+            # app was deliberately hardened with.
+            self.release_action.setEnabled(not self._syncing)
             self.sync_action.setEnabled(True)
         elif state == "paused":
             self.release_action.setText("Reconnect")
@@ -121,6 +131,15 @@ class TrayIcon(QSystemTrayIcon):
         else:
             self.release_action.setEnabled(False)
             self.sync_action.setEnabled(False)
+
+    def set_syncing(self, syncing: bool) -> None:
+        """Connected to MainWindow.syncing_changed -- set_state() alone
+        isn't enough, since connection state stays "connected" throughout
+        a sync/read and nothing re-invokes it just because _syncing
+        toggles (see MainWindow.syncing_changed's own comment)."""
+        self._syncing = syncing
+        if self._state == "connected":
+            self.release_action.setEnabled(not syncing)
 
     def _on_release_clicked(self) -> None:
         self.release_toggled.emit(self._state != "paused")
