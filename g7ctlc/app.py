@@ -125,7 +125,27 @@ def main() -> int:
         window.save_geometry()
         watcher.stop()
         thread.quit()
-        thread.wait(2000)
+        # watcher.stop() only sets a flag checked at the top of run()'s
+        # loop -- if the watcher thread is currently inside a sync's
+        # write_state() call (many small, individually-paced USB writes;
+        # plausibly several seconds for a full profile, longer still if a
+        # baseline-read timeout forced a full write), the flag isn't seen
+        # until that call returns. 2000ms was tight enough to plausibly
+        # time out mid-write and let the process tear down with the
+        # watcher thread -- and its open USB session -- still running.
+        # Widened to give a real in-flight sync a fair chance to finish;
+        # still bounded, so a genuinely stuck thread can't hang shutdown
+        # forever. Real fix would be confirming with the user before
+        # quitting at all while a sync is in flight (the same pattern
+        # Sync Now itself already asks for) -- flagged, not done here:
+        # that needs restructuring how tray.py's Quit action reaches
+        # MainWindow's own _syncing flag, out of scope for just widening
+        # this window. At minimum, don't fail silently if it's still not
+        # enough.
+        if not thread.wait(10_000):
+            logging.warning("watcher thread did not stop within 10s of "
+                             "quitting -- it may have been mid-write to "
+                             "persistent device config when the app exited.")
 
     app.aboutToQuit.connect(_shutdown)
     thread.start()
