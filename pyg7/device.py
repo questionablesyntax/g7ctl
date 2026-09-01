@@ -286,6 +286,32 @@ KEYBOARD_MOUSE_INTERFACE = 1
 VENDOR_INTERFACE_CLASS = 0xFF
 
 
+def _log_descriptor_read_failure(dev: usb.core.Device, e: Exception) -> None:
+    """Shared by _interface_classes()/_has_vendor_interface() below --
+    both used to swallow a failed get_active_configuration() with zero
+    logging at all, which meant a real, common, actionable cause (a
+    missing udev rule -- EACCES) was indistinguishable from the benign
+    transient one their docstrings actually reason about (mid-
+    re-enumeration, or gone). Found by a dedicated active-debugging-
+    infrastructure pass, 2026-09-01 -- see DEBUGGING-INFRA-PLAN-2026-09-01.md.
+
+    Every VID-matching device this project can't yet identify goes through
+    here, new/unrecognized variants included -- this is exactly the spot
+    that needed a trace for "what's silently failing on a new device" to
+    ever be answerable at all, not just for permissions specifically.
+    """
+    if isinstance(e, usb.core.USBError) and getattr(e, "errno", None) == 13:  # EACCES
+        log.warning(
+            "Permission denied reading %04x:%04x's descriptors -- likely a missing "
+            "udev rule (see README.md 'Running without root'), not a benign "
+            "transient state. This device may be misclassified as a result.",
+            VID, dev.idProduct)
+        return
+    log.debug("could not read %04x:%04x's descriptors (%s: %s) -- treating as "
+              "unclassifiable rather than assuming an answer; likely mid-"
+              "re-enumeration or gone", VID, dev.idProduct, type(e).__name__, e)
+
+
 def _interface_classes(dev: usb.core.Device, number: int) -> list:
     """Every alternate setting's bInterfaceClass for one interface number.
 
@@ -295,7 +321,8 @@ def _interface_classes(dev: usb.core.Device, number: int) -> list:
     """
     try:
         cfg = dev.get_active_configuration()
-    except Exception:  # pragma: no cover - depends on live USB state
+    except Exception as e:  # pragma: no cover - depends on live USB state
+        _log_descriptor_read_failure(dev, e)
         return []
     return [i.bInterfaceClass for i in cfg if i.bInterfaceNumber == number]
 
@@ -314,7 +341,8 @@ def _has_vendor_interface(dev: usb.core.Device) -> Optional[bool]:
     """
     try:
         cfg = dev.get_active_configuration()
-    except Exception:  # pragma: no cover - depends on live USB state
+    except Exception as e:  # pragma: no cover - depends on live USB state
+        _log_descriptor_read_failure(dev, e)
         return None
     return any(i.bInterfaceClass == VENDOR_INTERFACE_CLASS for i in cfg)
 

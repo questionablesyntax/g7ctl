@@ -9,6 +9,8 @@ import itertools
 import unittest
 from unittest import mock
 
+import usb.core
+
 from pyg7 import device
 
 # Representative PIDs for building fake devices below -- test fixture data
@@ -217,6 +219,50 @@ class HasHidInterfaceTest(unittest.TestCase):
         # "Don't know" must keep the module's previous behaviour rather than
         # making a device invisible to find_writable_device().
         self.assertFalse(device.has_hid_interface(_FakeDev(XID_PID, None)))
+
+
+class _PermissionDeniedDev(_FakeDev):
+    """get_active_configuration() raises the real shape a missing udev rule
+    produces -- usb.core.USBError with errno=13 (EACCES), same as
+    g7ctl/main.py's _explain_usb_error() already special-cases at the CLI
+    level. Distinct from plain _FakeDev(pid, None)'s bare OSError, which
+    models the benign mid-re-enumeration/gone case instead."""
+
+    def get_active_configuration(self):
+        exc = usb.core.USBError("Access denied")
+        exc.errno = 13
+        raise exc
+
+
+class DescriptorReadFailureLoggingTest(unittest.TestCase):
+    """Real gap, found by a dedicated active-debugging-infrastructure pass,
+    2026-09-01: a failed get_active_configuration() used to be swallowed
+    with zero logging at all, in either _interface_classes() or
+    _has_vendor_interface() -- indistinguishable from the benign
+    transient state their own docstrings reason about. See
+    DEBUGGING-INFRA-PLAN-2026-09-01.md."""
+
+    def test_a_permission_error_logs_a_warning_naming_the_real_cause(self):
+        with self.assertLogs("pyg7.device", level="WARNING") as ctx:
+            result = device._has_vendor_interface(_PermissionDeniedDev(XID_PID, None))
+        self.assertIsNone(result)  # still "don't know", behavior unchanged
+        self.assertTrue(any("Permission denied" in line and "udev" in line
+                            for line in ctx.output))
+
+    def test_a_benign_read_failure_logs_at_debug_not_warning(self):
+        with self.assertLogs("pyg7.device", level="DEBUG") as ctx:
+            result = device._has_vendor_interface(_FakeDev(XID_PID, None))
+        self.assertIsNone(result)
+        self.assertTrue(any("could not read" in line for line in ctx.output))
+        self.assertFalse(any(r.levelname == "WARNING" for r in ctx.records),
+                         "a plain OSError (mid-re-enumeration/gone) must not "
+                         "be reported as if it were the permissions case")
+
+    def test_interface_classes_logs_too_not_just_has_vendor_interface(self):
+        with self.assertLogs("pyg7.device", level="DEBUG") as ctx:
+            result = device._interface_classes(_FakeDev(XID_PID, None), 1)
+        self.assertEqual(result, [])
+        self.assertTrue(any("could not read" in line for line in ctx.output))
 
 
 class FindWritableDeviceTest(unittest.TestCase):
