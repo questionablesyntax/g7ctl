@@ -180,6 +180,27 @@ class DeviceWatcher(QObject):
             while not self._stop:
                 if self._paused:
                     if session is not None:
+                        # Drain any job queued before pause() landed --
+                        # otherwise it's silently dropped and whoever's
+                        # waiting on sync_finished/read_finished (MainWindow's
+                        # _syncing flag) never hears back at all, stuck
+                        # disabled until an app restart. Real bug, found
+                        # 2026-09-01: pause() can land in the up-to-
+                        # HEARTBEAT_INTERVAL window between a job being
+                        # queued and this loop's next iteration -- e.g.
+                        # clicking Release Device right after Sync Now --
+                        # and the old code tore the session down here
+                        # without ever checking the queue.
+                        try:
+                            self._drain_jobs(session)
+                        except usb.core.USBError as exc:
+                            # _do_sync()/_do_read() already emitted their own
+                            # *_finished(False, ...) before re-raising this --
+                            # same contract the normal (non-paused) path
+                            # below relies on. _teardown() right after is
+                            # already exception-safe against a session that's
+                            # effectively dead at this point.
+                            self._emit_error(f"Lost connection: {exc}")
                         self._teardown(session)
                         session = None
                         self._forget_battery()

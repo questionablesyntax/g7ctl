@@ -512,7 +512,7 @@ class MainWindow(QMainWindow):
         self._connection_state = state
         if state == "connected":
             self.release_btn.setText("Release Device")
-            self.release_btn.setEnabled(True)
+            self.release_btn.setEnabled(not self._syncing)
             self._set_role(self.release_btn, "danger")
             self._refresh_sync_btn()
             self.read_btn.setEnabled(not self._syncing)
@@ -631,6 +631,11 @@ class MainWindow(QMainWindow):
         self._syncing = True
         self.sync_btn.setEnabled(False)
         self.profile_combo.setEnabled(False)
+        # Not the only thing preventing a dropped job anymore (the watcher
+        # now drains a queued job before actually pausing -- see
+        # watcher.py's own fix), but there's no reason to let a click
+        # through mid-sync in the first place, same as sync_btn/read_btn.
+        self.release_btn.setEnabled(False)
         self.sync_status_label.setText("Syncing…")
         self.sync_requested.emit(self._state)
 
@@ -645,6 +650,7 @@ class MainWindow(QMainWindow):
         self.sync_status_label.setText(message)
         self._refresh_sync_btn()
         self.read_btn.setEnabled(self._connection_state == "connected")
+        self.release_btn.setEnabled(self._connection_state == "connected")
         self.profile_combo.setEnabled(True)
         if success:
             self._set_dirty(False)  # the device now matches what we just pushed
@@ -674,6 +680,7 @@ class MainWindow(QMainWindow):
         self.sync_btn.setEnabled(False)
         self.read_btn.setEnabled(False)
         self.profile_combo.setEnabled(False)
+        self.release_btn.setEnabled(False)  # same reasoning as request_sync_now()
         self.sync_status_label.setText("Reading from device…")
         slot = self._state.get("controller_slot") or 1
         self.read_requested.emit(slot)
@@ -686,6 +693,7 @@ class MainWindow(QMainWindow):
         self._refresh_sync_btn()
         self._refresh_confirmed_display()
         self.read_btn.setEnabled(self._connection_state == "connected")
+        self.release_btn.setEnabled(self._connection_state == "connected")
         self.profile_combo.setEnabled(True)
         if not success or device_state is None:
             if not success:

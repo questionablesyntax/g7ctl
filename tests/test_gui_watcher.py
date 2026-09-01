@@ -324,3 +324,103 @@ class RunLoopBackoffTest(unittest.TestCase):
             watcher.run()
 
         self.assertEqual(len(establish_calls), len(sleep_calls))
+
+
+class _MinimalSession:
+    """Just enough surface for one normal run() iteration to complete
+    (heartbeat() gets called; the rest of that iteration's helpers are
+    mocked to no-ops by the test) plus a clean teardown."""
+
+    def heartbeat(self) -> None:
+        pass
+
+    def __exit__(self, *exc) -> bool:
+        return False
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class PauseDrainsQueuedJobTest(unittest.TestCase):
+    """Real bug, found 2026-09-01: run() checked self._paused before ever
+    draining queued jobs each iteration, so a sync/read requested right
+    before pause() landed -- e.g. clicking Release Device right after Sync
+    Now, well within the up-to-HEARTBEAT_INTERVAL gap between the job being
+    queued and the next iteration -- got silently dropped: that iteration
+    tore the session down and went straight to "paused" without ever
+    checking the queue. sync_finished/read_finished never fired, leaving
+    MainWindow._syncing stuck True until an app restart (sync_btn/read_btn
+    permanently disabled, even after reconnecting).
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_a_queued_job_is_drained_before_the_session_is_torn_down(self):
+        from g7ctlc.watcher import DeviceWatcher
+
+        watcher = DeviceWatcher()
+        fake_session = _MinimalSession()
+        watcher._establish = lambda: fake_session
+        watcher._read_firmware_once = lambda session: None
+        watcher._poll_active_profile = lambda session: None
+        watcher._poll_battery = lambda session: None
+
+        drained_with = []
+        watcher._drain_jobs = lambda session: drained_with.append(session)
+
+        sleep_calls = []
+
+        def fake_sleep(interval):
+            sleep_calls.append(interval)
+            if len(sleep_calls) == 1:
+                # The exact race: pause() lands in the gap between one
+                # normal iteration finishing (this sleep) and the next
+                # one starting -- session is already established and live.
+                watcher._paused = True
+            else:
+                watcher._stop = True
+
+        with mock.patch("g7ctlc.watcher.time.sleep", side_effect=fake_sleep):
+            watcher.run()
+
+        # _drain_jobs() must have run against the still-live session from
+        # the paused branch too, not just the one normal-iteration call
+        # before pause landed.
+        self.assertEqual(drained_with, [fake_session, fake_session])
+
+    def test_a_usb_error_during_the_paused_drain_does_not_crash_the_loop(self):
+        # The drain can still fail (device actually disconnected) -- must
+        # be caught and reported like the normal-path drain is, not left
+        # to propagate out of run() entirely.
+        import usb.core
+
+        from g7ctlc.watcher import DeviceWatcher
+
+        watcher = DeviceWatcher()
+        fake_session = _MinimalSession()
+        watcher._establish = lambda: fake_session
+        watcher._read_firmware_once = lambda session: None
+        watcher._poll_active_profile = lambda session: None
+        watcher._poll_battery = lambda session: None
+
+        def failing_drain(session):
+            raise usb.core.USBError("gone")
+
+        errors = []
+        watcher.error.connect(errors.append)
+
+        sleep_calls = []
+
+        def fake_sleep(interval):
+            sleep_calls.append(interval)
+            if len(sleep_calls) == 1:
+                watcher._paused = True
+                watcher._drain_jobs = failing_drain
+            else:
+                watcher._stop = True
+
+        with mock.patch("g7ctlc.watcher.time.sleep", side_effect=fake_sleep):
+            watcher.run()  # must not raise
+
+        self.assertTrue(any("Lost connection" in e for e in errors))
