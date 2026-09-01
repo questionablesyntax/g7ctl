@@ -242,6 +242,45 @@ class AutoReleaseOnUnfocusTest(unittest.TestCase):
         self.assertEqual(self.emitted, [False])
         self.assertFalse(window._auto_released)
 
+    def test_a_too_fast_refocus_does_not_forget_the_pending_reconnect(self):
+        # Real bug, found 2026-09-01: refocusing faster than the watcher
+        # thread's own poll granularity lands here while pause() has been
+        # called but not yet acted on -- _connection_state still reads
+        # "connected", not "paused" yet. The old code cleared
+        # _auto_released unconditionally regardless, permanently
+        # forgetting the release with no reconnect ever emitted -- no
+        # future focus change would trigger one either, since the flag
+        # was already gone.
+        window = self._window()
+        window._auto_release_if_still_unfocused()
+        self.emitted.clear()
+        # _connection_state is deliberately still "connected" here -- the
+        # watcher hasn't caught up yet.
+
+        window._reconnect_after_auto_release()
+
+        self.assertEqual(self.emitted, [], "must not reconnect before pause is confirmed")
+        self.assertTrue(window._auto_released, "must stay pending, not be forgotten")
+
+        # The watcher catches up moments later.
+        window._connection_state = "paused"
+        window._reconnect_after_auto_release()
+        self.assertEqual(self.emitted, [False])
+        self.assertFalse(window._auto_released)
+
+    def test_set_connection_state_paused_self_corrects_a_pending_reconnect(self):
+        # The other half of the same fix: set_connection_state() itself
+        # acts on a still-pending auto-release the moment "paused" lands,
+        # rather than waiting for another focus/show event to notice.
+        window = self._window()
+        window._auto_release_if_still_unfocused()
+        self.emitted.clear()
+
+        window.set_connection_state("paused")
+
+        self.assertEqual(self.emitted, [False])
+        self.assertFalse(window._auto_released)
+
     def test_refocus_never_undoes_an_explicit_release(self):
         window = self._window()
         window._connection_state = "paused"  # user clicked Release Device

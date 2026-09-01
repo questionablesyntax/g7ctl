@@ -480,12 +480,26 @@ class MainWindow(QMainWindow):
 
     def _reconnect_after_auto_release(self) -> None:
         """Only undoes this class's own release -- an explicit Release Device
-        leaves _auto_released false, so refocusing won't silently reconnect."""
-        if not self._auto_released:
+        leaves _auto_released false, so refocusing won't silently reconnect.
+
+        Real bug, found 2026-09-01: this used to clear _auto_released
+        unconditionally, even when _connection_state wasn't actually
+        "paused" yet -- refocusing faster than the watcher thread's own
+        poll granularity (HEARTBEAT_INTERVAL) lands here while pause()
+        has been called but not yet acted on, so _connection_state still
+        reads "connected". That cleared the flag with no reconnect ever
+        emitted, permanently forgetting the release happened: the watcher
+        would go on to settle into "paused" moments later with nothing
+        left to trigger a reconnect on any future focus change. Now the
+        flag stays set until this method actually gets to act on it --
+        either a later focus/show event re-calling this once
+        _connection_state has caught up, or set_connection_state() calling
+        it directly the moment "paused" actually lands (see there).
+        """
+        if not self._auto_released or self._connection_state != "paused":
             return
         self._auto_released = False
-        if self._connection_state == "paused":
-            self.release_toggled.emit(False)
+        self.release_toggled.emit(False)
 
     def set_connection_state(self, state: str) -> None:
         labels = {
@@ -525,6 +539,12 @@ class MainWindow(QMainWindow):
             self._set_role(self.release_btn, None)
             self.sync_btn.setEnabled(False)
             self.read_btn.setEnabled(False)
+            # If a focus event already tried to undo an auto-release before
+            # this "paused" confirmation arrived (see
+            # _reconnect_after_auto_release()'s own comment), don't wait
+            # for another focus change to notice -- act on it now that
+            # _connection_state has actually caught up.
+            self._reconnect_after_auto_release()
         else:
             self.release_btn.setEnabled(False)
             self._set_role(self.release_btn, None)
