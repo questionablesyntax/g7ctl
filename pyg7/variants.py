@@ -8,10 +8,12 @@ category (used regardless of variant, therefore belonging somewhere else)
 was overruled directly: there is no such category. A PID is a fact about
 one specific piece of hardware -- this project's own reference unit
 ("Shadow Ember") included -- not a more fundamental thing than a per-SKU
-PID just because it currently happens to be confirmed shared across every
-variant checked so far (true of 0x100a and 0x1022, see KNOWN_VARIANTS'
-own comment below). No separate module-level PID_* constants either --
-each variant's identities are inlined directly into its own KNOWN_VARIANTS
+PID just because it currently happens to be confirmed shared with at
+least one other variant (true of 0x100a and 0x1022 -- NOT true of every
+variant this project has data on at all; see KNOWN_VARIANTS' own comment
+for exactly which values are confirmed for which SKU and which are real,
+flagged gaps). No separate module-level PID_* constants either -- each
+variant's identities are inlined directly into its own KNOWN_VARIANTS
 entry, not duplicated as a name-then-reference pair.
 
 This module covers: a cosmetic name for a *known* baseline PID
@@ -31,80 +33,88 @@ from typing import NamedTuple, Optional
 
 class Variant(NamedTuple):
     name: str
-    xid_pid: int                  # baseline (no-HID) identity, wired
-    dongle_pid: Optional[int]     # its 2.4GHz dongle counterpart, only if confirmed
+    xid_pid: int                  # baseline (no-HID) identity, wired -- always confirmed,
+                                   # this is what a variant is keyed on below
+    dongle_pid: Optional[int]     # 2.4GHz dongle counterpart, only if confirmed
+    hid_pid: Optional[int] = None      # HID-keyboard/mouse-presenting identity, only if confirmed
+    native_pid: Optional[int] = None   # native/GIP identity, only if confirmed
 
 
-# Every confirmed G7 Pro colourway/edition, keyed by its own baseline
-# (no-HID-interface) PID -- real answer to roadmap item 36's original
-# question ("how does software know which G7 Pro colourway is attached"),
-# not via the CMD=0x01 selector sweep that item spent six sessions mapping
-# (all 256 selectors now behaviorally known; none carries a colourway
-# value anywhere in the space, see ROADMAP.md). Deliberately keyed on the
-# baseline PID specifically -- that's the one confirmed to vary per-variant
-# with a real round trip on each. See VARIANT_PIDS.md for the full report
-# history and its "Gaps" section for what's still unconfirmed.
+# Every confirmed G7 Pro colourway/edition. Keyed for lookup on xid_pid
+# specifically -- real answer to roadmap item 36's original question
+# ("how does software know which G7 Pro colourway is attached"), not via
+# the CMD=0x01 selector sweep that item spent six sessions mapping (all
+# 256 selectors now behaviorally known; none carries a colourway value
+# anywhere in the space, see ROADMAP.md). xid_pid is the one confirmed to
+# vary per-variant with a real round trip on each, and the only field
+# guaranteed present -- hid_pid/dongle_pid/native_pid are each None where
+# genuinely unconfirmed, per VARIANT_PIDS.md's own "Gaps" section, never
+# guessed from a pattern (dongle PID = wired PID + 1 is a real, confirmed
+# pattern on two SKUs, but still not assumed for an unconfirmed one).
 #
-# Two more identities every variant below also answers, not tracked
-# per-entry here because neither is confirmed to vary by SKU (both are
-# 0x100a and 0x1022 on every variant checked so far -- a fact about the
-# hardware, not assumed to hold for one this project hasn't seen yet):
-#
-# - 0x100a: presents the extra HID keyboard/mouse interface. Reached from
-#   the baseline PID by the "gamesirapp" handshake whenever the active
-#   profile needs it -- any keyboard/mouse bind (including Motion-as-Mouse)
-#   or 1000Hz report rate, confirmed 2026-08-29 as two independent members
-#   of one trigger bundle, not separate mechanisms. Neither PID is a
-#   "vendor mode" a gamepad has to leave -- both are fully working XInput
-#   identities, and the config/telemetry protocol answers identically on
-#   either. See PROTOCOL.md "Device identities" for the full account of
-#   this correction, and "The handshake" for what is and isn't established
-#   about the transition itself.
-# - 0x1022: the controller's own "default GameSir identity" ("GIP", not
-#   XInput) -- a genuinely different, third identity. Reached by holding
-#   Menu+Share (also the same combo that clears a rare CMD_READ wedge).
-#   Two plain HID-class interfaces, no vendor-specific interface at all --
-#   not the same protocol as anything else here, not reverse-engineered.
-#   Recognized only so a user stuck there gets a clear "press Menu+Share"
-#   message instead of "no device found". See PROTOCOL.md "Device
-#   identities".
+# hid_pid and native_pid currently collide across variants where they ARE
+# confirmed (0x100a: Shadow Ember + White Trimode; 0x1022: Shadow Ember +
+# Zenless Zone Zero) -- identify_variant() treats that honestly, see its
+# own docstring. Both identities are real and well-understood regardless:
+# 0x100a presents the extra HID keyboard/mouse interface, reached from the
+# baseline PID by the "gamesirapp" handshake whenever the active profile
+# needs it (any keyboard/mouse bind, or 1000Hz report rate -- confirmed
+# 2026-08-29 as two independent members of one trigger bundle). 0x1022 is
+# the controller's own "default GameSir identity" ("GIP", not XInput), a
+# genuinely different third identity reached by holding Menu+Share. See
+# PROTOCOL.md "Device identities" for the full account of both.
 KNOWN_VARIANTS = (
-    # Shadow Ember -- this project's own reference hardware. 0x109c
-    # (dongle) was twice-corrected in 2026-07/2026-08 (see FINDINGS.md):
-    # not a live pad on its own, and not handshake-free either -- an idle
-    # dongle sits at 0x100a until handshaked, same as the wired baseline
-    # does. A hypothesis that the dongle might present one PID fixed
-    # regardless of the active profile's own trigger-bundle content was
-    # raised and refuted the same day -- see FINDINGS.md's
+    # Shadow Ember -- this project's own reference hardware, every field
+    # confirmed. 0x109c (dongle) was twice-corrected in 2026-07/2026-08
+    # (see FINDINGS.md): not a live pad on its own, and not handshake-free
+    # either -- an idle dongle sits at 0x100a until handshaked, same as
+    # the wired baseline does. A hypothesis that the dongle might present
+    # one PID fixed regardless of the active profile's own trigger-bundle
+    # content was raised and refuted the same day -- see FINDINGS.md's
     # dongle-detection entry for the full account.
-    Variant("Shadow Ember", 0x109b, 0x109c),
+    Variant("Shadow Ember", 0x109b, 0x109c, hid_pid=0x100a, native_pid=0x1022),
     # White Trimode -- reported 2026-08-19, not this project's own
-    # hardware, confirmed via a real read/write round trip. Dongle PID is
-    # wired PID + 1, the same relationship Shadow Ember's own pair has --
-    # confirmed as a real pattern on two SKUs now, not assumed for a
-    # future one.
-    Variant("White Trimode", 0x1003, 0x1004),
-    # Zenless Zone Zero -- reported 2026-08-19, confirmed via a real round
-    # trip. Dongle PID unconfirmed: the "+1" pattern would predict 0x105e,
-    # but that's never been tested and isn't assumed here. See
-    # VARIANT_PIDS.md "Gaps".
-    Variant("Zenless Zone Zero", 0x105d, None),
+    # hardware, xid/dongle/hid all confirmed via real round trips. Dongle
+    # PID is wired PID + 1, the same relationship Shadow Ember's own pair
+    # has -- confirmed as a real pattern on two SKUs now, not assumed for
+    # a future one. Native PID never observed for this unit -- see
+    # VARIANT_PIDS.md "Gaps", not assumed to match Shadow Ember's.
+    Variant("White Trimode", 0x1003, 0x1004, hid_pid=0x100a),
+    # Zenless Zone Zero -- reported 2026-08-19, xid/native confirmed via a
+    # real round trip. Dongle PID unconfirmed: the "+1" pattern would
+    # predict 0x105e, but that's never been tested and isn't assumed
+    # here. HID PID also never observed for this unit -- see
+    # VARIANT_PIDS.md "Gaps", not assumed to match Shadow Ember's.
+    Variant("Zenless Zone Zero", 0x105d, None, native_pid=0x1022),
 )
 
 
-def identify_variant(xid_pid: int) -> Optional[str]:
-    """Human-readable colourway/edition name for a known PID_XID-style
-    (baseline, no-HID-interface) PID, or None for one this project hasn't
-    seen a confirmed report on yet
-    (e.g. Dragon's Dogma 2 and WUCHANG editions -- see README.md "Hardware
-    support"). None is a real, expected answer here, not a bug: this is a
-    lookup against confirmed reports, not a formula that covers every PID
-    GameSir might ever assign.
+def identify_variant(pid: int) -> Optional[str]:
+    """Human-readable colourway/edition name for a known PID, or None for
+    one this project hasn't seen a confirmed report on yet (e.g. Dragon's
+    Dogma 2 and WUCHANG editions -- see README.md "Hardware support").
+    None is a real, expected answer here, not a bug: this is a lookup
+    against confirmed reports, not a formula that covers every PID GameSir
+    might ever assign.
+
+    Tries the baseline (xid) PID first -- always unambiguous, since that's
+    what a variant is keyed on. Falls back to hid_pid/native_pid (added
+    2026-09-01, so a controller caught sitting at its HID or native
+    identity -- not yet handshaked to baseline -- still resolves), but
+    ONLY when exactly one known variant shares that value. Both currently
+    collide across multiple variants where confirmed at all (see
+    KNOWN_VARIANTS' own comment) -- returning one name out of a real
+    collision would be actively wrong, worse than the honest "don't know
+    yet" this returns instead. Not dead code even though today's data
+    never resolves through this path: it exists so a future variant whose
+    hid_pid or native_pid turns out to be uniquely its own resolves
+    immediately, with no code change needed.
     """
     for variant in KNOWN_VARIANTS:
-        if variant.xid_pid == xid_pid:
+        if variant.xid_pid == pid:
             return variant.name
-    return None
+    matches = {v.name for v in KNOWN_VARIANTS if pid in (v.hid_pid, v.native_pid)}
+    return matches.pop() if len(matches) == 1 else None
 
 
 def is_known_dongle_pid(pid: int) -> bool:

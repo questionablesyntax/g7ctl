@@ -22,18 +22,37 @@ class IdentifyVariantTest(unittest.TestCase):
         # correct, honest answer, not an exception or a placeholder string.
         self.assertIsNone(variants.identify_variant(0x9999))
 
-    def test_dongle_and_hid_pids_are_not_variant_lookups(self):
-        # Deliberately keyed on the baseline (XID-style) PID only -- a
-        # dongle PID is its own wired counterpart + 1 wherever confirmed,
-        # not a separate lookup here, and 0x100a/0x1022 (the HID-presenting
-        # and native identities) aren't independently confirmed to vary
-        # per-variant the same way. Passing one of those in isn't
-        # meaningful input, and should read as "unknown", not silently
-        # match something by accident.
+    def test_dongle_pids_are_not_variant_lookups(self):
+        # A dongle PID is its own wired counterpart + 1 wherever
+        # confirmed, not a separate lookup here. Passing one of those in
+        # isn't meaningful input, and should read as "unknown", not
+        # silently match something by accident.
         self.assertIsNone(variants.identify_variant(0x109c))    # dongle
         self.assertIsNone(variants.identify_variant(0x1004))    # dongle, Trimode
+
+    def test_hid_and_native_pids_currently_collide_so_stay_unresolved(self):
+        # Real hardware fact, not a code gap: 0x100a is confirmed shared by
+        # both Shadow Ember and White Trimode, and 0x1022 is confirmed
+        # shared by both Shadow Ember and Zenless Zone Zero -- see
+        # KNOWN_VARIANTS' own comment. identify_variant() must not guess
+        # one name out of a genuine collision.
         self.assertIsNone(variants.identify_variant(0x100a))    # HID-presenting
         self.assertIsNone(variants.identify_variant(0x1022))    # native/GIP
+
+    def test_an_unambiguous_hid_or_native_pid_resolves(self):
+        # Added 2026-09-01: a controller caught sitting at its HID or
+        # native identity (not yet handshaked to baseline) still resolves,
+        # as long as exactly one known variant has that value -- proven
+        # here against a patched registry, since no real entry is
+        # unambiguous on either field today (see the collision test
+        # above). variants.Variant is a NamedTuple (immutable), so this
+        # patches the whole KNOWN_VARIANTS tuple, not individual fields.
+        solo_hid = variants.Variant("Solo Edition", 0x1234, None, hid_pid=0xAAAA)
+        solo_native = variants.Variant("Other Edition", 0x5678, None, native_pid=0xBBBB)
+        with mock.patch.object(variants, "KNOWN_VARIANTS",
+                                variants.KNOWN_VARIANTS + (solo_hid, solo_native)):
+            self.assertEqual(variants.identify_variant(0xAAAA), "Solo Edition")
+            self.assertEqual(variants.identify_variant(0xBBBB), "Other Edition")
 
 
 class IsKnownDonglePidTest(unittest.TestCase):
