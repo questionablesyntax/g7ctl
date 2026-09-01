@@ -38,17 +38,30 @@ adheres to [semantic versioning](https://semver.org/).
   reference unit, "Shadow Ember", included), not a more fundamental thing
   just because it's currently confirmed shared across every variant
   checked so far. `identify_variant()` and `VARIANT_NAMES` (renamed
-  `KNOWN_VARIANTS`, a tuple of `Variant(name, xid_pid, dongle_pid)`
-  instead of a plain dict) moved the same way -- each variant's PIDs are
-  now inlined directly into its own `KNOWN_VARIANTS` entry as literals,
-  not a separately-declared constant referenced once. No aliases for any
-  of this (pre-1.0, same no-back-compat policy as the 0.3.0 rename).
-  `pyg7.device.XID_PID_CANDIDATES` is gone -- replaced by
-  `pyg7.variants.is_known_dongle_pid()`, equivalent data minus a redundant
-  half (a wired PID could never satisfy that lookup anyway). `device.py`'s
-  own detection logic no longer imports a single PID constant -- it's
-  fully structural end to end, only ever handling whatever `idProduct` it
-  already read off a real device.
+  `KNOWN_VARIANTS`, a tuple of `Variant(name, xid_pid, dongle_pid, hid_pid,
+  native_pid)`, the last two `Optional` and filled in only where
+  independently confirmed, instead of a plain dict) moved the same way --
+  each variant's PIDs are now inlined directly into its own
+  `KNOWN_VARIANTS` entry as literals, not a separately-declared constant
+  referenced once. No aliases for any of this (pre-1.0, same no-back-compat
+  policy as the 0.3.0 rename). `pyg7.device.XID_PID_CANDIDATES` is gone --
+  replaced by `pyg7.variants.is_known_dongle_pid()`, equivalent data minus
+  a redundant half (a wired PID could never satisfy that lookup anyway).
+  `device.py`'s own detection logic no longer imports a single PID
+  constant -- it's fully structural end to end, only ever handling
+  whatever `idProduct` it already read off a real device.
+- **`identify_variant()` no longer misses a known unit just because it's
+  sitting at its HID or native identity instead of baseline.** Falls back
+  to the new `hid_pid`/`native_pid` fields when the baseline PID doesn't
+  match, but only when the value is unambiguous -- both currently collide
+  across confirmed variants (0x100a: Shadow Ember + White Trimode; 0x1022:
+  Shadow Ember + Zenless Zone Zero, a real hardware fact per
+  `VARIANT_PIDS.md`, not a code gap), so today's data still returns `None`
+  honestly rather than guessing one name out of a genuine collision. Also
+  corrected an overclaim this same rewrite's own comment made: 0x100a and
+  0x1022 are NOT confirmed for every known variant -- White Trimode's
+  native PID and Zenless Zone Zero's HID PID are explicitly unconfirmed
+  per `VARIANT_PIDS.md`'s "Gaps" section.
 
 ## [0.3.0] - 2026-08-30
 
