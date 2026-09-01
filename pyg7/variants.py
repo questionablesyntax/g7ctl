@@ -72,13 +72,16 @@ KNOWN_VARIANTS = (
     # content was raised and refuted the same day -- see FINDINGS.md's
     # dongle-detection entry for the full account.
     Variant("Shadow Ember", xid_pid=0x109b, dongle_pid=0x109c, hid_pid=0x100a, native_pid=0x1022),
+    #
     # White Trimode -- reported 2026-08-19, not this project's own
     # hardware, xid/dongle/hid all confirmed via real round trips. Dongle
     # PID is wired PID + 1, the same relationship Shadow Ember's own pair
     # has -- confirmed as a real pattern on two SKUs now, not assumed for
     # a future one. Native PID never observed for this unit -- see
     # VARIANT_PIDS.md "Gaps", not assumed to match Shadow Ember's.
+    #
     Variant("White Trimode", xid_pid=0x1003, dongle_pid=0x1004, hid_pid=0x100a),
+    #
     # Zenless Zone Zero -- reported 2026-08-19, xid/native confirmed via a
     # real round trip. Dongle PID unconfirmed: the "+1" pattern would
     # predict 0x105e, but that's never been tested and isn't assumed
