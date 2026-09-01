@@ -69,26 +69,18 @@ PID_DONGLE = 0x109c   # 2.4GHz wireless dongle counterpart to PID_XID, same
                       # a tension caught during a same-day post-rename
                       # read-through, not assumed away.
                       #
-                      # RESOLVED, same day, by real firmware evidence (not
-                      # hardware, since that's still broken): an extracted
-                      # firmware corpus contains the Tri-mode variant's own
-                      # dongle firmware (dongle_tool_container.bin),
-                      # and its compiled-in USB device descriptor table has
-                      # BOTH 0x100a (PID_HID's own shared value, class 0 --
-                      # composite) AND 0x1004 (PID_DONGLE_TRIMODE, class 255 --
-                      # vendor-specific) as its own two identities. That's the
-                      # dongle splitting into an HID-shaped/baseline pair on
-                      # its own USB side, the same way the wired connection
-                      # does -- not a fixed single identity. That also settles
-                      # the tension above: an idle dongle sitting at PID_HID is
-                      # just this same split surfacing on the USB side, not
-                      # evidence against it. The hypothesis reads as refuted
+                      # RESOLVED, same day (see FINDINGS.md's dongle-detection
+                      # entry for the full account -- kept private-notes-only,
+                      # not here): the dongle does split into an HID-shaped/
+                      # baseline pair on its own USB side, the same way the
+                      # wired connection does -- not a fixed single identity.
+                      # That also settles the tension above: an idle dongle
+                      # sitting at PID_HID is just this same split surfacing
+                      # on the USB side, not evidence against it. Confirmed
                       # for the Tri-mode variant specifically; not directly
-                      # confirmed for 109c (this project's own dongle firmware
-                      # isn't in that corpus), but there's no remaining reason
-                      # to expect this variant's firmware architecture to
-                      # differ on this point. See ROADMAP.md item 51's tail
-                      # for the full firmware-corpus cross-reference.
+                      # reconfirmed for 109c, but there's no reason to expect
+                      # this variant's firmware architecture to differ on
+                      # this point.
 PID_XID_TRIMODE = 0x1003   # baseline (no-HID-interface) identity on at least
                       # one other G7 Pro variant -- reported 2026-08-19 from a
                       # community bug report, not this project's own hardware. Same

@@ -30,10 +30,10 @@ detection to work, only for `identify_variant()`'s cosmetic colourway
 name. `XID_PID_CANDIDATES` survives only as a cosmetic dongle-label
 lookup now -- see its own comment. Also dropped: `via_dongle` no longer
 picks a settle/timeout value or gates `probe_controller_live()` --
-confirmed via a real firmware-extraction pass that GameSir's own
-compiled descriptors give wired and dongle baselines the identical
-shape, so there was never a reliable signal to detect here in the
-first place. See `PROTOCOL.md` and `session.py` for the rest.
+wired and dongle baselines were confirmed to give an identical
+descriptor shape, so there was never a reliable signal to detect
+here in the first place (see FINDINGS.md for the full account). See
+`PROTOCOL.md` and `session.py` for the rest.
 
 Progress here goes through `logging`, not print(): this module is imported
 by the GUI as well as the CLI, and a bare print() from a background watcher
@@ -100,15 +100,15 @@ HANDSHAKE_MIN_INTERVAL = 5.0
 # and classify structurally instead (see module docstring). This survives
 # purely to label a *known* PID as "via the dongle" for display/logging,
 # e.g. main.py's "Using wireless dongle" message. Real detection of wired
-# vs. dongle was never possible here in the first place: confirmed via
-# an extracted-firmware corpus (2026-08-29) that GameSir's own compiled
-# descriptors give a wired baseline and its dongle counterpart the
-# identical shape (device class 255, same layout) -- the PID is the only
-# difference, so an *unknown* PID has no way to earn a label here and
-# defaults to "not confidently a dongle" (see _cosmetic_is_dongle()), never
-# "wired" as a confirmed fact. Extend this list only to improve a log
-# message for a newly-confirmed variant; nothing functional depends on it
-# anymore.
+# vs. dongle was never possible here in the first place: a wired baseline
+# and its dongle counterpart were confirmed (2026-08-29) to share an
+# identical descriptor shape (device class 255, same layout) -- the PID
+# is the only difference, so an *unknown* PID has no way to earn a label
+# here and defaults to "not confidently a dongle" (see
+# _cosmetic_is_dongle()), never "wired" as a confirmed fact. Extend this
+# list only to improve a log message for a newly-confirmed variant;
+# nothing functional depends on it anymore. See FINDINGS.md for the
+# full account of how this was confirmed.
 XID_PID_CANDIDATES = (
     (PID_XID, False),
     (PID_DONGLE, True),

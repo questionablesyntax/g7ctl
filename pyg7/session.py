@@ -71,10 +71,10 @@ class BatteryStatus(NamedTuple):
 # to be two separate constants (a wired default and a doubled "_DONGLE"
 # relaxation, raised 2026-07-30 for the extra RF hop through the dongle:
 # controller -> RF -> dongle -> USB). Picking between them required already
-# knowing via_dongle, which real firmware evidence (an extracted firmware
-# corpus) confirmed is not reliably detectable at all -- a wired baseline
-# and its dongle counterpart share an identical descriptor shape, only the
-# PID differs. So rather than guess (and risk the wrong guess: a genuinely
+# knowing via_dongle, which turned out not to be reliably detectable at
+# all -- a wired baseline and its dongle counterpart share an identical
+# descriptor shape, only the PID differs (see FINDINGS.md for the full
+# account). So rather than guess (and risk the wrong guess: a genuinely
 # slow dongle hop timing out against the tighter wired value), this always
 # uses the more patient number. The cost of that for a wired connection is
 # a few extra seconds of settle time, once, at connect -- read_chunk()'s

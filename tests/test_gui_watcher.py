@@ -68,9 +68,9 @@ class EstablishSessionTest(unittest.TestCase):
     def test_wired_session_is_probed_too_and_becomes_connected(self):
         # Redesigned 2026-08-29: the liveness probe now runs
         # unconditionally, wired or dongle alike -- real wired/dongle
-        # detection turned out not to be possible at all (confirmed via
-        # an extracted-firmware corpus: a wired baseline and its dongle
-        # counterpart share an identical descriptor shape). This
+        # detection turned out not to be possible at all (a wired
+        # baseline and its dongle counterpart share an identical
+        # descriptor shape). This
         # test used to assert the opposite (wired must skip the probe
         # entirely) -- a healthy wired connection just passes it the same
         # way any other read succeeds, at the cost of one harmless extra
