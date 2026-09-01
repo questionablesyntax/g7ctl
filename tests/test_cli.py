@@ -184,6 +184,18 @@ class MainErrorHandlingTest(unittest.TestCase):
         self.assertIn("busy", stderr.lower())
         self.assertNotIn("Traceback", stderr)
 
+    def test_enter_vendor_exits_nonzero_when_the_handshake_just_fails(self):
+        # Real bug, found 2026-09-01, distinct from the USBError case above:
+        # switch_to_xid() doesn't always raise on failure -- when it can't
+        # reach the controller at all, it just logs an error and returns
+        # (None, False). The old code discarded that return value entirely
+        # and always `return`ed normally, so this specific failure mode
+        # exited 0 -- `g7ctl enter-vendor && ./next_step.sh` in a script
+        # would proceed as if the handshake had actually succeeded.
+        cli_main.switch_to_xid = lambda **k: (None, False)
+        code, _stderr = self._run(["enter-vendor"])
+        self.assertEqual(code, 1)
+
     def test_auto_handshake_usb_error_is_translated_not_a_traceback(self):
         # Same regression, the other call site: find_writable_device()
         # reports "not ready yet", so main() falls back to calling

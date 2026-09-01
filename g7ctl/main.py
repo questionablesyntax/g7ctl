@@ -1035,7 +1035,16 @@ def main() -> None:
     # denied) for a new user of this tool.
     try:
         if args.action == "enter-vendor":
-            switch_to_xid(min_interval=_min_interval(args))
+            # Real bug, found 2026-09-01: this used to discard the return
+            # value entirely and always return normally, so a failed
+            # handshake exited 0 -- switch_to_xid() only logs the failure
+            # via log.error(), it doesn't raise. Every other device-touching
+            # path here (_connect_session, above) explicitly checks for
+            # None and exits nonzero; this one has to do the same by hand
+            # since it doesn't go through that shared helper.
+            vdev, _via_dongle = switch_to_xid(min_interval=_min_interval(args))
+            if vdev is None:
+                sys.exit(1)
             return
 
         if args.action == "diag":
