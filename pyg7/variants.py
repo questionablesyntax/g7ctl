@@ -72,8 +72,7 @@ KNOWN_VARIANTS = (
     # one PID fixed regardless of the active profile's own trigger-bundle
     # content was raised and refuted the same day -- see FINDINGS.md's
     # dongle-detection entry for the full account.
-    Variant("Shadow Ember", xid_pid=0x109b, dongle_pid=0x109c,
-            hid_pid=0x100a, native_pid=0x1022),
+    Variant("Shadow Ember", xid_pid=0x109b, dongle_pid=0x109c, hid_pid=0x100a, native_pid=0x1022),
     # White Trimode -- reported 2026-08-19, not this project's own
     # hardware, xid/dongle/hid all confirmed via real round trips. Dongle
     # PID is wired PID + 1, the same relationship Shadow Ember's own pair
