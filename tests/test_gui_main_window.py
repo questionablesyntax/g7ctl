@@ -679,6 +679,52 @@ class UnconfirmedStateDisplayTest(unittest.TestCase):
         self.assertFalse(w._state_confirmed)
         self.assertTrue(self._content_locked(w))
 
+    def test_an_in_flight_sync_locks_the_tabs_even_though_state_is_confirmed(self):
+        # Real bug, found 2026-09-01: a control left editable while a sync
+        # was in flight let an edit made mid-sync race the watcher
+        # thread's own iteration over the same state dict, and (for a
+        # mid-read edit specifically) get silently overwritten the moment
+        # the job landed. _content_locked() used to only ever go True for
+        # an unconfirmed reading -- a confirmed reading mid-sync stayed
+        # fully editable.
+        w = self._window()
+        w.set_connection_state("connected")
+        w.set_read_finished(True, "read ok", state_mod.default_state_dict("read"))
+        self.assertFalse(self._content_locked(w))  # sanity: confirmed, not syncing yet
+
+        with mock.patch.object(w, "_confirm", return_value=True):
+            w.request_sync_now()
+
+        self.assertTrue(w._syncing)
+        self.assertTrue(self._content_locked(w))
+        # The banner is specifically about "go read the device" -- an
+        # in-flight sync of an already-confirmed reading isn't that.
+        self.assertFalse(w.unconfirmed_banner.isVisibleTo(w))
+
+    def test_tabs_unlock_again_once_the_sync_finishes(self):
+        w = self._window()
+        w.set_connection_state("connected")
+        w.set_read_finished(True, "read ok", state_mod.default_state_dict("read"))
+        with mock.patch.object(w, "_confirm", return_value=True):
+            w.request_sync_now()
+        self.assertTrue(self._content_locked(w))  # sanity: locked while in flight
+
+        w.set_sync_finished(True, "State applied")
+
+        self.assertFalse(w._syncing)
+        self.assertFalse(self._content_locked(w))
+
+    def test_an_in_flight_read_also_locks_the_tabs(self):
+        w = self._window()
+        w.set_connection_state("connected")
+        w.set_read_finished(True, "read ok", state_mod.default_state_dict("read"))
+        w._dirty = False  # no confirm prompt needed for this path
+
+        w.request_read_from_device()
+
+        self.assertTrue(w._syncing)
+        self.assertTrue(self._content_locked(w))
+
     def test_scrollbars_stay_usable_while_unconfirmed(self):
         # The exact complaint (Reddit, u/Rokofur): a user should be able to
         # scroll through an unconfirmed tab's full content -- browsing isn't

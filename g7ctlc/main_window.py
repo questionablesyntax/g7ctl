@@ -583,18 +583,32 @@ class MainWindow(QMainWindow):
         a user never hovers or tries to interact, which "just disabled"
         would miss.
 
-        Must be called every time self._state_confirmed changes: on
-        construction, after every read attempt (success or failure), on
-        Import, and on a profile switch (whose value it turns False again --
-        see _on_profile_changed for why that has to happen even before the
-        resulting read comes back).
+        Must be called every time self._state_confirmed OR self._syncing
+        changes: on construction, after every read attempt (success or
+        failure), on Import, on a profile switch (whose value it turns
+        False again -- see _on_profile_changed for why that has to happen
+        even before the resulting read comes back), and around every
+        sync-to/read-from-device job (request_sync_now()/
+        request_read_from_device() at the start, set_sync_finished()/
+        set_read_finished() at the end).
+
+        The `_syncing` half of this is a real fix, not just symmetry: a
+        control left editable while a job is in flight let an edit made
+        mid-read get silently overwritten the moment the read landed (the
+        merge in set_read_finished() has no idea an edit happened after it
+        started), and separately meant the GUI thread could keep mutating
+        self._state by reference while the watcher thread was iterating
+        that same dict object mid-sync -- found 2026-09-01. The banner
+        stays keyed on _state_confirmed alone, deliberately: a sync in
+        progress is not the "go read the device, this is stale" state the
+        banner exists to flag.
         """
-        confirmed = self._state_confirmed
+        editable = self._state_confirmed and not self._syncing
         for scroll in self.tabs.findChildren(QScrollArea):
             content = scroll.widget()
             if content is not None:
-                content.setEnabled(confirmed)
-        self.unconfirmed_banner.setVisible(not confirmed)
+                content.setEnabled(editable)
+        self.unconfirmed_banner.setVisible(not self._state_confirmed)
 
     def _on_release_clicked(self) -> None:
         self.release_toggled.emit(self._connection_state != "paused")
@@ -636,6 +650,7 @@ class MainWindow(QMainWindow):
         # watcher.py's own fix), but there's no reason to let a click
         # through mid-sync in the first place, same as sync_btn/read_btn.
         self.release_btn.setEnabled(False)
+        self._refresh_confirmed_display()  # locks every tab for the duration
         self.sync_status_label.setText("Syncing…")
         self.sync_requested.emit(self._state)
 
@@ -649,6 +664,7 @@ class MainWindow(QMainWindow):
         self._syncing = False
         self.sync_status_label.setText(message)
         self._refresh_sync_btn()
+        self._refresh_confirmed_display()  # unlocks the tabs request_sync_now() locked
         self.read_btn.setEnabled(self._connection_state == "connected")
         self.release_btn.setEnabled(self._connection_state == "connected")
         self.profile_combo.setEnabled(True)
@@ -681,6 +697,7 @@ class MainWindow(QMainWindow):
         self.read_btn.setEnabled(False)
         self.profile_combo.setEnabled(False)
         self.release_btn.setEnabled(False)  # same reasoning as request_sync_now()
+        self._refresh_confirmed_display()  # locks every tab for the duration
         self.sync_status_label.setText("Reading from device…")
         slot = self._state.get("controller_slot") or 1
         self.read_requested.emit(slot)
