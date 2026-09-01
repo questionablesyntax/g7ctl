@@ -47,6 +47,7 @@ import argparse
 import contextlib
 import importlib.metadata
 import logging
+import os
 import shlex
 import subprocess
 import sys
@@ -870,6 +871,17 @@ def _diag_print_report(info: dict) -> None:
         print()
 
 
+# Same path g7ctlc/app.py's own _LOG_PATH writes to -- duplicated here
+# rather than imported, since g7ctl (this CLI) must stay usable without
+# PyQt6 installed at all (see pyproject.toml's [project.optional-dependencies]
+# "gui" extra), and g7ctlc.app imports PyQt6 at module level. Plain path
+# math, not worth a shared third module just to avoid repeating four lines.
+_GUI_LOG_PATH = (
+    Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    / "g7ctl" / "g7ctlc.log"
+)
+
+
 def _handle_diag(min_interval: float) -> None:
     """Diagnostic capture for a community bug report -- roadmap item 46.
 
@@ -1011,6 +1023,25 @@ def _handle_diag(min_interval: float) -> None:
     if not dmesg_shown:
         print("(dmesg not readable without sudo -- try: "
               "sudo dmesg | grep -iE 'usb|gamesir|3537' | tail -40)")
+    print("```")
+    print()
+
+    print("---")
+    print()
+    print("Recent GUI app log (g7ctlc), if it's been run -- covers what the")
+    print("app itself saw, not just the kernel's view of the USB device. Run")
+    print("g7ctlc -v/--verbose beforehand for full diagnostic detail rather")
+    print("than just INFO-level progress:")
+    print()
+    print("```")
+    try:
+        lines = _GUI_LOG_PATH.read_text().splitlines()
+        print("\n".join(lines[-60:]) if lines else "(log file exists but is empty)")
+    except FileNotFoundError:
+        print(f"(no log file at {_GUI_LOG_PATH} -- the GUI hasn't been run since "
+              "this log was added, 2026-09-01)")
+    except OSError as e:
+        print(f"(could not read {_GUI_LOG_PATH}: {e})")
     print("```")
 
 

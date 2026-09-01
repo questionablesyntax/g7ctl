@@ -91,6 +91,7 @@ class DiagTest(unittest.TestCase):
             "find_writable_device": cli_main.find_writable_device,
             "switch_to_xid": cli_main.switch_to_xid,
             "VendorSession": cli_main.VendorSession,
+            "_GUI_LOG_PATH": cli_main._GUI_LOG_PATH,
             "argv": sys.argv,
         }
         # Empty by default -- diag's own raw unsupported-device scan (added
@@ -104,6 +105,14 @@ class DiagTest(unittest.TestCase):
         cli_main.find_writable_device = lambda: (None, False)
         cli_main.switch_to_xid = lambda **k: (None, False)
         cli_main.VendorSession = _FakeSessionCM
+        # A path that (almost certainly) doesn't exist -- the real
+        # ~/.config/g7ctl/g7ctlc.log this points to by default may genuinely
+        # exist on a dev machine that's actually run the GUI (this project's
+        # own did, 2026-09-01), and its real content must not leak into these
+        # tests' output non-deterministically. DiagGuiLogTailTest below
+        # overrides this per-test to actually exercise the log-tail section.
+        import pathlib
+        cli_main._GUI_LOG_PATH = pathlib.Path("/nonexistent/g7ctl-test/g7ctlc.log")
 
     def tearDown(self):
         cli_main.all_vid_devices = self._orig["all_vid_devices"]
@@ -112,6 +121,7 @@ class DiagTest(unittest.TestCase):
         cli_main.find_writable_device = self._orig["find_writable_device"]
         cli_main.switch_to_xid = self._orig["switch_to_xid"]
         cli_main.VendorSession = self._orig["VendorSession"]
+        cli_main._GUI_LOG_PATH = self._orig["_GUI_LOG_PATH"]
         sys.argv = self._orig["argv"]
 
     def _run(self):
@@ -248,6 +258,74 @@ class DiagTest(unittest.TestCase):
         with mock.patch("g7ctl.main.usb.util.get_string", side_effect=Exception("no backend")):
             report = self._run()
         self.assertIn("(unknown)", report)
+
+
+class DiagGuiLogTailTest(unittest.TestCase):
+    """Phase 4.1 of DEBUGGING-INFRA-PLAN-2026-09-01.md: diag now also
+    tails the GUI's own log file (added 2026-09-01, g7ctlc/app.py's
+    _configure_logging()), alongside its existing dmesg tail -- a real bug
+    report can then carry both the kernel's view of the USB device and the
+    app's own recent debug trace, not just device identity.
+
+    A plain TestCase, not a DiagTest subclass -- inheriting would also
+    inherit every one of DiagTest's own test_* methods (unittest discovers
+    them on the subclass too), silently re-running and duplicating the
+    whole class under a different name. Needs its own findable device
+    (find_writable_device) so the report actually reaches this section --
+    the "nothing found" path returns before it, see _handle_diag()'s own
+    early return.
+    """
+
+    def setUp(self):
+        self._orig = {
+            "find_writable_device": cli_main.find_writable_device,
+            "VendorSession": cli_main.VendorSession,
+            "_GUI_LOG_PATH": cli_main._GUI_LOG_PATH,
+            "argv": sys.argv,
+        }
+        already = _FakeDevice(XID_PID, hid_on_iface1=False)
+        cli_main.find_writable_device = lambda: (already, False)
+        cli_main.VendorSession = _FakeSessionCM
+
+    def tearDown(self):
+        cli_main.find_writable_device = self._orig["find_writable_device"]
+        cli_main.VendorSession = self._orig["VendorSession"]
+        cli_main._GUI_LOG_PATH = self._orig["_GUI_LOG_PATH"]
+        sys.argv = self._orig["argv"]
+
+    def _run(self):
+        sys.argv = ["g7ctl", "diag"]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            cli_main.main()
+        return out.getvalue()
+
+    def test_no_log_file_yet_says_so_plainly(self):
+        import pathlib
+        cli_main._GUI_LOG_PATH = pathlib.Path("/nonexistent/g7ctl-test/g7ctlc.log")
+        report = self._run()
+        self.assertIn("no log file", report)
+        self.assertIn("g7ctlc.log", report)
+
+    def test_an_existing_log_files_content_is_tailed(self):
+        import pathlib
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = pathlib.Path(tmp) / "g7ctlc.log"
+            log_path.write_text("2026-09-01 12:00:00 INFO g7ctlc.watcher: a real log line\n")
+            cli_main._GUI_LOG_PATH = log_path
+            report = self._run()
+        self.assertIn("a real log line", report)
+
+    def test_an_empty_log_file_says_so_rather_than_showing_nothing(self):
+        import pathlib
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = pathlib.Path(tmp) / "g7ctlc.log"
+            log_path.write_text("")
+            cli_main._GUI_LOG_PATH = log_path
+            report = self._run()
+        self.assertIn("empty", report)
 
 
 class FormatBcdTest(unittest.TestCase):
