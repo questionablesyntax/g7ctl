@@ -223,6 +223,25 @@ class SettingsViewRoundTripTest(unittest.TestCase):
         self.assertEqual(state["dock_led_brightness"], before["dock_led_brightness"])
         self.assertEqual(state["dock_auto_on_off"], before["dock_auto_on_off"])
 
+    def test_off_scale_brightness_displays_at_its_nearest_stop_without_rewriting_state(self):
+        # pyg7/dock_settings.py and `dock-set brightness` accept any 0-100
+        # value, but this combo only offers five discrete stops (see
+        # BRIGHTNESS_OPTIONS). A value outside those stops -- an older
+        # export, hand-edited JSON, or CLI scripting -- must display at its
+        # nearest neighbor without load_state() silently coercing the state
+        # dict itself. Mirrors vibration_view.py's equivalent off-scale test.
+        from g7ctlc.views.settings_view import SettingsView
+        state = state_mod.default_state_dict("test")
+        state["dock_led_brightness"] = 10  # nearest stop is 0 ("Off")
+
+        view = SettingsView()
+        view.load_state(state)
+        self.assertEqual(view.brightness.currentIndex(), 0)  # index of 0% in BRIGHTNESS_OPTIONS
+        self.assertEqual(state["dock_led_brightness"], 10, "load_state() must not rewrite the value it was given")
+
+        view._on_edit()  # a genuine edit now DOES normalize it
+        self.assertEqual(state["dock_led_brightness"], 0)
+
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
 class MainWindowMinimumHeightTest(unittest.TestCase):

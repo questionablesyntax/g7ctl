@@ -19,6 +19,22 @@ from PyQt6.QtWidgets import (
 BRIGHTNESS_OPTIONS = [(0, "Off"), (25, "25%"), (50, "50%"), (75, "75%"), (100, "100%")]
 
 
+def _nearest_brightness_index(value: Optional[int]) -> int:
+    """Which of BRIGHTNESS_OPTIONS a value is closest to, for display --
+    mirrors vibration_view.py's _nearest_level_index() for the identical
+    problem: pyg7/dock_settings.py and the CLI's `dock-set brightness`
+    accept any 0-100 value, but this combo only offers five discrete
+    stops. Display only: doesn't touch the state dict, so an off-scale
+    value stays exactly what it was until this control is actually
+    edited."""
+    if value is None:
+        value = 100
+    return min(
+        range(len(BRIGHTNESS_OPTIONS)),
+        key=lambda i: abs(BRIGHTNESS_OPTIONS[i][0] - value),
+    )
+
+
 class SettingsView(QWidget):
     changed = pyqtSignal()
 
@@ -74,11 +90,7 @@ class SettingsView(QWidget):
         self._state = state
         self._loading = True
         try:
-            idx = self.brightness.findData(state.get("dock_led_brightness") if state.get("dock_led_brightness") is not None else 100)
-            # Falls back to the last item (100%) -- the confirmed factory
-            # default (see PROTOCOL.md "Dock Settings"), not just "whatever
-            # happens to be last in BRIGHTNESS_OPTIONS."
-            self.brightness.setCurrentIndex(idx if idx >= 0 else self.brightness.count() - 1)
+            self.brightness.setCurrentIndex(_nearest_brightness_index(state.get("dock_led_brightness")))
             self.auto_on_off.setChecked(bool(state.get("dock_auto_on_off")))
         finally:
             self._loading = False
