@@ -500,6 +500,48 @@ class VibrationTriggerFlagsTest(unittest.TestCase):
         self.assertEqual(labels, ["Vibration: left_trigger_flags=on,off"])
 
 
+class VibrationFlagsValidationTest(unittest.TestCase):
+    """Real gap, found 2026-09-01 (second bug-hunt pass): validate_state()
+    never type-checked left/right_trigger_force/_sync, unlike
+    dpad_diagonal_lock/swap_stick_dpad/continuous_trigger, which are all
+    isinstance(bool)-checked. _vibration_steps() built its wire value from
+    raw Python truthiness on whatever was declared, so a state dict with
+    "left_trigger_force": "off" (a natural mistake, since
+    vibration.set_value()'s own string-token form legitimately uses "on"/
+    "off" elsewhere in this library) passed validate_state() silently and
+    then wrote force=ON -- the exact opposite of what was declared.
+    write_state() calls validate_state() before _build_steps() ever runs
+    (see write_state()'s own body), so rejecting it here closes the gap
+    for every real write, not just a hypothetical one.
+    """
+
+    def _state_with(self, **vibration_overrides):
+        state = state_mod.default_state_dict("test")
+        state["vibration"].update(vibration_overrides)
+        return state
+
+    def test_a_string_value_is_rejected_not_silently_inverted(self):
+        state = self._state_with(left_trigger_force="off")
+        with self.assertRaises(state_mod.StateError):
+            state_mod.validate_state(state)
+
+    def test_each_of_the_four_fields_is_checked(self):
+        for field in ("left_trigger_force", "left_trigger_sync",
+                      "right_trigger_force", "right_trigger_sync"):
+            with self.subTest(field=field):
+                state = self._state_with(**{field: "on"})
+                with self.assertRaises(state_mod.StateError):
+                    state_mod.validate_state(state)
+
+    def test_a_real_bool_is_accepted(self):
+        state = self._state_with(left_trigger_force=True, left_trigger_sync=False)
+        state_mod.validate_state(state)  # must not raise
+
+    def test_null_is_accepted_as_undeclared(self):
+        state = self._state_with(left_trigger_force=None)
+        state_mod.validate_state(state)  # must not raise
+
+
 class SparseSubsectionTest(unittest.TestCase):
     """A state dict may legitimately omit an entire sub-section (not just
     hold it as `None`) to mean "leave this alone" -- validate_state() treats

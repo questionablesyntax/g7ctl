@@ -287,6 +287,20 @@ def validate_state(data: dict) -> None:
     _validate_percent(data["vibration"].get("right_grip"), "vibration.right_grip")
     _validate_percent(data["vibration"].get("left_trigger"), "vibration.left_trigger")
     _validate_percent(data["vibration"].get("right_trigger"), "vibration.right_trigger")
+    # Real gap, found 2026-09-01 (second bug-hunt pass): these four went
+    # unchecked here entirely, unlike dpad_diagonal_lock/swap_stick_dpad/
+    # continuous_trigger just above, which are all isinstance(bool)-checked.
+    # _vibration_steps() built its wire value straight from Python
+    # truthiness on whatever was declared -- a state dict with
+    # "left_trigger_force": "off" (a natural hand-editing mistake, since
+    # vibration.set_value()'s own string-token form legitimately uses "on"/
+    # "off" elsewhere in this library) passed silently and then wrote
+    # force=ON, the exact opposite of what was declared, with no exception
+    # anywhere in the pipeline.
+    _validate_bool(data["vibration"].get("left_trigger_force"), "vibration.left_trigger_force")
+    _validate_bool(data["vibration"].get("left_trigger_sync"), "vibration.left_trigger_sync")
+    _validate_bool(data["vibration"].get("right_trigger_force"), "vibration.right_trigger_force")
+    _validate_bool(data["vibration"].get("right_trigger_sync"), "vibration.right_trigger_sync")
 
 
 def _is_valid_keycode_value(s: str) -> bool:
@@ -312,6 +326,16 @@ def _validate_percent(v: object, label: str) -> None:
         return
     if not isinstance(v, int) or not 0 <= v <= 100:
         raise StateError(f"{label} must be 0-100, got {v!r}")
+
+
+def _validate_bool(v: object, label: str) -> None:
+    """Same shape as the inline dpad_diagonal_lock/swap_stick_dpad checks
+    above -- pulled out as its own helper since vibration's force/sync
+    fields need the identical check four times (added 2026-09-01)."""
+    if v is None:
+        return
+    if not isinstance(v, bool):
+        raise StateError(f"{label} must be a bool or null, got {v!r}")
 
 
 def _validate_vibration_level(v: object, label: str) -> None:
