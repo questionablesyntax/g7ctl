@@ -21,6 +21,8 @@ import time
 import unittest
 from unittest import mock
 
+import usb.core
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
@@ -140,6 +142,67 @@ class EstablishSessionTest(unittest.TestCase):
         result = watcher._establish()
         self.assertIs(result, recovered)
         self.assertEqual(watcher._state, "connected")
+
+
+class _RaisingSession(_FakeSession):
+    """Like _FakeSession, but settle()/probe_controller_live() can raise
+    instead of completing -- for the USBError-during-warmup regression
+    below. `raise_on` picks which call fails ("settle" or "probe")."""
+
+    def __init__(self, raise_on: str, **kwargs):
+        super().__init__(**kwargs)
+        self._raise_on = raise_on
+
+    def settle(self) -> None:
+        super().settle()
+        if self._raise_on == "settle":
+            raise usb.core.USBError("settle failed")
+
+    def probe_controller_live(self) -> bool:
+        super().probe_controller_live()
+        if self._raise_on == "probe":
+            raise usb.core.USBError("probe failed")
+        return self._live
+
+
+class EstablishSessionWarmupErrorTest(unittest.TestCase):
+    """Real bug, found 2026-09-01 (second bug-hunt pass): a USBError raised
+    by settle()/probe_controller_live() itself -- not just
+    probe_controller_live() returning False, already covered by
+    EstablishSessionTest above -- used to propagate straight out of
+    _establish() with the interface still claimed and the kernel driver
+    still detached. run()'s own except block only ever discards its local
+    `session` reference; it never had a chance to tear down the actual
+    VendorSession object _establish() created. The next claim attempt
+    could then fail as "device busy" (interface still held by the leaked
+    session), turning a transient bus blip into a stuck disconnected state
+    until the whole USB device was replugged or the process restarted.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _watcher(self, session):
+        from g7ctlc.watcher import DeviceWatcher
+        watcher = DeviceWatcher()
+        watcher._connect = lambda: session
+        return watcher
+
+    def test_a_usb_error_during_settle_still_tears_down_the_session(self):
+        session = _RaisingSession(raise_on="settle", via_dongle=False)
+        watcher = self._watcher(session)
+        with self.assertRaises(usb.core.USBError):
+            watcher._establish()
+        self.assertTrue(session.torn_down, "the session must be released even though settle() raised")
+
+    def test_a_usb_error_during_the_liveness_probe_still_tears_down_the_session(self):
+        session = _RaisingSession(raise_on="probe", via_dongle=False)
+        watcher = self._watcher(session)
+        with self.assertRaises(usb.core.USBError):
+            watcher._establish()
+        self.assertTrue(session.torn_down, "the session must be released even though probe raised")
 
 
 if __name__ == "__main__":

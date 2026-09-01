@@ -445,36 +445,56 @@ class DeviceWatcher(QObject):
         if session is None:
             return None
 
-        # Warm the session up before any queued job can issue a read -- see
-        # VendorSession.settle(). Lived directly in run() as _settle() until
-        # it turned out the CLI needed the exact same protection.
-        session.settle()
+        try:
+            # Warm the session up before any queued job can issue a read --
+            # see VendorSession.settle(). Lived directly in run() as
+            # _settle() until it turned out the CLI needed the exact same
+            # protection.
+            session.settle()
 
-        if not session.probe_controller_live():
-            # Raised 2026-07-30 from real daily use: the dongle enumerates
-            # on USB (and claims, and heartbeats fine) whether or not a
-            # physical controller is actually powered on and paired to it --
-            # they're two separate things joined by an RF link. Without this
-            # check the watcher reported "connected" here regardless, and
-            # every subsequent read/write just failed. Tear down and keep
-            # polling -- this recovers on its own once a controller answers,
-            # no different from any other disconnected-and-waiting state.
-            # Runs unconditionally now (2026-08-29 detection redesign)
-            # rather than gated on session.via_dongle -- that flag is
-            # cosmetic-only as of this redesign. See
-            # VendorSession.probe_controller_live() for what this can't
-            # tell apart (powered off vs. unpaired vs. possibly switched to
-            # its native GameSir identity mid-session).
+            if not session.probe_controller_live():
+                # Raised 2026-07-30 from real daily use: the dongle
+                # enumerates on USB (and claims, and heartbeats fine)
+                # whether or not a physical controller is actually powered
+                # on and paired to it -- they're two separate things joined
+                # by an RF link. Without this check the watcher reported
+                # "connected" here regardless, and every subsequent
+                # read/write just failed. Tear down and keep polling -- this
+                # recovers on its own once a controller answers, no
+                # different from any other disconnected-and-waiting state.
+                # Runs unconditionally now (2026-08-29 detection redesign)
+                # rather than gated on session.via_dongle -- that flag is
+                # cosmetic-only as of this redesign. See
+                # VendorSession.probe_controller_live() for what this can't
+                # tell apart (powered off vs. unpaired vs. possibly switched
+                # to its native GameSir identity mid-session).
+                self._teardown(session)
+                self._set_state("no_controller")
+                # See PROBE_FAILURE_BACKOFF: a failure here can mean the
+                # device is still re-enumerating on its own (real
+                # 2026-08-30 finding, not the "harmless extra read" this
+                # was assumed to be the day before) -- back off before
+                # run() tries to re-establish, rather than retrying a fresh
+                # claim every POLL_INTERVAL while that's still settling.
+                self._probe_backoff_until = time.time() + PROBE_FAILURE_BACKOFF
+                return None
+        except usb.core.USBError:
+            # Real bug, found 2026-09-01 (second bug-hunt pass): a
+            # USBError raised by settle()/probe_controller_live() itself
+            # (not just probe_controller_live() returning False, already
+            # handled above) used to propagate straight out of this
+            # method with the interface still claimed and the kernel
+            # driver still detached -- run()'s own except block only ever
+            # discards its local `session` reference, it never gets a
+            # chance to tear down the actual object this method created.
+            # The next claim attempt could then fail as "device busy"
+            # (interface still held by the leaked session), turning a
+            # transient bus blip into a stuck disconnected state until
+            # the whole USB device is replugged or the process restarts.
+            # The caller still needs to see this exception for its own
+            # error reporting/backoff, so clean up here and re-raise.
             self._teardown(session)
-            self._set_state("no_controller")
-            # See PROBE_FAILURE_BACKOFF: a failure here can mean the device
-            # is still re-enumerating on its own (real 2026-08-30 finding,
-            # not the "harmless extra read" this was assumed to be the day
-            # before) -- back off before run() tries to re-establish, rather
-            # than retrying a fresh claim every POLL_INTERVAL while that's
-            # still settling.
-            self._probe_backoff_until = time.time() + PROBE_FAILURE_BACKOFF
-            return None
+            raise
 
         self._set_state("connected")
         self._last_error = None
