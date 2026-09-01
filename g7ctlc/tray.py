@@ -7,9 +7,6 @@ the source artwork, with a contrasting rim -- at the 16-22px a panel
 actually renders a tray icon at, the original dot was ~3px and the states
 were not tellable apart. This replaces the abstract gamepad-outline glyph
 set used from 2026-07-29.
-
-The "AI output may not be independently copyrightable" question raised for
-the previous set has not been re-answered for this one.
 """
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
