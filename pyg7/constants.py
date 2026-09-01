@@ -53,33 +53,24 @@ PID_DONGLE = 0x109c   # 2.4GHz wireless dongle counterpart to PID_XID, same
                       # identity either -- an idle dongle enumerates as PID_HID.
                       # See PROTOCOL.md "Device identities".
                       #
-                      # UNCONFIRMED HYPOTHESIS, 2026-08-29 (owner's, hardware
-                      # currently broken so untestable): the dongle itself may
-                      # only ever present this one PID, not splitting into its
-                      # own XID/HID pair the way the wired connection does --
-                      # i.e. the active profile's bind-content trigger (see
-                      # PID_HID/PID_XID above) might apply to the controller
-                      # behind the RF link, invisible on the USB side, with the
-                      # dongle's own USB identity staying fixed regardless. No
-                      # PID_DONGLE_HID has been added on this basis -- flagged as
-                      # an open hypothesis, not assumed.
+                      # UNCONFIRMED HYPOTHESIS, raised 2026-08-29 (owner's,
+                      # hardware currently broken so untestable): the dongle
+                      # itself may only ever present this one PID, not
+                      # splitting into its own XID/HID pair the way the wired
+                      # connection does -- i.e. the active profile's
+                      # bind-content trigger (see PID_HID/PID_XID above)
+                      # might apply to the controller behind the RF link,
+                      # invisible on the USB side, with the dongle's own USB
+                      # identity staying fixed regardless. No PID_DONGLE_HID
+                      # has been added on this basis. Read literally, this
+                      # conflicts with the paragraph above's own confirmed
+                      # observation that an idle dongle enumerates as PID_HID
+                      # (100a), only landing here (109c) once handshaked --
+                      # a tension caught during a same-day post-rename
+                      # read-through, not assumed away.
                       #
-                      # FLAGGED TENSION, not resolved (found 2026-08-29 during a
-                      # post-rename read-through): read literally, this
-                      # hypothesis says the dongle's own USB PID never changes --
-                      # but the paragraph above documents a confirmed, hardware-
-                      # observed exception to that: an idle dongle enumerates as
-                      # PID_HID (100a), only landing here (109c) once handshaked.
-                      # Left for the owner to reconcile with real hardware, not
-                      # assumed either way here -- possibly what's meant is
-                      # narrower than "fixed identity" reads (e.g. idling at
-                      # PID_HID could itself already be the RF-side bind-content
-                      # trigger surfacing on the USB side, the same root cause
-                      # the wired investigation found, rather than evidence
-                      # against this hypothesis).
-                      #
-                      # LIKELY RESOLVED, same day, real firmware evidence (not
-                      # hardware, since that's still broken) -- jieli-re's
+                      # RESOLVED, same day, by real firmware evidence (not
+                      # hardware, since that's still broken): jieli-re's
                       # extracted-firmware corpus contains the Tri-mode
                       # variant's own dongle firmware (dongle_tool_container.bin),
                       # and its compiled-in USB device descriptor table has
@@ -88,14 +79,16 @@ PID_DONGLE = 0x109c   # 2.4GHz wireless dongle counterpart to PID_XID, same
                       # vendor-specific) as its own two identities. That's the
                       # dongle splitting into an HID-shaped/baseline pair on
                       # its own USB side, the same way the wired connection
-                      # does -- not a fixed single identity. The hypothesis
-                      # above reads as refuted for that variant; not directly
-                      # confirmed for 109c specifically (this project's own
-                      # dongle firmware isn't in that corpus), but there's no
-                      # remaining reason to expect this variant's firmware
-                      # architecture to differ on this point. See
-                      # ROADMAP.md item 46's tail for the full firmware-corpus
-                      # cross-reference.
+                      # does -- not a fixed single identity. That also settles
+                      # the tension above: an idle dongle sitting at PID_HID is
+                      # just this same split surfacing on the USB side, not
+                      # evidence against it. The hypothesis reads as refuted
+                      # for the Tri-mode variant specifically; not directly
+                      # confirmed for 109c (this project's own dongle firmware
+                      # isn't in that corpus), but there's no remaining reason
+                      # to expect this variant's firmware architecture to
+                      # differ on this point. See ROADMAP.md item 51's tail
+                      # for the full firmware-corpus cross-reference.
 PID_XID_TRIMODE = 0x1003   # baseline (no-HID-interface) identity on at least
                       # one other G7 Pro variant -- reported 2026-08-19 from a
                       # community bug report, not this project's own hardware. Same
