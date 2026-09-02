@@ -6,6 +6,8 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-02
+
 ### Added
 
 - **Active-debugging infrastructure**, closing a real gap: real debug
