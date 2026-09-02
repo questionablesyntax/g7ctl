@@ -6,6 +6,120 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-02
+
+### Maintenance
+
+- **Repo restructure and maintenance.** General repository housekeeping:
+  git history cleaned up, stale local build artifacts reviewed, `.gitignore`
+  tightened. No functional changes to `pyg7`/`g7ctl`/`g7ctlc`.
+
+### Fixed
+
+- **The GUI could re-enumerate the controller extra times after a live
+  profile switch to one that needs the keyboard/mouse (HID) interface,**
+  occasionally with a visible disconnect in between. Root-caused live,
+  reproduced in isolation: the connect sequence's full warmup (24
+  heartbeats, ~6s, zero reads) before its first real read is itself what
+  destabilizes the connection specifically in that window -- a read
+  attempted after a couple heartbeats of warmup succeeds instantly in the
+  same scenario the full warmup doesn't. `_establish()` now tries a short
+  warmup and a single quick read first, falling back to the original full
+  warmup (still needed for a genuinely fresh, cold connection) only if
+  that doesn't land. `VendorSession.probe_controller_live()` also gained
+  its own short retry against the specific transient USB error this
+  window produces, rather than giving up and paying for a full
+  teardown-and-backoff cycle on the first hit. Confirmed live afterward
+  across four back-to-back profile-switch cycles: zero extra
+  re-enumerations, versus one on nearly every cycle beforehand.
+
+- **A stuck-disabled Sync/Read UI after clicking Release Device right
+  after Sync Now.** A job queued in the up-to-250ms window before pause()
+  landed used to be silently dropped -- the watcher tore the session down
+  without ever checking the queue, so `sync_finished`/`read_finished`
+  never fired and the buttons stayed disabled until an app restart. Any
+  queued job is now drained against the still-live session before pause
+  takes effect.
+
+- **An edit made while a Sync/Read was in flight could be silently
+  discarded, or corrupt the state being written underneath it.** Nothing
+  disabled tab content during a job in flight -- only the action buttons
+  around it -- so a landing read could overwrite an edit made after it
+  started, and the GUI thread could keep mutating the same state dict the
+  watcher thread was iterating on the sync path. Every settings tab is
+  now locked for the duration of an in-flight job, the same mechanism
+  already used to show "not yet confirmed" state. The tray icon's own
+  Release Device action, and Import/Export, had no such guard at all and
+  could bypass it entirely -- both now gated the same way every other
+  control already was.
+
+- **Two real data-corruption bugs.** Right Trigger's curve and several of
+  its long-form Deadzone/Anti-Deadzone writes could cross a byte-address
+  page boundary a core comment claimed couldn't happen, silently dropping
+  the tail of the write on real hardware. Separately, declaring only one
+  of Trigger Force/Sync in a write could silently clobber the other back
+  to "off" instead of preserving the device's current value. Both are
+  reachable from a normal Sync to Device, not just constructed inputs.
+
+- **A curve preset dropdown could save an unconfigured, all-zero curve
+  instead of the shape actually shown on screen.** Switching a Sticks/
+  Triggers curve preset to "custom" emitted the save signal one step
+  before the widget's placeholder values were replaced with the preset's
+  real shape, so Sync to Device or Export could push a curve that never
+  matched what was on screen.
+
+- **`sticks.py`'s Deadzone Initial/Max writes were one byte too long** in
+  their long-form suffix, violating the same length invariant
+  `triggers.py` already asserts and `motion.py` already documents --
+  fixed, and the missing assertion added so a future regression here
+  fails loudly instead of writing a malformed payload.
+
+- **`g7ctl enter-vendor` exited 0 on a handshake failure that doesn't
+  raise an exception**, letting a chained script (`enter-vendor &&
+  next-step`) proceed as if the handshake had succeeded.
+
+- **Left/Right Trigger Force and Sync went completely unvalidated** in
+  `validate_state()` -- a hand-edited or scripted state dict with, e.g.,
+  `"left_trigger_force": "off"` (a natural mistake, since this same
+  library's own string-token form legitimately uses "on"/"off" elsewhere)
+  wrote the opposite of what was declared, with no error anywhere in the
+  pipeline. The same int-valued trigger-flags path in `pyg7.vibration`
+  also accepted any value 0-255 with no range check, though only bits 0-1
+  are documented/confirmed.
+
+- **The routing added for the page-crossing fix above broke the Triggers
+  "custom" curve preset specifically** -- its hardware-confirmed wire
+  format deliberately doesn't count its own trailing byte in the LEN
+  field, which the generic page-splitting path got wrong for every
+  "set curve to custom" call. Fixed by sending "custom"'s exact captured
+  bytes directly, bypassing the generic path for this one preset.
+
+- **Dock LED Brightness fell back to 100% for any value outside the
+  five GUI presets** (a value set via CLI or an older export, for
+  example) instead of the nearest stop -- and editing anything else on
+  the Settings tab would then silently write that wrong 100% back to the
+  device. Now picks the nearest preset for display, matching how
+  Vibration already handles the same kind of off-scale value.
+
+- **Refocusing the app faster than the watcher's own poll cadence after
+  an auto-release could permanently strand the controller released**,
+  with nothing left to trigger a reconnect on any later focus change.
+
+- **A `USBError` raised by `settle()`/the liveness probe during connect
+  could leak a claimed session** with the interface never released,
+  turning a transient bus blip into a stuck "device busy" state until a
+  replug or restart.
+
+- A widened shutdown thread-join timeout (2s to 10s, with a logged
+  warning if it's still not enough) gives an in-flight sync a fair chance
+  to finish before the process tears down along with its open USB
+  session.
+
+Found across two independent bug-hunt review passes plus tonight's live
+hardware debugging session; every fix above shipped with a regression
+test confirmed to fail against the prior code and pass against the fix.
+545/545 passing, ruff clean.
+
 ## [0.3.1] - 2026-09-02
 
 ### Added
