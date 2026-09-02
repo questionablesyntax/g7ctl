@@ -1,6 +1,18 @@
-# Grants rw access to the controller's runtime XInput identity, its
-# vendor/config identity, and the wireless dongle's identity, so the GUI/
+# Grants rw access to any GameSir (idVendor 3537) USB device, so the GUI/
 # tray app (and CLI) can run as a normal user instead of root.
+#
+# Blanket-VID rather than a per-PID whitelist deliberately, matching how
+# device detection itself works: pyg7 scans any 0x3537 device and
+# classifies it structurally (see constants.py's VID, and PROTOCOL.md
+# "Device identities") rather than matching a fixed PID list, specifically
+# so a brand-new G7-family variant works the moment it's plugged in, no
+# constants.py addition or community bug report needed first. Until
+# 2026-09-02 this file listed each known PID individually -- correct for
+# every variant confirmed so far, but it silently reintroduced the exact
+# problem the detection code was redesigned to eliminate: a genuinely new
+# variant would be recognized fine by pyg7 and still denied raw USB access
+# until someone found the new PID and hand-added a line here. See
+# ROADMAP.md item 51.
 #
 # Uses systemd-logind's uaccess mechanism (TAG+="uaccess") rather than a
 # dedicated group -- access is granted automatically to whoever's logged in
@@ -8,37 +20,13 @@
 # is the same mechanism stock rules already use for USB mice, cameras, and
 # scanners (see /usr/lib/udev/rules.d/70-uaccess.rules on most distros).
 #
+# Scope, worth being explicit about: 3537 is registered to GameSir as a
+# manufacturer, not to the G7 Pro specifically -- this grants the same
+# local-seated-user access to any GameSir USB device, not only G7 Pro
+# controllers/dongles, if a future product ever shares the VID. Same trust
+# model as the mice/camera rules above (a physically-present logged-in
+# user, not a privilege escalation), just a wider device scope than the
+# six identities this project has actually reverse-engineered.
+#
 # Install: see README.md "Running without root" for setup steps.
-SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="100a", TAG+="uaccess"
-SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="109b", TAG+="uaccess"
-SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="109c", TAG+="uaccess"
-
-# Vendor/config identity on at least one other G7 Pro variant -- see
-# PID_VENDOR_TRIMODE in pyg7/constants.py and PROTOCOL.md "Device
-# identities". Without this line, a user on that hardware who follows
-# this file's own setup instructions still needs root: the Python side
-# recognizes the PID, but raw USB access to it is denied without this
-# rule too. Confirmed 2026-08-19 by a user who found that the hard way
-# (added it by hand before this line existed) -- not a guess.
-SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="1003", TAG+="uaccess"
-
-# The Tri-mode variant's 2.4GHz dongle in vendor/config mode -- see
-# PID_DONGLE_TRIMODE in pyg7/constants.py. Same reporter, same day,
-# same method (found and confirmed by hand before this line existed).
-SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="1004", TAG+="uaccess"
-
-# Vendor/config identity on a G7 Pro "Zenless Zone Zero" edition -- see
-# PID_VENDOR_ZZZ in pyg7/constants.py. Same reasoning as the 1003 line
-# above. Confirmed 2026-08-19: the reporter tested this rule with the
-# fix branch and read real config back over it, end to end.
-SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="105d", TAG+="uaccess"
-
-# The controller's on-device "default GameSir identity" -- reached via the
-# Menu+Share button combo (documented in GameSir's manual as an XInput/
-# native-identity toggle), distinct from both 100a and the 109b vendor/
-# config mode. Found 2026-07-30. It runs a different protocol that has not
-# been reverse-engineered (see PROTOCOL.md "Device identities"), so nothing
-# here talks to it -- access is granted only so the tool can detect this
-# identity and tell the user to switch back, instead of reporting a
-# generic "no device found".
-SUBSYSTEM=="usb", ATTR{idVendor}=="3537", ATTR{idProduct}=="1022", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="3537", TAG+="uaccess"

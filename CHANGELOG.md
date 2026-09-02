@@ -6,6 +6,16 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`udev/61-g7ctl.rules` grants access by GameSir's USB vendor ID
+  (`3537`) instead of a per-PID whitelist.** The whitelist form silently
+  reintroduced the exact problem the detection redesign (0.3.0) removed
+  from the code: a brand-new G7-family variant would be recognized fine
+  by `pyg7` and still denied raw USB access until someone found its PID
+  and hand-added a udev line. Confirmed live over a dongle connection on
+  existing hardware before landing.
+
 ## [0.3.2] - 2026-09-02
 
 ### Maintenance
