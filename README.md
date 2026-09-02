@@ -381,7 +381,7 @@ commands instead — they do the same thing.
 python3 -m unittest discover -s tests -t .
 ```
 
-245 tests, no controller required — payload builders and blob decoders run
+545 tests, no controller required — payload builders and blob decoders run
 against a fake session (`tests/fakes.py`), and `tests/fixtures/live_read.json`
 holds real `read_state()` output captured from a physical controller. The GUI's
 view round-trip tests (headless, offscreen platform) are skipped automatically
@@ -389,6 +389,10 @@ if PyQt6 isn't installed.
 
 Please keep them passing; they exist because a wrong byte here doesn't raise an
 error, it writes something unintended to a device's persistent config.
+
+Repo restructure and maintenance, 2026-09: git history cleaned up, stale
+local build artifacts reviewed, `.gitignore` tightened. No functional
+changes to `pyg7`/`g7ctl`/`g7ctlc`.
 
 ## Contributors
 
