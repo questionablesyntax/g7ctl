@@ -84,6 +84,27 @@ class BatteryStatus(NamedTuple):
 # minimum; cheap to relax further later if this still isn't enough.
 SETTLE_HEARTBEATS = 24
 SETTLE_INTERVAL = 0.25
+
+# How much warmup to give the FAST path before the first real read attempt
+# -- see DeviceWatcher._establish() for how this is actually used (two-tier:
+# a short warmup + one quick probe, falling back to the full SETTLE_HEARTBEATS
+# warmup + probe_controller_live()'s own retries only if that doesn't work).
+#
+# Real root cause, found live 2026-09-01, isolated and reproduced directly:
+# the full SETTLE_HEARTBEATS/SETTLE_INTERVAL warmup (24 heartbeats, 6s,
+# zero reads) before the very first real read is itself what destabilizes
+# the connection specifically right after a live profile switch to one that
+# needs HID -- confirmed by direct reproduction, isolated from the GUI and
+# everything else: the exact same sequence (24 heartbeats, then one read)
+# failed with errno 19 reliably in that scenario, while a read attempted
+# after minimal warmup succeeded instantly and stayed stable for 20+
+# seconds on the identical scenario. 2, not 1: the one confirmed successful
+# data point used a single heartbeat before its first read, this adds one
+# heartbeat of margin rather than shipping the bare minimum that happened
+# to work once. Judgment call, not a measured minimum -- cheap to adjust
+# if real use shows otherwise, same honesty SETTLE_HEARTBEATS' own comment
+# already applies to its own number.
+EARLY_PROBE_HEARTBEATS = 2
 READ_CHUNK_TIMEOUT = 4.0
 
 # Pacing between the two writes send_addressed() splits a page-crossing
@@ -543,7 +564,8 @@ class VendorSession:
                 "Either the device-info layout changed or this is not the active-profile field.")
         return value
 
-    def probe_controller_live(self, timeout: Optional[float] = None) -> bool:
+    def probe_controller_live(self, timeout: Optional[float] = None,
+                               retries: int = 2, retry_interval: float = 1.0) -> bool:
         """Is there an actual controller answering on the other end, not just
         a claimable USB device?
 
@@ -580,24 +602,54 @@ class VendorSession:
         historical precedent (a different read, same errno, same fresh-
         re-enumeration window, first found 2026-07-28).
 
+        **Given a retry, confirmed live 2026-09-01:** the caller's own
+        outer retry (DeviceWatcher's PROBE_FAILURE_BACKOFF path) already
+        treated this as recoverable, but paid for it with a full session
+        teardown and a 5s backoff before trying again from scratch --
+        expensive for something the docstring above already calls
+        "recovers on its own by the next attempt." First tried as one
+        retry after 0.5s; confirmed live the same evening that 0.5s isn't
+        always enough -- a real wired session's own "not settled yet"
+        window sometimes outlasts it, and the WARNING this same evening's
+        DeviceWatcher._establish() fix added confirmed the timeline: the
+        device hadn't actually gone anywhere yet at the moment the probe
+        failed -- it was the caller's own teardown-on-failure that
+        triggered the profile's documented "reverts to HID on release"
+        behavior, not a re-enumeration that had already happened. So the
+        retry has a genuinely still-live device to try again against; it
+        just needs more patience than one quick attempt. Widened to 2
+        retries at 1.0s each (up to 2s of grace) on that basis -- still a
+        judgment call, not a measured minimum (same honesty
+        SETTLE_HEARTBEATS' own comment already applies to its number),
+        cheap to widen further if real use still isn't enough, and only
+        ever paid on the already-rare error path. A genuinely absent
+        controller (powered off, unpaired) still exhausts the retries and
+        returns False just as before, just a couple seconds later.
+
         Returns True if a minimal read succeeds, False on timeout **or on
         this specific transient disconnect** (no controller answering --
         could be powered off, unpaired, switched to its native GameSir
         identity mid-session (see PROTOCOL.md "Device identities"), or just
         not settled yet after a fresh re-enumeration; this can't tell those
-        apart, only that nothing answered *this time*). Deliberately narrow:
-        only errno 19 is treated this way. Any other `USBError` (the dongle
-        itself vanishing, a permission error, etc.) still propagates --
-        that's a different, harder failure the caller's existing USBError
-        handling already covers, and folding it into a plain `False` here
+        apart, only that nothing answered *this time*, `retries` times).
+        Deliberately narrow: only errno 19 is retried/treated this way. Any
+        other `USBError` (the dongle itself vanishing, a permission error,
+        etc.) still propagates immediately, no retry -- that's a different,
+        harder failure the caller's existing USBError handling already
+        covers, and retrying it or folding it into a plain `False` here
         would hide it behind the same message a merely-slow controller gets.
         """
-        try:
-            self.read_chunk(profile_layer_byte(1), 0, 1, timeout=timeout)
-            return True
-        except TimeoutError:
-            return False
-        except usb.core.USBError as e:
-            if getattr(e, "errno", None) == 19:
+        attempt = 0
+        while True:
+            try:
+                self.read_chunk(profile_layer_byte(1), 0, 1, timeout=timeout)
+                return True
+            except TimeoutError:
                 return False
-            raise
+            except usb.core.USBError as e:
+                if getattr(e, "errno", None) != 19:
+                    raise
+                if attempt >= retries:
+                    return False
+                attempt += 1
+                time.sleep(retry_interval)

@@ -32,20 +32,33 @@ except ImportError:  # pragma: no cover - depends on the environment
 
 
 class _FakeSession:
-    """Stands in for VendorSession -- just enough surface for _establish()."""
+    """Stands in for VendorSession -- just enough surface for _establish().
 
-    def __init__(self, via_dongle: bool, live: bool = True):
+    `live` can be a plain bool (every probe attempt answers the same way)
+    or a list, consumed one call per `probe_controller_live()` invocation
+    -- for the two-tier fast/slow path (see _establish()'s own comment),
+    so a test can script "fast attempt fails, slow attempt succeeds"
+    distinctly rather than only "always" or "never".
+    """
+
+    def __init__(self, via_dongle: bool, live=True):
         self.via_dongle = via_dongle
         self._live = live
         self.settled = False
+        self.settle_counts = []  # each settle(count=...) call's count, None for the default
         self.torn_down = False
         self.probed = False
+        self.probe_call_count = 0
 
-    def settle(self) -> None:
+    def settle(self, count=None) -> None:
         self.settled = True
+        self.settle_counts.append(count)
 
-    def probe_controller_live(self) -> bool:
+    def probe_controller_live(self, retries=2) -> bool:
         self.probed = True
+        self.probe_call_count += 1
+        if isinstance(self._live, list):
+            return self._live.pop(0) if self._live else False
         return self._live
 
     def __exit__(self, *exc) -> bool:
@@ -86,6 +99,40 @@ class EstablishSessionTest(unittest.TestCase):
         self.assertFalse(session.torn_down)
         self.assertEqual(watcher._state, "connected")
 
+    def test_a_quick_fast_probe_skips_the_full_warmup_entirely(self):
+        # Real fix, found live 2026-09-01, reproduced in isolation: the
+        # full 24-heartbeat/6s warmup before the first real read is itself
+        # what destabilizes the connection right after a live profile
+        # switch to one that needs HID -- a read after minimal warmup
+        # succeeds instantly in that same scenario. When the fast attempt
+        # lands, the full patient warmup must never run at all.
+        from pyg7.session import EARLY_PROBE_HEARTBEATS
+        session = _FakeSession(via_dongle=False, live=[True])
+        watcher = self._watcher(session)
+        result = watcher._establish()
+        self.assertIs(result, session)
+        self.assertEqual(session.settle_counts, [EARLY_PROBE_HEARTBEATS])
+        self.assertEqual(session.probe_call_count, 1)
+        self.assertEqual(watcher._state, "connected")
+
+    def test_a_failed_fast_probe_falls_back_to_the_full_patient_warmup(self):
+        # The original, still-real failure the full warmup exists for (a
+        # truly fresh, zero-heartbeat read, confirmed to fail
+        # 2026-07-27/28) is the fallback path, not the only path --
+        # confirm it's still reached, and still works, when the fast
+        # attempt genuinely isn't ready yet.
+        session = _FakeSession(via_dongle=False, live=[False, True])
+        watcher = self._watcher(session)
+        result = watcher._establish()
+        self.assertIs(result, session)
+        # First settle() call is the short fast-path warmup (an explicit
+        # count), second is the full patient one (settle()'s own default,
+        # None here since that's what "no count given" records as).
+        from pyg7.session import EARLY_PROBE_HEARTBEATS
+        self.assertEqual(session.settle_counts, [EARLY_PROBE_HEARTBEATS, None])
+        self.assertEqual(session.probe_call_count, 2)
+        self.assertEqual(watcher._state, "connected")
+
     def test_dongle_session_with_live_controller_becomes_connected(self):
         session = _FakeSession(via_dongle=True, live=True)
         watcher = self._watcher(session)
@@ -121,6 +168,19 @@ class EstablishSessionTest(unittest.TestCase):
         watcher._establish()
         self.assertGreater(watcher._probe_backoff_until, before)
 
+    def test_a_failed_probe_is_logged_not_silent(self):
+        # Real gap, found live 2026-09-01: this whole branch used to be
+        # silent above DEBUG -- a full connect/teardown/backoff/retry
+        # cycle left no trace above the generic _teardown() DEBUG lines,
+        # indistinguishable in the log from a plain disconnected-and-
+        # waiting state. Confirmed against a real log from an actual
+        # session that hit this exact path with nothing explaining why.
+        session = _FakeSession(via_dongle=False, live=False)
+        watcher = self._watcher(session)
+        with self.assertLogs("g7ctlc.watcher", level="WARNING") as ctx:
+            watcher._establish()
+        self.assertTrue(any("no controller answering" in line for line in ctx.output))
+
     def test_no_device_found_leaves_state_disconnected(self):
         watcher = self._watcher(None)
         result = watcher._establish()
@@ -153,13 +213,13 @@ class _RaisingSession(_FakeSession):
         super().__init__(**kwargs)
         self._raise_on = raise_on
 
-    def settle(self) -> None:
-        super().settle()
+    def settle(self, count=None) -> None:
+        super().settle(count=count)
         if self._raise_on == "settle":
             raise usb.core.USBError("settle failed")
 
-    def probe_controller_live(self) -> bool:
-        super().probe_controller_live()
+    def probe_controller_live(self, retries=2) -> bool:
+        super().probe_controller_live(retries=retries)
         if self._raise_on == "probe":
             raise usb.core.USBError("probe failed")
         return self._live

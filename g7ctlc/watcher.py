@@ -31,7 +31,7 @@ from pyg7.device import (
     find_writable_device,
     switch_to_xid,
 )
-from pyg7.session import VendorSession
+from pyg7.session import EARLY_PROBE_HEARTBEATS, VendorSession
 
 log = logging.getLogger(__name__)
 
@@ -464,9 +464,30 @@ class DeviceWatcher(QObject):
             # see VendorSession.settle(). Lived directly in run() as
             # _settle() until it turned out the CLI needed the exact same
             # protection.
-            session.settle()
+            #
+            # Two-tier, not a single settle()+probe: root-caused live
+            # 2026-09-01, reproduced in isolation -- the FULL warmup (24
+            # heartbeats, 6s, zero reads) before the first real read is
+            # itself what destabilizes the connection specifically right
+            # after a live profile switch to one that needs HID. A read
+            # attempted after just EARLY_PROBE_HEARTBEATS succeeds
+            # instantly in that same scenario. Try that fast path first
+            # (a single quick attempt, no internal retry -- if it's
+            # genuinely too early, better to commit to the full patient
+            # warmup below than spend time retrying a fast attempt that's
+            # not going to work yet); only pay for the full warmup, with
+            # probe_controller_live()'s own retries, if the fast path
+            # doesn't land. This preserves the original, still-real
+            # failure the full warmup exists for (a truly fresh,
+            # zero-heartbeat read, confirmed to fail 2026-07-27/28) as the
+            # fallback, not the only path.
+            session.settle(count=EARLY_PROBE_HEARTBEATS)
+            live = session.probe_controller_live(retries=0)
+            if not live:
+                session.settle()
+                live = session.probe_controller_live()
 
-            if not session.probe_controller_live():
+            if not live:
                 # Raised 2026-07-30 from real daily use: the dongle
                 # enumerates on USB (and claims, and heartbeats fine)
                 # whether or not a physical controller is actually powered
@@ -482,6 +503,22 @@ class DeviceWatcher(QObject):
                 # VendorSession.probe_controller_live() for what this can't
                 # tell apart (powered off vs. unpaired vs. possibly switched
                 # to its native GameSir identity mid-session).
+                # Real gap, found live 2026-09-01: this whole branch used to
+                # be silent above DEBUG -- probe_controller_live() already
+                # gives the errno-19 "not settled yet" case one cheap retry
+                # internally now, so a failure reaching here past that is a
+                # more meaningful event (either a genuinely absent
+                # controller, or a persistent settling issue), not routine
+                # noise. Without this, a live-tested full connect/teardown/
+                # backoff/retry cycle left no trace above the generic
+                # _teardown() DEBUG lines -- indistinguishable in the log
+                # from a plain disconnected-and-waiting state.
+                log.warning(
+                    "Liveness probe found no controller answering -- could be "
+                    "powered off, unpaired, or just not settled yet after a "
+                    "fresh re-enumeration (see probe_controller_live()'s own "
+                    "retry). Backing off %.1fs before trying again.",
+                    PROBE_FAILURE_BACKOFF)
                 self._teardown(session)
                 self._set_state("no_controller")
                 # See PROBE_FAILURE_BACKOFF: a failure here can mean the

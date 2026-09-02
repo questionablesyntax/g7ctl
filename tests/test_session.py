@@ -279,12 +279,43 @@ class ProbeControllerLiveTest(unittest.TestCase):
         # here since wired connections never ran a forced read at this
         # exact point before. Must return False, the same graceful path a
         # timeout already takes, not raise and force a harder failure path.
+        #
+        # Two errno-19s queued, not one: the default retries=1 (see the
+        # method's own 2026-09-01 update, below) gives one retry before
+        # giving up, so a genuinely persistent condition needs to fail
+        # twice to still prove the graceful-False path, not the new retry.
+        import usb.core
+
+        def _errno19():
+            exc = usb.core.USBError("no such device")
+            exc.errno = 19
+            return exc
+
+        dev = _FakeReadDevice([_errno19(), _errno19()])
+        sess = VendorSession(dev, via_dongle=False)
+        self.assertFalse(sess.probe_controller_live(timeout=0.05, retry_interval=0))
+
+    def test_a_transient_errno_19_recovers_on_the_retry(self):
+        # Real fix, 2026-09-01: confirmed live against a real wired session
+        # that hit exactly this errno 19 mid-probe -- the very next read
+        # succeeded with no teardown in between. The first live instance
+        # recovered within half a second; a second one the same evening
+        # needed longer, which is why the default retries/retry_interval
+        # were widened afterward (see the method's own docstring) -- this
+        # test just confirms the retry mechanism itself works at all,
+        # independent of the exact tuning, hence retry_interval=0 below.
+        # The caller's own outer recovery (DeviceWatcher's
+        # PROBE_FAILURE_BACKOFF) already handled this before this fix, but
+        # paid for it with a full session teardown and a 5s backoff for
+        # something the method's own docstring already calls "recovers on
+        # its own by the next attempt" -- this is that cheap in-place
+        # retry, before falling back to the caller's more expensive path.
         import usb.core
         exc = usb.core.USBError("no such device")
         exc.errno = 19
-        dev = _FakeReadDevice([exc])
+        dev = _FakeReadDevice([exc, _read_response_report(1, 0, 1, b"\x00")])
         sess = VendorSession(dev, via_dongle=False)
-        self.assertFalse(sess.probe_controller_live(timeout=0.05))
+        self.assertTrue(sess.probe_controller_live(timeout=0.05, retry_interval=0))
 
     def test_other_usb_errors_still_propagate(self):
         # A genuine, different USBError (a permission error, the dongle
