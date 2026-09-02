@@ -514,3 +514,44 @@ class TeardownDoesNotVanishSilentlyTest(unittest.TestCase):
         with self.assertLogs("g7ctlc.watcher", level="DEBUG") as ctx:
             DeviceWatcher._teardown(_RaisingExitSession())  # must not raise
         self.assertTrue(any("session teardown failed" in line for line in ctx.output))
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class EmitErrorIsLoggedTest(unittest.TestCase):
+    """Real gap, found live-testing tonight's own debug-logging work
+    against real hardware, 2026-09-01: _emit_error() only ever emitted a
+    Qt signal -- reaching the GUI's status label for exactly one state
+    change before the next update overwrote it -- and never touched
+    logging at all. The actual reason a reconnect cycle happened (which
+    of heartbeat()/firmware-read/profile-poll/battery-poll raised, and
+    the real USBError) was invisible in the log file even at DEBUG with
+    -v; only the downstream _teardown() symptom ever showed up there."""
+
+    def test_emit_error_logs_at_warning_as_well_as_emitting_the_signal(self):
+        from g7ctlc.watcher import DeviceWatcher
+
+        watcher = DeviceWatcher()
+        received = []
+        watcher.error.connect(received.append)
+
+        with self.assertLogs("g7ctlc.watcher", level="WARNING") as ctx:
+            watcher._emit_error("Lost connection: [Errno 19] gone")
+
+        self.assertEqual(received, ["Lost connection: [Errno 19] gone"])
+        self.assertTrue(any("Lost connection: [Errno 19] gone" in line for line in ctx.output))
+
+    def test_a_deduped_repeat_does_not_log_again(self):
+        """Matches the existing dedup contract for the signal -- a
+        persistent condition (e.g. no udev permission) logging once per
+        poll cycle would spam the log file exactly as badly as it would
+        have spammed the GUI without the original dedup guard."""
+        import logging
+
+        from g7ctlc.watcher import DeviceWatcher
+
+        watcher = DeviceWatcher()
+        watcher._emit_error("USB error: gone")
+
+        with self.assertRaises(AssertionError):  # assertLogs itself raises if nothing logs
+            with self.assertLogs("g7ctlc.watcher", level=logging.WARNING):
+                watcher._emit_error("USB error: gone")  # same message again

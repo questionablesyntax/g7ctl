@@ -167,9 +167,23 @@ class DeviceWatcher(QObject):
 
     def _emit_error(self, message: str) -> None:
         """Dedupe against the last error so a persistent condition (e.g. no
-        udev permission) doesn't spam one emission per poll cycle."""
+        udev permission) doesn't spam one emission per poll cycle.
+
+        Real gap, found 2026-09-01 live-testing the debug-logging work this
+        same evening added: this only ever emitted a Qt signal to whatever's
+        connected (the GUI's own status label), which the very next state
+        change overwrites -- so the actual reason a reconnect cycle
+        happened (which of heartbeat()/firmware-read/profile-poll/
+        battery-poll raised, and the exact USBError) was never recorded
+        anywhere, not even at DEBUG with -v. The log file only ever showed
+        the downstream symptom (_teardown()'s release_interface/
+        attach_kernel_driver failures), never the trigger. Logged here too
+        now, so a real reconnect has a durable trace to look back at
+        instead of only a transient GUI label.
+        """
         if message != self._last_error:
             self._last_error = message
+            log.warning(message)
             self.error.emit(message)
 
     def run(self) -> None:
