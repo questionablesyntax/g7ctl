@@ -304,10 +304,12 @@ signature that happens to cover three colorways, it's three separately
 reverse-engineered identities. These are the only hardware this has
 actually run on.
 
-Two more G7 Pro editions are believed compatible but unconfirmed for lack
-of product-ID data: **Dragon's Dogma 2** and **WUCHANG**. If you own one,
-the process is the same as it's always been — find the product ID and
-report it, either result is useful.
+More G7 Pro editions are believed compatible but not yet confirmed on
+real hardware: **Dragon's Dogma 2** (candidate product IDs known, not
+yet confirmed working — if you own one, testing them is the missing
+step) and **WUCHANG** (no product-ID data at all yet). If you own
+either, the process is the same as it's always been — find/confirm the
+product ID and report it, either result is useful.
 
 **Reporting one is one command** — the same `g7ctl diag` covered in "Filing
 a bug report" above, used here specifically to capture the USB product ID
