@@ -72,6 +72,15 @@ SETTLE_HEARTBEATS = 24     # pyg7's own VendorSession.settle() default
 SETTLE_INTERVAL = 0.25
 READ_CHUNK_TIMEOUT = 4.0
 
+# First run of this script hit a real [Errno 5] I/O error on this
+# interface, both directions, immediately after selecting the
+# alt-setting -- these two constants are a bounded first guess at "not
+# settled yet" rather than a known-correct fix. Worth widening if a
+# future run still fails the same way.
+ALTSETTING_SETTLE = 1.0
+WRITE_RETRIES = 3
+WRITE_RETRY_INTERVAL = 0.5
+
 # Exactly what `g7ctl read-state` asks for first, and exactly what
 # already times out on interface 0 -- Profile 1's Default-layer blob,
 # first chunk. 0x01 = profile_layer_byte(1, shift=False) in pyg7.
@@ -141,7 +150,19 @@ def main() -> None:
         usb.util.claim_interface(dev, IFACE_2)
         dev.set_interface_altsetting(interface=IFACE_2, alternate_setting=IFACE_2_ALT)
         print(f"Claimed interface 2, selected alt-setting {IFACE_2_ALT} "
-              "(the bulk endpoint pair from lsusb -v).\n")
+              "(the bulk endpoint pair from lsusb -v).")
+
+        # A SET_INTERFACE (alt-setting switch) needs a moment before the
+        # new endpoints are actually ready to transfer -- the exact same
+        # "not settled yet" quirk pyg7's own VendorSession.settle() exists
+        # to cover for interface 0 after a fresh claim/re-enumeration
+        # (see pyg7/session.py). Untested here (this interface has never
+        # been touched before this script existed), so this is a bounded
+        # first guess, not a known-correct number -- worth widening if a
+        # future run still shows the same failure.
+        print(f"Waiting {ALTSETTING_SETTLE}s for the new alt-setting to "
+              "settle before touching it...\n")
+        time.sleep(ALTSETTING_SETTLE)
 
         # --- Test A: just listen. Does the bulk IN endpoint push ---
         # --- anything unprompted, the way report 0x10 does on ---
@@ -149,6 +170,8 @@ def main() -> None:
         print("=== Test A: passive listen on EP 0x81 for 3 seconds ===")
         print("(does the bulk endpoint push anything on its own?)")
         saw_anything = False
+        last_error = None
+        error_count = 0
         deadline = time.time() + 3.0
         while time.time() < deadline:
             try:
@@ -156,15 +179,29 @@ def main() -> None:
                 saw_anything = True
                 print(f"  <- {hexdump(bytes(data))}")
             except usb.core.USBError as e:
-                if "timeout" not in str(e).lower():
+                if "timeout" in str(e).lower():
+                    continue
+                error_count += 1
+                if str(e) != last_error:
                     print(f"  (error: {e})")
-        if not saw_anything:
+                    last_error = str(e)
+                # Same error repeating in a tight loop is just noise past
+                # the first occurrence -- and hammering a rejecting
+                # endpoint at full speed is the opposite of "go slow with
+                # the hardware." Back off instead of spinning.
+                time.sleep(0.2)
+        if error_count:
+            print(f"  ({error_count} total error(s), same as above, in this window)")
+        if not saw_anything and not error_count:
             print("  Nothing. Silent -- consistent with a request/response")
             print("  channel rather than a push stream (expected either way).")
         print()
 
         # --- Test B: send the exact request that already times out on ---
-        # --- interface 0, this time over the bulk pair. ---
+        # --- interface 0, this time over the bulk pair. Retried a few ---
+        # --- times, same reasoning as the settle delay above -- one ---
+        # --- I/O error right after a fresh alt-setting switch could be ---
+        # --- transient, not necessarily "this never works." ---
         print(f"=== Test B: CMD_READ over EP 0x01/0x81 "
               f"(category={CATEGORY:#04x}, offset={OFFSET:#06x}, length={LENGTH}) ===")
         print("(this exact request already times out on interface 0 -- does")
@@ -173,12 +210,23 @@ def main() -> None:
                               (OFFSET >> 8) & 0xFF, OFFSET & 0xFF, LENGTH])
         pkt = build_packet(CMD_READ, req_payload)
         print(f"  -> {hexdump(pkt)}")
-        try:
-            dev.write(EP_OUT_2, pkt)
-        except usb.core.USBError as e:
-            print(f"  Write failed: {e}")
-            print("  (informative on its own -- means this endpoint doesn't")
-            print("   accept this kind of write at all, not just 'no reply')")
+
+        write_ok = False
+        for attempt in range(1, WRITE_RETRIES + 1):
+            try:
+                dev.write(EP_OUT_2, pkt)
+                write_ok = True
+                break
+            except usb.core.USBError as e:
+                print(f"  Write attempt {attempt}/{WRITE_RETRIES} failed: {e}")
+                if attempt < WRITE_RETRIES:
+                    time.sleep(WRITE_RETRY_INTERVAL)
+        if not write_ok:
+            print("  All write attempts failed. Informative on its own -- means")
+            print("  this endpoint doesn't accept this kind of write at all right")
+            print("  now, not just 'no reply' -- but see the note at the top of")
+            print("  this script's output about whether the settle delay was")
+            print("  long enough; a real answer either way is useful to report.")
         else:
             echo = bytes([CMD_READ, CATEGORY, (OFFSET >> 8) & 0xFF,
                           OFFSET & 0xFF, LENGTH])
