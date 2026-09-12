@@ -410,6 +410,45 @@ class SwitchToXidMissingDeviceTest(unittest.TestCase):
         self.assertTrue(any("No G7 Pro device found" in msg for msg in cm.output))
 
 
+class SwitchToXidAlreadyBaselineTest(unittest.TestCase):
+    """Regression target, found 2026-09-12 (Ornith/DeepReinforce local-model
+    review of this file, verified against real source before acting on it):
+    a controller already sitting at a no-HID (baseline) identity makes
+    find_hid_device() return None -- same as a genuinely absent device --
+    since neither it nor _find_stable_hid_device() look for anything but the
+    HID-presenting shape. Before this fix, switch_to_xid() treated that as
+    "not found" and returned (None, False), contradicting its own docstring
+    ("if it's already without that interface, this is a no-op"). Live-
+    reachable: `enter-vendor` calls this with no pre-check of its own, and
+    is also the exact recovery step _explain_usb_error()'s ENODEV message
+    tells a user to re-run after a mid-session drop back to baseline.
+
+    No usb.util.claim_interface/release_interface mocking needed here,
+    deliberately -- the fix must short-circuit before ever attempting the
+    claim/write/release handshake flow, not just before completing it."""
+
+    def test_wired_baseline_device_returns_success_not_missing(self):
+        target = _xid_shaped(XID_PID)
+        with _patched(target):
+            dev, via_dongle = device.switch_to_xid()
+        self.assertIs(dev, target)
+        self.assertFalse(via_dongle)
+
+    def test_dongle_baseline_device_reports_via_dongle(self):
+        target = _xid_shaped(DONGLE_PID)
+        with _patched(target):
+            dev, via_dongle = device.switch_to_xid()
+        self.assertIs(dev, target)
+        self.assertTrue(via_dongle)
+
+    def test_logs_info_not_error_for_the_already_baseline_case(self):
+        target = _xid_shaped(XID_PID)
+        with _patched(target):
+            with self.assertLogs(device.log, level="INFO") as cm:
+                device.switch_to_xid()
+        self.assertFalse(any(r.levelname == "ERROR" for r in cm.records))
+
+
 class SwitchToXidLandingIdentityTest(unittest.TestCase):
     """Which identity the handshake lands on, and whether the caller is told.
 

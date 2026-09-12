@@ -604,6 +604,26 @@ def switch_to_xid(timeout_s: float = 10.0,
     # pacing if the device re-enumerates again during the wait.
     dev = _find_stable_hid_device(min_interval)
     if dev is None:
+        # Not the same as "no device": a controller that's already at a
+        # no-HID (baseline) identity also makes find_hid_device() (and so
+        # _find_stable_hid_device()) return None, since neither one looks
+        # for anything but the HID-presenting shape. Confirmed safe and
+        # correct to treat as the no-op success this function's own
+        # docstring documents (FINDINGS.md 2026-08-29: churn-tested,
+        # zero re-enumerations sending the handshake into an already-
+        # baseline device) -- so check for that before falling through to
+        # the "not found" branches below, which used to catch this case
+        # too and misreport a present, working controller as absent. Real
+        # bug, live-reachable: `enter-vendor` calls this with no pre-check
+        # of its own, and _explain_usb_error()'s own ENODEV message tells
+        # a user to "Re-run 'enter-vendor'" after exactly the kind of
+        # mid-session drop that leaves the controller sitting here.
+        vdev, via_dongle = find_writable_device()
+        if vdev is not None:
+            log.info("Already at a baseline (no-HID) identity (bus=%s addr=%s) -- "
+                     "handshake not needed.", vdev.bus, vdev.address)
+            return vdev, via_dongle
+
         native = find_native_identity()
         if native is not None:
             # native.idProduct, not the hardcoded PID_NATIVE -- same fix
