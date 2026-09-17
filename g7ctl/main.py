@@ -51,6 +51,7 @@ import os
 import shlex
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterable
 from pathlib import Path
@@ -85,7 +86,15 @@ DEFAULT_INTERVAL = 0.316   # matches the app's observed heartbeat cadence
 # individual lines don't need the pre/post heartbeat sandwich _wrapped_write()
 # uses for a standalone invocation -- see _dispatch_batch_args().
 BATCH_HEARTBEAT_INTERVAL = 0.25   # matches g7ctlc/watcher.py's cadence
-BATCH_NOT_ALLOWED = ("batch", "enter-vendor")
+# REAL BUG, found 2026-09-17 (Astra's bug-sweep): "diag" was missing here.
+# It's handled entirely outside _dispatch()'s chain (in main() itself, not
+# _handle_setting_write/_handle_state_command/_handle_raw), so a batch
+# script line calling it fell through to _dispatch()'s own
+# `raise SystemExit(f"unhandled action {args.action!r}")` -- but dry-run
+# validation (which only checks BATCH_NOT_ALLOWED, never runs _dispatch())
+# approved it as a normal line, so dry-run could say a script was fine and
+# real execution then crash on the exact line dry-run just cleared.
+BATCH_NOT_ALLOWED = ("batch", "enter-vendor", "diag")
 
 
 class _BatchLineError(Exception):
@@ -690,7 +699,22 @@ def _run_batch_lines(sess: VendorSession, lines: Iterable[str], *, line_parser: 
     if every line succeeded."""
     total = ok = 0
     for lineno, raw in enumerate(lines, 1):
-        tokens = shlex.split(raw, comments=True)
+        try:
+            tokens = shlex.split(raw, comments=True)
+        except ValueError as exc:
+            # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps,
+            # independently): shlex.split() used to run OUTSIDE any try
+            # block, so an unmatched quote's ValueError escaped the normal
+            # per-line error handling entirely -- aborting the whole batch
+            # (dry-run and REPL alike) even under --continue-on-error,
+            # bypassing stop/continue policy and the line-numbered report
+            # every other kind of line error already gets. Counted in
+            # `total` (not `ok`), same as a real parse-args failure below.
+            total += 1
+            print(f"line {lineno}: error: {exc}", file=sys.stderr)
+            if not continue_on_error:
+                break
+            continue
         if not tokens:
             continue
         total += 1
@@ -700,13 +724,23 @@ def _run_batch_lines(sess: VendorSession, lines: Iterable[str], *, line_parser: 
             args = line_parser.parse_args(tokens)
             _run_batch_line(sess, args)
             ok += 1
+        except usb.core.USBError:
+            # REAL BUG, found 2026-09-17 (Astra's bug-sweep): usb.core.USBError
+            # is a direct OSError subclass (confirmed via its own __mro__),
+            # so the comment this replaces -- "deliberately NOT caught here...
+            # it propagates" -- was simply false: the broad `except (...,
+            # OSError)` clause below caught a real device disconnect exactly
+            # like an ordinary recoverable file error, and --continue-on-error
+            # then went on to attempt the NEXT command against a session that
+            # was already gone. This clause has to come first and re-raise --
+            # a later except clause never gets a chance to match something an
+            # earlier one already caught, so this is what actually makes the
+            # propagation the old comment only claimed happen.
+            raise
         except (_BatchLineError, ValueError, OSError) as exc:
             print(f"line {lineno}: error: {exc}", file=sys.stderr)
             if not continue_on_error:
                 break
-        # usb.core.USBError is deliberately NOT caught here -- it propagates
-        # to main()'s top-level handler and aborts the whole batch, same as
-        # every other action. A real disconnect can't be "skipped past".
     sess.heartbeat()
     failed = total - ok
     print(f"batch: {ok}/{total} succeeded" + (f", {failed} failed" if failed else ""))
@@ -722,31 +756,89 @@ def _run_batch_repl(sess: VendorSession, line_parser: argparse.ArgumentParser, i
     print("Interactive batch mode -- one continuous session, no per-command handshake.")
     print("Type a command (e.g. 'remap a f12'), 'help' to list subcommands, "
           "'exit' or Ctrl-D to quit.\n")
-    while True:
-        try:
-            raw = input("g7ctl> ")
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return
-        tokens = shlex.split(raw, comments=True)
-        if not tokens:
-            continue
-        if tokens[0] in ("exit", "quit"):
-            return
-        if tokens[0] in ("help", "-h", "--help"):
-            line_parser.print_help()
-            continue
-        sess.heartbeat()
-        try:
-            args = line_parser.parse_args(tokens)
-            _run_batch_line(sess, args)
-        except (_BatchLineError, ValueError, OSError) as exc:
-            print(f"error: {exc}", file=sys.stderr)
-        # A real USBError here still propagates up through main()'s
-        # top-level handler and ends the REPL -- the session is gone either
-        # way, so there's nothing left to keep prompting against.
-        sess.heartbeat()
-        time.sleep(interval)
+
+    # REAL BUG, found 2026-09-17 (Astra's bug-sweep): input() blocks with no
+    # heartbeat running concurrently -- a real, documented session
+    # requirement (see session.py's own module docstring: a write with no
+    # heartbeat before/after gets silently discarded, and the device
+    # reverts to XInput within seconds of heartbeats stopping entirely).
+    # Anyone who pauses more than a couple seconds to think before typing a
+    # command risked the session dying mid-thought. Fixed with a background
+    # thread that keeps heartbeating on the normal cadence while the main
+    # thread blocks in input() -- guarded by a lock shared with every other
+    # session access below, so a heartbeat can never interleave mid-write
+    # with the main thread's own dispatch (VendorSession has no locking of
+    # its own; two threads touching it concurrently with no lock would be a
+    # new, real race, not a fix).
+    stop_heartbeat = threading.Event()
+    session_lock = threading.Lock()
+
+    def _background_heartbeat() -> None:
+        while not stop_heartbeat.wait(interval):
+            with session_lock:
+                if stop_heartbeat.is_set():
+                    return
+                try:
+                    sess.heartbeat()
+                except usb.core.USBError:
+                    # Not this thread's job to report it -- the main
+                    # thread's own next real session call hits the same
+                    # dead session and raises the same way it always has,
+                    # propagating through the normal handling below.
+                    return
+
+    heartbeat_thread = threading.Thread(target=_background_heartbeat, daemon=True)
+    heartbeat_thread.start()
+    try:
+        while True:
+            try:
+                raw = input("g7ctl> ")
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return
+            try:
+                tokens = shlex.split(raw, comments=True)
+            except ValueError as exc:
+                # Same real bug and same fix as _run_batch_lines() -- see
+                # its own comment. The REPL never touched the session for
+                # this input at all, so there's nothing to heartbeat/pace
+                # around; straight back to the next prompt, matching how a
+                # bad subcommand already just prints and continues below.
+                print(f"error: {exc}", file=sys.stderr)
+                continue
+            if not tokens:
+                continue
+            if tokens[0] in ("exit", "quit"):
+                return
+            if tokens[0] in ("help", "-h", "--help"):
+                line_parser.print_help()
+                continue
+            with session_lock:
+                sess.heartbeat()
+                try:
+                    args = line_parser.parse_args(tokens)
+                    _run_batch_line(sess, args)
+                except usb.core.USBError:
+                    # Same real bug and same fix as _run_batch_lines() --
+                    # see its own comment. Must come before the
+                    # OSError-inclusive clause below, since USBError is one.
+                    raise
+                except (_BatchLineError, ValueError, OSError) as exc:
+                    print(f"error: {exc}", file=sys.stderr)
+                # A real USBError now genuinely propagates up through
+                # main()'s top-level handler and ends the REPL -- the
+                # session is gone either way, so there's nothing left to
+                # keep prompting against.
+                sess.heartbeat()
+            time.sleep(interval)
+    finally:
+        # Always stops the background thread on every exit path (EOF,
+        # Ctrl-C, exit/quit, or an exception propagating out) -- a daemon
+        # thread would eventually die with the process either way, but
+        # this stops it heartbeating a session that's already being torn
+        # down by whatever comes after this function returns.
+        stop_heartbeat.set()
+        heartbeat_thread.join(timeout=interval * 2)
 
 
 def _handle_batch(args: argparse.Namespace) -> None:
@@ -760,7 +852,17 @@ def _handle_batch(args: argparse.Namespace) -> None:
         lines = _read_lines(args.path)
         total = ok = 0
         for lineno, raw in enumerate(lines, 1):
-            tokens = shlex.split(raw, comments=True)
+            try:
+                tokens = shlex.split(raw, comments=True)
+            except ValueError as exc:
+                # Same real bug and same fix as _run_batch_lines() -- see
+                # its own comment. Dry-run has no continue_on_error
+                # concept of its own (it always checks every line), so
+                # this just counts and reports, same as any other
+                # rejected line.
+                total += 1
+                print(f"line {lineno}: error: {exc}", file=sys.stderr)
+                continue
             if not tokens:
                 continue
             total += 1

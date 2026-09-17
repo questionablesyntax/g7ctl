@@ -472,6 +472,30 @@ class BatchDryRunTest(unittest.TestCase):
         self.assertIn("'enter-vendor' isn't valid", stderr)
         self.assertIn("'batch' isn't valid", stderr)
 
+    def test_diag_rejected_inside_a_script_by_dry_run_too(self):
+        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): "diag" was
+        # missing from BATCH_NOT_ALLOWED, so dry-run approved it as a
+        # normal line -- but it's handled entirely outside _dispatch()'s
+        # chain, so real execution hit `raise SystemExit(f"unhandled
+        # action {args.action!r}")` on the exact line dry-run just
+        # cleared. Same location and same fix as enter-vendor/batch above.
+        path = self._script(["diag"])
+        code, _stdout, stderr = self._run(path)
+        self.assertNotEqual(code, 0)
+        self.assertIn("'diag' isn't valid", stderr)
+
+    def test_malformed_quoting_is_a_normal_line_error_not_a_crash(self):
+        # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps,
+        # independently): shlex.split() used to run outside any try block,
+        # so an unmatched quote's ValueError escaped normal per-line
+        # handling entirely and aborted the whole dry-run pass instead of
+        # being reported and counted like any other rejected line.
+        path = self._script(['remap a "unterminated', "stick-set left invert_x on"])
+        code, stdout, stderr = self._run(path)
+        self.assertNotEqual(code, 0)
+        self.assertIn("line 1:", stderr)
+        self.assertIn("1/2", stdout)
+
 
 class BatchExecutionTest(unittest.TestCase):
     """Real batch execution (not dry-run) against a faked session -- one
@@ -529,6 +553,18 @@ class BatchExecutionTest(unittest.TestCase):
         # 1 heartbeat before each of 2 lines + 1 final heartbeat = 3.
         self.assertEqual(_CapturingSessionCM.captured.heartbeats, 3)
 
+    def test_diag_is_a_clean_rejection_not_a_crash(self):
+        # The other half of the same fix -- real execution used to hit
+        # _dispatch()'s raise SystemExit(f"unhandled action {args.action!r}")
+        # for a line dry-run had already approved. Now it's the same clean,
+        # reported _BatchLineError every other disallowed action gets.
+        path = self._script(["diag"])
+        code, stdout, stderr = self._run(path)
+        self.assertNotEqual(code, 0)
+        self.assertIn("line 1:", stderr)
+        self.assertIn("'diag' isn't valid", stderr)
+        self.assertIn("0/1", stdout)
+
     def test_default_stops_on_first_error(self):
         path = self._script([
             "vibration-set left_grip 50",
@@ -552,6 +588,60 @@ class BatchExecutionTest(unittest.TestCase):
         self.assertIn("line 2:", stderr)
         self.assertEqual(len(_CapturingSessionCM.captured.payloads), 2)
         self.assertIn("2/3 succeeded", stdout)
+
+    def test_malformed_quoting_respects_continue_on_error(self):
+        # Same real bug as BatchDryRunTest's own version -- see its
+        # comment. Here the consequence is worse: without the fix, the
+        # ValueError aborted the WHOLE batch even with --continue-on-error
+        # explicitly set, contradicting the flag outright.
+        path = self._script([
+            "vibration-set left_grip 50",
+            'remap a "unterminated',
+            "vibration-set right_grip 50",
+        ])
+        code, stdout, stderr = self._run(path, extra_args=["--continue-on-error"])
+        self.assertNotEqual(code, 0)
+        self.assertIn("line 2:", stderr)
+        self.assertEqual(len(_CapturingSessionCM.captured.payloads), 2)
+        self.assertIn("2/3 succeeded", stdout)
+
+    def test_usb_disconnect_aborts_even_with_continue_on_error(self):
+        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): usb.core.USBError
+        # is a direct OSError subclass, so the per-line
+        # `except (_BatchLineError, ValueError, OSError)` clause caught a
+        # real device disconnect exactly like an ordinary recoverable
+        # error, and --continue-on-error went on to attempt the NEXT line
+        # against a session that was already gone -- contradicting the
+        # code's own now-corrected comment claiming USBError "propagates...
+        # same as every other action." This drives main() through a fake
+        # session whose second send_raw() call raises a real USBError, and
+        # confirms the third line never runs even with --continue-on-error.
+        import usb.core
+
+        class _DisconnectsOnSecondWrite(_NoOpSettleSession):
+            def send_raw(self, cmd_byte, payload):
+                if len(self.sent) == 1:
+                    raise usb.core.USBError("simulated disconnect")
+                return super().send_raw(cmd_byte, payload)
+
+        class _DisconnectingSessionCM(_FakeSessionCM):
+            captured = None
+
+            def __init__(self, _dev, via_dongle=False):
+                self.session = _DisconnectsOnSecondWrite()
+                type(self).captured = self.session
+
+        cli_main.VendorSession = _DisconnectingSessionCM
+        path = self._script([
+            "vibration-set left_grip 50",
+            "vibration-set right_grip 50",
+            "vibration-set left_trigger 50",
+        ])
+        code, _stdout, stderr = self._run(path, extra_args=["--continue-on-error"])
+        self.assertNotEqual(code, 0)
+        self.assertIn("USB", stderr)
+        self.assertEqual(len(_DisconnectingSessionCM.captured.payloads), 1,
+                          "the third line must never run -- the session was already gone")
 
 
 class BatchReplTest(unittest.TestCase):
@@ -587,6 +677,37 @@ class BatchReplTest(unittest.TestCase):
 
         self.assertEqual(len(_CapturingSessionCM.captured.payloads), 1)
 
+    def test_a_slow_thinker_still_gets_heartbeats_while_input_blocks(self):
+        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): input() used to
+        # block with no heartbeat running concurrently at all -- a real
+        # session-liveness requirement (see session.py's own module
+        # docstring), not a cosmetic one. Anyone who paused more than a
+        # couple seconds to type a command risked the session dying
+        # mid-thought. This simulates that pause and confirms the
+        # background heartbeat thread actually covers it.
+        import time as time_mod
+
+        sys.argv = ["g7ctl", "batch", "--interval", "0.02"]
+        inputs = iter(["exit"])
+
+        def fake_input(prompt=""):
+            time_mod.sleep(0.2)  # the "slow thinker" -- ~10 heartbeat intervals
+            try:
+                return next(inputs)
+            except StopIteration:
+                raise EOFError() from None
+
+        with mock.patch("builtins.input", side_effect=fake_input), \
+             mock.patch("sys.stdin.isatty", return_value=True), \
+             contextlib.redirect_stdout(io.StringIO()):
+            cli_main.main()
+
+        # Generous lower bound, not an exact count -- real thread timing
+        # jitter, not a fixed clock. Zero (the old behavior) is the only
+        # wrong answer this needs to rule out.
+        self.assertGreaterEqual(_CapturingSessionCM.captured.heartbeats, 3,
+                                 "no heartbeats fired at all while input() blocked")
+
     def test_repl_reports_a_bad_command_and_keeps_going(self):
         sys.argv = ["g7ctl", "batch", "--interval", "0"]
         inputs = iter(["not-a-real-action", "vibration-set left_grip 50", "exit"])
@@ -605,6 +726,72 @@ class BatchReplTest(unittest.TestCase):
 
         self.assertIn("not-a-real-action", stderr.getvalue())
         self.assertEqual(len(_CapturingSessionCM.captured.payloads), 1)
+
+    def test_malformed_quoting_is_reported_and_the_repl_keeps_going(self):
+        # Same real bug as the other two loops' own version -- see
+        # BatchDryRunTest's comment. Without the fix, this crashed the
+        # whole REPL instead of printing an error and re-prompting.
+        sys.argv = ["g7ctl", "batch", "--interval", "0"]
+        inputs = iter(['remap a "unterminated', "vibration-set left_grip 50", "exit"])
+
+        def fake_input(prompt=""):
+            try:
+                return next(inputs)
+            except StopIteration:
+                raise EOFError() from None
+
+        with mock.patch("builtins.input", side_effect=fake_input), \
+             mock.patch("sys.stdin.isatty", return_value=True), \
+             contextlib.redirect_stdout(io.StringIO()), \
+             contextlib.redirect_stderr(io.StringIO()) as stderr:
+            cli_main.main()
+
+        self.assertIn("error:", stderr.getvalue())
+        self.assertEqual(len(_CapturingSessionCM.captured.payloads), 1,
+                          "the REPL must keep going and run the valid line that follows")
+
+    def test_usb_disconnect_ends_the_repl_instead_of_prompting_again(self):
+        # Same real bug and fix as BatchExecutionTest's own version -- see
+        # its comment. The REPL loop has the identical
+        # except (..., OSError) shape, so this confirms it separately
+        # rather than assuming the fix generalizes.
+        import usb.core
+
+        class _DisconnectsOnSecondWrite(_NoOpSettleSession):
+            def send_raw(self, cmd_byte, payload):
+                if len(self.sent) == 1:
+                    raise usb.core.USBError("simulated disconnect")
+                return super().send_raw(cmd_byte, payload)
+
+        class _DisconnectingSessionCM(_FakeSessionCM):
+            captured = None
+
+            def __init__(self, _dev, via_dongle=False):
+                self.session = _DisconnectsOnSecondWrite()
+                type(self).captured = self.session
+
+        cli_main.VendorSession = _DisconnectingSessionCM
+        sys.argv = ["g7ctl", "batch", "--interval", "0"]
+        inputs = iter(["vibration-set left_grip 50", "vibration-set right_grip 50",
+                       "vibration-set left_trigger 50", "exit"])
+
+        def fake_input(prompt=""):
+            try:
+                return next(inputs)
+            except StopIteration:
+                raise EOFError() from None
+
+        with mock.patch("builtins.input", side_effect=fake_input), \
+             mock.patch("sys.stdin.isatty", return_value=True), \
+             contextlib.redirect_stdout(io.StringIO()), \
+             contextlib.redirect_stderr(io.StringIO()) as stderr, \
+             self.assertRaises(SystemExit) as ctx:
+            cli_main.main()
+
+        self.assertNotEqual(ctx.exception.code, 0)
+        self.assertIn("USB", stderr.getvalue())
+        self.assertEqual(len(_DisconnectingSessionCM.captured.payloads), 1,
+                          "the third line must never run -- the session was already gone")
 
 
 if __name__ == "__main__":
