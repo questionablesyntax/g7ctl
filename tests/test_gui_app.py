@@ -75,8 +75,49 @@ class ConfigureLoggingTest(unittest.TestCase):
         self.addCleanup(self._patcher.stop)
 
     def tearDown(self):
+        # REAL BUG, found 2026-09-17 (Sol's bug-sweep): this used to
+        # restore the original handler list without ever closing the
+        # handlers _configure_logging() added during the test -- a
+        # RotatingFileHandler holds a real open file descriptor, so every
+        # test here leaked one. Close only the ones NOT in the original
+        # list (the ones this test run actually added), not the ones that
+        # were already there before setUp() -- those belong to whatever
+        # was running this suite and aren't this test's to close.
+        for handler in logging.root.handlers:
+            if handler not in self._orig_handlers:
+                handler.close()
         logging.root.handlers[:] = self._orig_handlers
         logging.root.setLevel(self._orig_level)
+
+    def test_tear_down_closes_the_handlers_this_test_added(self):
+        # REAL BUG, found 2026-09-17 (Sol's bug-sweep): tearDown() used to
+        # restore the handler list without ever closing the discarded
+        # RotatingFileHandler, leaking a real open file descriptor every
+        # test. addCleanup runs AFTER this class's own tearDown() (LIFO,
+        # registered here), so this checks the file is genuinely closed
+        # post-teardown -- not relying on ResourceWarning's own
+        # non-deterministic garbage-collection timing to prove it.
+        import logging.handlers
+
+        from g7ctlc.app import _configure_logging
+        _configure_logging(verbose=False)
+        # Only the file-backed handler -- StreamHandler(sys.stderr)'s own
+        # close() deliberately never closes real stdio streams (correct
+        # logging-module behavior, confirmed live: the first version of
+        # this test asserted on it too and failed on exactly that stream,
+        # not on the real fd this bug is actually about).
+        file_handlers = [h for h in logging.root.handlers
+                         if h not in self._orig_handlers
+                         and isinstance(h, logging.handlers.RotatingFileHandler)]
+        self.assertTrue(file_handlers, "expected _configure_logging() to add a RotatingFileHandler")
+
+        def _assert_closed():
+            for handler in file_handlers:
+                # FileHandler.close() sets self.stream to None once done --
+                # that alone already confirms it ran; a still-open stream
+                # object (not None) is the actual failure case.
+                self.assertIsNone(handler.stream, f"{handler!r}'s file was never closed")
+        self.addCleanup(_assert_closed)
 
     def test_default_level_is_info(self):
         from g7ctlc.app import _configure_logging
