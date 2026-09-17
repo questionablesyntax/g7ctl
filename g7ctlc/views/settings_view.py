@@ -42,6 +42,10 @@ class SettingsView(QWidget):
         super().__init__(parent)
         self._loading = False
         self._state = None
+        # True once the user has genuinely picked a brightness -- see
+        # _on_edit()'s own comment for why this can't just be "whatever
+        # the combo currently shows."
+        self._brightness_touched = False
         # Modest content today, but QTabWidget sizes the whole main window's
         # minimum height to fit the LARGEST tab page, not just whichever is
         # visible -- wrapped for consistency with every other tab so this
@@ -65,6 +69,7 @@ class SettingsView(QWidget):
             "every other tab in this app."
         )
         self.brightness.currentIndexChanged.connect(self._on_edit)
+        self.brightness.currentIndexChanged.connect(self._mark_brightness_touched)
         form.addRow("LED Brightness", self.brightness)
 
         self.auto_on_off = QCheckBox("Auto On/Off (with docking/undocking)")
@@ -94,10 +99,37 @@ class SettingsView(QWidget):
             self.auto_on_off.setChecked(bool(state.get("dock_auto_on_off")))
         finally:
             self._loading = False
+        # Reset AFTER loading, not before -- a fresh load's own display
+        # selection (however it landed) must never count as "the user
+        # touched it." currentIndexChanged fires during the setCurrentIndex()
+        # above too, but _mark_brightness_touched() already ignores that
+        # under the _loading guard; this reset also covers a stale True
+        # left over from a previous load/edit cycle on this same widget.
+        self._brightness_touched = False
+
+    def _mark_brightness_touched(self, *_args: object) -> None:
+        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): _on_edit() used to
+        # unconditionally re-derive dock_led_brightness from
+        # self.brightness.currentData() on ANY edit, including toggling
+        # auto_on_off, which has nothing to do with brightness. The combo
+        # only offers five coarse stops (_nearest_brightness_index() picks
+        # the closest one for DISPLAY), but pyg7/dock_settings.py and the
+        # CLI accept any 0-100 value -- so an off-scale exact value (e.g.
+        # 43%) got silently rounded to its nearest stop (e.g. 50%) the
+        # moment an unrelated checkbox was toggled, even though the
+        # combo's own tooltip and _nearest_brightness_index()'s own
+        # docstring both promise it stays exact "until this control is
+        # actually edited." This flag is what actually keeps that promise:
+        # only set when brightness's own signal fires for a real reason
+        # (guarded by _loading, same as load()'s own guard elsewhere in
+        # this codebase), not on every edit anywhere in this tab.
+        if not self._loading:
+            self._brightness_touched = True
 
     def _on_edit(self, *_: object) -> None:
         if self._loading or self._state is None:
             return
-        self._state["dock_led_brightness"] = self.brightness.currentData()
+        if self._brightness_touched:
+            self._state["dock_led_brightness"] = self.brightness.currentData()
         self._state["dock_auto_on_off"] = self.auto_on_off.isChecked()
         self.changed.emit()

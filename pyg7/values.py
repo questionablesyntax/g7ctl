@@ -27,12 +27,29 @@ def percent(v: Union[int, str]) -> int:
     return v
 
 
+_TRUE_TOKENS = ("1", "true", "on", "yes")
+_FALSE_TOKENS = ("0", "false", "off", "no")
+
+
 def boolean(v: Union[bool, str]) -> bool:
     """Coerce to bool, accepting the on/off-style strings the CLI passes
-    through verbatim as well as real bools from the GUI."""
+    through verbatim as well as real bools from the GUI.
+
+    REAL BUG, found 2026-09-17 (Sol's bug-sweep): this used to return
+    False for ANY string not in the true set, so a typo ("onn", "flase",
+    or an unrelated word like "banana") silently became a real, wrong
+    write to persistent device config instead of a rejected input.
+    Explicitly checking both token sets and raising for anything else
+    closes that -- exactly the same reasoning percent()/resolve_keycode()
+    already apply to their own inputs."""
     if isinstance(v, bool):
         return v
-    return str(v).lower() in ("1", "true", "on", "yes")
+    s = str(v).lower()
+    if s in _TRUE_TOKENS:
+        return True
+    if s in _FALSE_TOKENS:
+        return False
+    raise ValueError(f"boolean value must be one of {_TRUE_TOKENS + _FALSE_TOKENS}, got {v!r}")
 
 
 def side_offset(side: str, right_offset: int) -> int:

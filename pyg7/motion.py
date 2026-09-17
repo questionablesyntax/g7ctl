@@ -38,6 +38,8 @@ curve's stored points if the block is configured, matching Sticks'
 the way `sticks.SETTING_IDS`/`triggers.SETTING_IDS` do, so writing
 individual points isn't supported yet.
 """
+from typing import Optional
+
 from .buttons import decode_keycode, resolve_keycode
 from .constants import CMD_WRITE, prefix_sticks
 from .curves import CURVE_PRESET_INDEX, CURVE_PRESET_NAMES, decode_curve_points
@@ -212,6 +214,26 @@ def decode_settings(blob: bytes, side: str = "aim") -> dict:
     }
 
 
+def _resolve_keycode_or_unbound(value: Optional[str]) -> int:
+    """resolve_keycode(), but None means "clear this binding" -- encodes as
+    0xFF, the same sentinel decode_settings() above already reads back as
+    unconfigured for both activate_button and every direction setting.
+
+    REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps, independently):
+    set_value() used to call resolve_keycode(value) directly for these two
+    cases, which crashes outright on a bare None (it calls .lower() on its
+    argument) -- so state.py's _motion_steps() worked around that the only
+    way it could without this function, by never calling set_value() with
+    None in the first place (its shared _add() helper unconditionally skips
+    any None value before dispatch). That meant clearing an
+    activate_button or direction binding in the GUI updated the in-memory
+    state correctly but scheduled no write at all -- the old hardware
+    binding stayed live. Fixed here, at the actual encode boundary, so
+    _motion_steps() can stop working around it instead.
+    """
+    return 0xFF if value is None else resolve_keycode(value)
+
+
 def set_value(session: VendorSession, side: str, setting: str, value: SettingValue, profile: int = 1) -> bytes:
     setting = setting.lower()
     if setting not in SETTING_IDS:
@@ -226,7 +248,7 @@ def set_value(session: VendorSession, side: str, setting: str, value: SettingVal
             raise ValueError(f"activate_method must be one of {list(ACTIVATE_METHODS)}")
         payload = prefix + bytes([sid, 0x01, val])
     elif setting == "activate_button":
-        payload = prefix + bytes([sid, 0x01, resolve_keycode(value)])
+        payload = prefix + bytes([sid, 0x01, _resolve_keycode_or_unbound(value)])
     elif setting == "x_axis_output_mode":
         val = X_AXIS_OUTPUT_MODES.get(str(value).lower())
         if val is None:
@@ -256,7 +278,7 @@ def set_value(session: VendorSession, side: str, setting: str, value: SettingVal
             raise ValueError(f"output must be one of {list(OUTPUT_MODES)}")
         payload = prefix + bytes([sid, 0x01, val])
     elif setting in _DIRECTION_SETTINGS:
-        payload = prefix + bytes([sid, 0x01, resolve_keycode(value)])
+        payload = prefix + bytes([sid, 0x01, _resolve_keycode_or_unbound(value)])
     else:
         raise ValueError(f"unhandled setting {setting!r}")
 

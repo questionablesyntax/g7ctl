@@ -636,6 +636,86 @@ class SparseSubsectionTest(unittest.TestCase):
         for _label, write_fn in steps:
             write_fn(FakeSession(bytes(512)))  # must not raise end to end
 
+    def test_clearing_activate_button_schedules_a_real_write(self):
+        # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps,
+        # independently): _add()'s blanket "skip on None" meant clearing
+        # this binding (state -> None, baseline -> a real keycode) never
+        # even reached motion.set_value() -- the old hardware binding
+        # stayed live even though Sync reported success.
+        from .fakes import FakeSession
+        state = state_mod.default_state_dict("test")
+        state["motion"]["aim"]["activate_button"] = None
+        baseline = state_mod.default_state_dict("baseline")
+        baseline["motion"]["aim"]["activate_button"] = "native_l5"
+        steps, _skipped = state_mod._build_steps(state, baseline)
+        labels = [label for label, _fn in steps]
+        self.assertIn("Motion Aim: activate_button=None", labels)
+        for _label, write_fn in steps:
+            write_fn(FakeSession(bytes(512)))  # must not raise end to end
+
+    def test_untouched_activate_button_still_left_at_default_emits_no_write(self):
+        # Guard against the naive fix's own failure mode -- both state AND
+        # baseline are None (never configured on either side), so this
+        # must still skip via the ordinary baseline-diff match.
+        state = state_mod.default_state_dict("test")
+        baseline = state_mod.default_state_dict("baseline")
+        steps, skipped = state_mod._build_steps(state, baseline)
+        labels = [label for label, _fn in steps]
+        self.assertFalse(any("activate_button" in label for label in labels),
+                          f"an untouched, still-unconfigured activate_button should emit no write, got: {labels}")
+        self.assertGreater(skipped, 0)
+
+    def test_clearing_a_direction_binding_schedules_a_real_write(self):
+        from .fakes import FakeSession
+        state = state_mod.default_state_dict("test")
+        state["motion"]["aim"]["output"] = "directional"
+        state["motion"]["aim"]["direction_bindings"] = {
+            "up": None, "down": None, "left": None, "right": None}
+        baseline = state_mod.default_state_dict("baseline")
+        baseline["motion"]["aim"]["direction_bindings"] = {
+            "up": "native_dpad_up", "down": None, "left": None, "right": None}
+        steps, _skipped = state_mod._build_steps(state, baseline)
+        labels = [label for label, _fn in steps]
+        self.assertIn("Motion Aim: direction_bindings.up=None", labels)
+        for _label, write_fn in steps:
+            write_fn(FakeSession(bytes(512)))  # must not raise end to end
+
+    def test_restoring_a_named_curve_preset_does_not_schedule_a_points_write(self):
+        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): a points write is
+        # always whole_block=True and defaults its preset index to Custom
+        # when one isn't passed explicitly -- so scheduling a points write
+        # right after a named-preset write silently undid it. Only
+        # reachable when points are populated alongside a named preset,
+        # which a real device read does (decode_settings() decodes both
+        # unconditionally) even though the GUI itself never produces that
+        # combination. This shapes the state the way a real read of a
+        # "concave"-preset stick would.
+        from .fakes import FakeSession
+        state = state_mod.default_state_dict("test")
+        state["sticks"]["left"]["curve"] = {
+            "preset": "concave", "points": [[10, 20], [30, 40], [50, 60]]}
+        steps, _skipped = state_mod._build_steps(state, baseline=None)
+        labels = [label for label, _fn in steps]
+        self.assertIn("Left Stick: curve=concave", labels)
+        self.assertFalse(any("curve points" in label for label in labels),
+                          f"a named preset's own write already defines the points, got: {labels}")
+        for _label, write_fn in steps:
+            write_fn(FakeSession(bytes(512)))  # must not raise end to end
+
+    def test_restoring_a_custom_curve_still_writes_its_points(self):
+        # The other half of the same fix -- a genuinely Custom curve must
+        # still get its points written; only named presets skip it.
+        from .fakes import FakeSession
+        state = state_mod.default_state_dict("test")
+        state["triggers"]["right"]["curve"] = {
+            "preset": "custom", "points": [[10, 20], [30, 40], [50, 60]]}
+        steps, _skipped = state_mod._build_steps(state, baseline=None)
+        labels = [label for label, _fn in steps]
+        self.assertTrue(any("curve points" in label for label in labels),
+                         f"a genuinely Custom curve must still write its points, got: {labels}")
+        for _label, write_fn in steps:
+            write_fn(FakeSession(bytes(512)))  # must not raise end to end
+
 
 class SaveLoadTest(unittest.TestCase):
     def test_round_trip_through_disk(self):
@@ -656,6 +736,92 @@ class SaveLoadTest(unittest.TestCase):
             path = fh.name
         with self.assertRaises(state_mod.StateError):
             state_mod.save_state(path, state)
+
+    def test_a_malformed_top_level_shape_raises_state_error_not_attribute_error(self):
+        # REAL BUG, found 2026-09-17 (Sol's bug-sweep), reproduced live:
+        # load_state() immediately called data.get(...) inside
+        # _drop_mislabelled_legacy_shift(), before validate_state()'s own
+        # isinstance() check ever ran -- so valid JSON that isn't a dict
+        # raised a raw AttributeError ("'list' object has no attribute
+        # 'get'") instead of the clean StateError every caller (the GUI's
+        # Import, the CLI's --state loader) actually expects from this
+        # function.
+        import json
+        import tempfile
+        for bad_shape in ([], None, "just a string", 42):
+            with self.subTest(bad_shape=bad_shape):
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as fh:
+                    json.dump(bad_shape, fh)
+                    path = fh.name
+                with self.assertRaises(state_mod.StateError):
+                    state_mod.load_state(path)
+
+
+class LegacyShiftStripTest(unittest.TestCase):
+    """Regression coverage for the bug found 2026-09-17: the legacy-Shift
+    stripper used to key off schema_version alone, which stopped meaning
+    "only a pre-0.1.4 read could have produced this" the instant
+    profile_layer_byte() got fixed in the same commit that added the
+    stripper -- silently destroying real Shift bindings on every current
+    Profile 2-4 export/import round trip. Fixed to use updated_at against
+    the real fix commit's own timestamp instead."""
+
+    def _make(self, slot: int, shift: dict, updated_at) -> dict:
+        state = state_mod.default_state_dict("shift-strip-test")
+        state["controller_slot"] = slot
+        state["buttons"]["shift"] = shift
+        if updated_at is not None:
+            state["updated_at"] = updated_at
+        else:
+            del state["updated_at"]
+        return state
+
+    def _round_trip(self, state: dict) -> dict:
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as fh:
+            path = fh.name
+        # Bypass save_state()'s own datetime.now() stamping so the fixture's
+        # deliberately-old/new updated_at survives to disk untouched.
+        with open(path, "w") as f:
+            json.dump(state, f)
+        return state_mod.load_state(path)
+
+    def test_post_fix_export_keeps_its_real_shift_bindings(self):
+        # Matches the real file found live on this machine
+        # (~/Documents/Gamesir G7 Pro/Default2.json): controller_slot=2,
+        # saved two days after the fix commit, real bindings. This is
+        # exactly the case the old code silently destroyed.
+        shift = {"a": "native_a", "l4": "numpad1"}
+        state = self._make(2, shift, "2026-08-09T06:11:26.225437+00:00")
+        loaded = self._round_trip(state)
+        self.assertEqual(loaded["buttons"]["shift"], shift,
+                          "a post-fix export's real Shift bindings must survive a load")
+
+    def test_pre_fix_export_still_gets_stripped(self):
+        # A genuinely poisoned export from before the fix commit -- this
+        # is the ONE case that should still be stripped.
+        shift = {"a": "native_a"}  # really Profile 1's Default layer, mislabelled
+        state = self._make(3, shift, "2026-07-15T00:00:00+00:00")
+        loaded = self._round_trip(state)
+        self.assertEqual(loaded["buttons"]["shift"], {},
+                          "a genuinely pre-fix export must still be stripped")
+
+    def test_export_with_no_updated_at_is_treated_as_unproven_and_stripped(self):
+        # Missing updated_at can't be proven safe, so it keeps the
+        # conservative pre-fix default rather than trusting it by omission.
+        shift = {"a": "native_a"}
+        state = self._make(4, shift, None)
+        loaded = self._round_trip(state)
+        self.assertEqual(loaded["buttons"]["shift"], {},
+                          "an unproven (missing updated_at) export must be stripped, not trusted")
+
+    def test_profile_1_shift_is_never_touched_either_way(self):
+        # The stripper only ever applies to slots 2-4 -- Profile 1's own
+        # Shift section was never mislabelled by the pre-fix bug.
+        shift = {"a": "native_a"}
+        state = self._make(1, shift, "2026-07-01T00:00:00+00:00")
+        loaded = self._round_trip(state)
+        self.assertEqual(loaded["buttons"]["shift"], shift)
 
 
 if __name__ == "__main__":

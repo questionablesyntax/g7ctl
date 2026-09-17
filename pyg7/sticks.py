@@ -161,7 +161,16 @@ def set_value(session: VendorSession, side: str, setting: str, value: SettingVal
     prefix = prefix_sticks(profile)
 
     if setting == "trajectory":
-        val = 0x01 if str(value).lower() == "raw" else 0x00
+        # REAL BUG, found 2026-09-17 (Sol's bug-sweep): this used to
+        # accept exact "raw" and silently treat EVERY other string as
+        # "circle" -- a typo ("rew", "Circl") became a real, wrong write
+        # instead of a rejected input. Only two values exist on the wire
+        # (see decode_settings() above); anything else is a mistake, not
+        # a synonym for circle.
+        trajectory = str(value).lower()
+        if trajectory not in ("raw", "circle"):
+            raise ValueError(f"trajectory must be 'raw' or 'circle', got {value!r}")
+        val = 0x01 if trajectory == "raw" else 0x00
         payload = prefix + bytes([sid, 0x01, val])
     elif setting == "curve":
         payload = prefix + curve_preset_payload(sid, value)

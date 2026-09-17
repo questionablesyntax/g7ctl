@@ -69,6 +69,10 @@ class VibrationView(QWidget):
         super().__init__(parent)
         self._loading = False
         self._state = None
+        # Keys whose slider has genuinely been moved since the last
+        # load_state() -- see _on_edit()'s own comment for why this can't
+        # just be "whatever every slider currently shows."
+        self._sliders_touched: set = set()
         # Modest content today, but QTabWidget sizes the whole main window's
         # minimum height to fit the LARGEST tab page, not just whichever is
         # visible -- wrapped for consistency with every other tab so this
@@ -93,6 +97,7 @@ class VibrationView(QWidget):
                 "detectable vibration."
             )
             slider.valueChanged.connect(self._on_edit)
+            slider.valueChanged.connect(lambda _v, k=key: self._mark_slider_touched(k))
             form.addRow(label, container)
             self.sliders[key] = slider
         outer.addWidget(levels_box)
@@ -143,13 +148,32 @@ class VibrationView(QWidget):
                 check.setChecked(bool(vib.get(key)))
         finally:
             self._loading = False
+        # Reset AFTER loading, not before -- see settings_view.py's
+        # identical fix/comment for the same reasoning.
+        self._sliders_touched = set()
+
+    def _mark_slider_touched(self, key: str) -> None:
+        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): _on_edit() used to
+        # unconditionally re-derive EVERY vibration key from its slider's
+        # CURRENT position on any edit anywhere in this tab -- toggling an
+        # unrelated Force/Sync checkbox (or moving a DIFFERENT slider)
+        # rewrote every other slider's exact loaded value with its nearest
+        # of only five coarse stops, even though _nearest_level_index()'s
+        # own docstring promises an off-scale value "stays exactly what it
+        # was until this control is actually moved." Only the slider whose
+        # own signal fires for a real reason (guarded by _loading) gets
+        # marked -- matches settings_view.py's identical fix for the same
+        # pattern.
+        if not self._loading:
+            self._sliders_touched.add(key)
 
     def _on_edit(self, *_: object) -> None:
         if self._loading or self._state is None:
             return
         vib = self._state["vibration"]
         for key, slider in self.sliders.items():
-            vib[key] = LEVELS[slider.value()]
+            if key in self._sliders_touched:
+                vib[key] = LEVELS[slider.value()]
         for key, check in self.checks.items():
             vib[key] = check.isChecked()
         self.changed.emit()

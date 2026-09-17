@@ -88,6 +88,21 @@ WRITE_POST_HEARTBEATS = 3
 
 
 def _default_stick_settings() -> dict:
+    # output_mode: None, NOT "left_stick" -- real, found 2026-09-17 while
+    # fixing the B2 bug-sweep finding (a real device's factory-default
+    # output_mode decodes to None for BOTH sticks, confirmed via
+    # tests/fixtures/live_read.json's profile3_factory; this used to give
+    # both sides "left_stick" identically, so a brand-new "New State"'s
+    # right stick showed "Left Stick" as its output mode from the moment
+    # it was loaded, never matching real hardware). None flows correctly
+    # through the existing machinery with no other change needed:
+    # _stick_steps()'s output_mode _add() already skips a None value
+    # (there's no wire operation to "clear" it, same reasoning as
+    # invert_x/sensitivity/etc.), validate_state() already accepts None
+    # for this field, and _StickSideWidget's own side-aware display
+    # fallback (state.py's B2 fix, 2026-09-17, same night) shows "Left
+    # Stick"/"Right Stick" correctly for whichever side this loads into,
+    # without writing a spurious value unless the user actually edits it.
     return {
         "trajectory": "circle",
         "curve": {"preset": "standard", "points": None},
@@ -95,7 +110,7 @@ def _default_stick_settings() -> dict:
         "anti_deadzone": {"initial": 0, "max": 100},
         "resolution_bits": 12,
         "advanced_mapping": {
-            "output_mode": "left_stick",
+            "output_mode": None,
             "invert_x": False,
             "invert_y": False,
             "sensitivity": 50,
@@ -459,13 +474,38 @@ def _validate_trigger_settings(s: dict) -> None:
 def load_state(path: str) -> dict:
     with open(path) as f:
         data = json.load(f)
+    # REAL BUG, found 2026-09-17 (Sol's bug-sweep), reproduced live:
+    # _drop_mislabelled_legacy_shift() immediately calls data.get(...) --
+    # valid JSON that isn't a dict (a bare list, null, or a scalar) raised
+    # a raw AttributeError here, before validate_state()'s own
+    # isinstance() check (right below, but too late) ever got a chance to
+    # turn it into a clean StateError. Checked directly, not assumed:
+    # load_state() on a file containing "[]" raised
+    # "'list' object has no attribute 'get'" instead of "state must be a
+    # JSON object". Callers (the GUI's Import, the CLI's --state loader)
+    # only expect StateError from this function; an AttributeError leaking
+    # through was an uncaught crash for either one.
+    if not isinstance(data, dict):
+        raise StateError("state must be a JSON object")
     _drop_mislabelled_legacy_shift(data, path)
     validate_state(data)
     return data
 
 
+# The exact moment profile_layer_byte() was fixed to read the real shared
+# Shift layer for every profile (commit a57cae2, "Shift is one shared
+# layer") -- 2026-08-07T23:03:43-05:00, converted to UTC for a timezone-safe
+# comparison against updated_at (which may carry any offset). This is the
+# real dividing line between "this file's Shift section is Profile 1's
+# Default layer, mislabelled" and "this file's Shift section is the real
+# shared layer" -- see _drop_mislabelled_legacy_shift()'s docstring for why
+# schema_version alone can no longer tell the two apart.
+_SHIFT_FIX_CUTOFF_UTC = datetime(2026, 8, 8, 4, 3, 43, tzinfo=timezone.utc)
+
+
 def _drop_mislabelled_legacy_shift(data: dict, source: str) -> None:
-    """Strip a Shift section that a pre-0.1.4 read got wrong.
+    """Strip a Shift section that a pre-0.1.4 read got wrong -- but only
+    when the file is actually old enough to have been produced by that bug.
 
     Before 0.1.4, reading a profile other than 1 asked for category
     0x06/0x07/0x08, which the firmware answers with Profile 1's *Default*
@@ -478,24 +518,63 @@ def _drop_mislabelled_legacy_shift(data: dict, source: str) -> None:
     file would push Profile 1's Default bindings over the real Shift layer
     that every profile shares.
 
-    Detection is exact rather than heuristic. Only a pre-fix read could put
-    Shift bindings in a non-Profile-1 state, because that is the only code
-    that ever produced them; 0.1.4 wrote {} there, and anything later
-    reads the global layer correctly for every profile. So: schema 1 +
-    controller_slot != 1 + a populated shift section == mislabelled, always.
+    REAL BUG, found 2026-09-17 by an external model bug-sweep (Astra),
+    independently verified and traced further here: this function's own
+    docstring used to claim "detection is exact rather than heuristic...
+    schema 1 + controller_slot != 1 + a populated shift section ==
+    mislabelled, always." That was true for exactly as long as it took to
+    write it -- commit a57cae2 fixed profile_layer_byte() to read the real
+    shared layer correctly for every profile IN THE SAME COMMIT that added
+    this stripper, and SCHEMA_VERSION was never bumped afterward. So from
+    the moment this function shipped, "schema_version == SCHEMA_VERSION"
+    stopped meaning "could only have been produced by the bug" and started
+    meaning "produced by literally any version, bugged or fixed" -- this
+    has been silently destroying real Shift bindings on every Profile 2-4
+    export/import round trip since v0.1.5, all the way through the current
+    release. Confirmed live: a real file already on this machine
+    (~/Documents/Gamesir G7 Pro/Default2.json, controller_slot=2, saved
+    2026-08-09 -- two days after the fix) carries 15 real, correct Shift
+    bindings that this function would have wiped to {} on its next load.
+
+    Fixed by using `updated_at` (present in every export since v0.1.0) as
+    the real distinguishing signal instead of schema_version: a file
+    demonstrably saved at or after the fix commit's own timestamp
+    (_SHIFT_FIX_CUTOFF_UTC) is trusted; only a file with no parseable
+    updated_at, or one saved before that moment, is treated as
+    old-and-poisoned and stripped as before. Known, deliberately accepted
+    imprecision: updated_at reflects SAVE time, not READ time (`_on_export`
+    exports whatever is currently in memory, with no forced re-read first)
+    -- a controller read before the fix but not exported until after it
+    would show a post-fix timestamp while still carrying poisoned data.
+    Narrow (the fix is now 6+ weeks old, and the normal GUI flow reads
+    fresh on every connect) and strictly better than the prior behavior,
+    which struck every current file unconditionally, not just that edge
+    case.
     """
     if data.get("schema_version") != SCHEMA_VERSION:
         return
     slot = data.get("controller_slot")
     shift = (data.get("buttons") or {}).get("shift")
-    if slot in (2, 3, 4) and shift:
-        log.warning(
-            "%s: dropping %d Shift binding(s) recorded for Profile %s by a version before "
-            "0.1.4 -- they are Profile 1's Default layer, read through a category the "
-            "firmware falls back on, and writing them would overwrite the shared Shift "
-            "layer. Re-read the controller to get its real Shift bindings.",
-            source, len(shift), slot)
-        data["buttons"]["shift"] = {}
+    if slot not in (2, 3, 4) or not shift:
+        return
+    saved_at = None
+    raw_updated_at = data.get("updated_at")
+    if raw_updated_at:
+        try:
+            saved_at = datetime.fromisoformat(raw_updated_at)
+            if saved_at.tzinfo is None:
+                saved_at = saved_at.replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            saved_at = None
+    if saved_at is not None and saved_at >= _SHIFT_FIX_CUTOFF_UTC:
+        return  # demonstrably saved after the real fix landed -- trust it
+    log.warning(
+        "%s: dropping %d Shift binding(s) recorded for Profile %s by a version before "
+        "0.1.4 -- they are Profile 1's Default layer, read through a category the "
+        "firmware falls back on, and writing them would overwrite the shared Shift "
+        "layer. Re-read the controller to get its real Shift bindings.",
+        source, len(shift), slot)
+    data["buttons"]["shift"] = {}
 
 
 def save_state(path: str, data: dict) -> None:
@@ -906,9 +985,28 @@ def _stick_steps(side: str, s: dict, baseline: Optional[dict] = None, profile: i
     # Points go after the preset deliberately: selecting a preset rewrites
     # the whole block including the points, so writing them first would be
     # undone by the preset write that follows.
-    _add(_points_key(curve.get("points")), _points_key(baseline_curve.get("points")),
-         f"{label}: curve points={_points_key(curve.get('points'))}",
-         lambda sess, v: sticks.set_value(sess, side, "curve_points", v, profile=profile))
+    #
+    # REAL BUG, found 2026-09-17 (Astra's bug-sweep): a points write is
+    # ALWAYS whole_block=True (write_curve_points()'s own default), and
+    # curve_block_payload() defaults preset_index to Custom whenever one
+    # isn't explicitly passed -- sticks.set_value()'s "curve_points" branch
+    # never passes one. So this write not only followed the preset write,
+    # it silently OVERWROTE it back to Custom every time, even though
+    # curve_preset_payload() (the preset write itself) already sends the
+    # named preset's real shape data in one 10-byte write -- a follow-up
+    # points write is not just redundant for a named preset, it actively
+    # undoes the write right before it. Only reachable with points
+    # actually populated alongside a named preset, which the GUI itself
+    # never produces (curve["points"] is always None unless preset ==
+    # "custom") -- but a real device read does (decode_settings() decodes
+    # both fields unconditionally), which is exactly the restore-a-
+    # snapshot path this was found through. Fixed by only ever scheduling
+    # this write for a genuinely Custom curve; a named preset's own write
+    # already fully defines the block, points included.
+    if curve.get("preset") == "custom":
+        _add(_points_key(curve.get("points")), _points_key(baseline_curve.get("points")),
+             f"{label}: curve points={_points_key(curve.get('points'))}",
+             lambda sess, v: sticks.set_value(sess, side, "curve_points", v, profile=profile))
     # Deadzone/anti-deadzone: re-enabled 2026-07-28 now that sticks.set_value()
     # builds the write's trailing suffix from a live read of the device's own
     # current state (see VendorSession.read_live_suffix()) instead of a stale captured
@@ -992,10 +1090,16 @@ def _trigger_steps(side: str, t: dict, baseline: Optional[dict] = None, profile:
     _add(curve.get("preset"), baseline_curve.get("preset"),
          f"{label}: curve={curve.get('preset')}",
          lambda sess, v: triggers.set_value(sess, side, "curve", v, profile=profile))
-    # After the preset, for the same reason as _stick_steps().
-    _add(_points_key(curve.get("points")), _points_key(baseline_curve.get("points")),
-         f"{label}: curve points={_points_key(curve.get('points'))}",
-         lambda sess, v: triggers.set_value(sess, side, "curve_points", v, profile=profile))
+    # After the preset, for the same reason as _stick_steps() -- including
+    # the same real bug and fix, see its own comment: only ever schedule
+    # this for a genuinely Custom curve, since a named preset's own write
+    # already fully defines the block (including points) and a follow-up
+    # points write would silently overwrite that preset index back to
+    # Custom.
+    if curve.get("preset") == "custom":
+        _add(_points_key(curve.get("points")), _points_key(baseline_curve.get("points")),
+             f"{label}: curve points={_points_key(curve.get('points'))}",
+             lambda sess, v: triggers.set_value(sess, side, "curve_points", v, profile=profile))
     # Deadzone/anti-deadzone: re-enabled 2026-07-28 now that triggers.set_value()
     # builds the write's trailing suffix from a live, side-aware read of the
     # device's own current state (see VendorSession.read_live_suffix()) instead of a
@@ -1027,15 +1131,49 @@ def _motion_steps(side: str, s: dict, baseline: Optional[dict] = None, profile: 
     baseline-diffing approach. `side` is "aim" or "tilt"; `invert_roll` is
     skipped entirely on Tilt (see motion.py's module docstring -- Tilt has
     no equivalent control, and motion.set_value() raises if asked)."""
+    has_baseline = baseline is not None  # captured before the collapse below --
+    # see _add()'s allow_none branch for why this has to survive separately
+    # from "this field's own baseline value happens to be None."
     baseline = baseline or {}
     steps = []
     skipped = 0
     label = f"Motion {side.capitalize()}"
 
-    def _add(value, baseline_value, write_label, fn):
-        """See _stick_steps()'s `_add()` docstring -- same fix, same reason."""
+    def _add(value, baseline_value, write_label, fn, allow_none=False):
+        """See _stick_steps()'s `_add()` docstring -- same fix, same reason.
+
+        `allow_none`, added 2026-09-17 (real bug, found by Astra and Sol's
+        bug-sweeps independently): every OTHER field here genuinely has no
+        meaningful None-as-a-real-value case (an unconfigured
+        activate_method/output/etc. is a real, distinct value on the
+        wire), so skipping None unconditionally was correct for them. But
+        clearing an activate_button or a direction binding is a real user
+        action with a real wire encoding (0xFF, see
+        motion.py's _resolve_keycode_or_unbound()) -- the OLD blanket skip
+        meant motion.set_value() never even got called for that case, so
+        clearing a binding in the GUI updated the in-memory state but
+        scheduled no write at all. Only the two call sites that actually
+        need this pass allow_none=True; every other field's behavior here
+        is unchanged.
+
+        Real regression, caught by this project's own existing
+        test_without_baseline_everything_is_written before it shipped:
+        activate_button's genuine default IS None (_default_motion_
+        settings()), and a missing baseline ALSO reads as None via
+        baseline.get(...) -- so a naive `baseline_value == value` check
+        would count a truly-baseline-less "still at its own default"
+        state as a matched-baseline skip, breaking the declared-state
+        model's own invariant that nothing is silently skipped when there
+        is nothing real to diff against. `has_baseline` (captured before
+        baseline collapses to {}) distinguishes the two: no real baseline
+        at all means "declare it," matching every other field's behavior
+        in that case.
+        """
         nonlocal skipped
-        if value is None:
+        if value is None and not allow_none:
+            return
+        if allow_none and value is None and not has_baseline:
+            steps.append((write_label, lambda sess, _fn=fn, _v=value: _fn(sess, _v)))
             return
         if baseline_value == value:
             skipped += 1
@@ -1047,7 +1185,8 @@ def _motion_steps(side: str, s: dict, baseline: Optional[dict] = None, profile: 
          lambda sess, v: motion.set_value(sess, side, "activate_method", v, profile=profile))
     _add(s.get("activate_button"), baseline.get("activate_button"),
          f"{label}: activate_button={s.get('activate_button')}",
-         lambda sess, v: motion.set_value(sess, side, "activate_button", v, profile=profile))
+         lambda sess, v: motion.set_value(sess, side, "activate_button", v, profile=profile),
+         allow_none=True)
     _add(s.get("x_axis_output_mode"), baseline.get("x_axis_output_mode"),
          f"{label}: x_axis_output_mode={s.get('x_axis_output_mode')}",
          lambda sess, v: motion.set_value(sess, side, "x_axis_output_mode", v, profile=profile))
@@ -1099,7 +1238,8 @@ def _motion_steps(side: str, s: dict, baseline: Optional[dict] = None, profile: 
         setting_name = f"direction_{zone}"
         _add(db.get(zone), baseline_db.get(zone),
              f"{label}: direction_bindings.{zone}={db.get(zone)}",
-             lambda sess, v, sn=setting_name: motion.set_value(sess, side, sn, v, profile=profile))
+             lambda sess, v, sn=setting_name: motion.set_value(sess, side, sn, v, profile=profile),
+             allow_none=True)
     return steps, skipped
 
 

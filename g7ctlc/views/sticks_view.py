@@ -41,7 +41,25 @@ OUTPUT_MODE_OPTIONS = [
 
 
 class _StickSideWidget(CategorySideWidget):
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, side: str, parent: Optional[QWidget] = None) -> None:
+        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): this widget used
+        # to have no idea which side it represented at all, and
+        # _load_fields()'s output_mode fallback was hardcoded to
+        # "left_stick" unconditionally -- correct for the left instance,
+        # wrong for the right one. Since SticksView._on_edit() sweeps BOTH
+        # side widgets' save_into() on any single edit (matching this
+        # codebase's general "any edit re-derives the whole section"
+        # pattern), editing only the left stick still called save_into() on
+        # the right widget too, which read back its currently-DISPLAYED
+        # (wrongly-defaulted) output_mode -- so a real
+        # "Right Stick: output_mode=left_stick" write got scheduled from an
+        # edit that never touched the right stick at all. `side` lets the
+        # fallback be correct for whichever instance this is.
+        self._side = side
+        # True once the user has genuinely picked an output_mode -- see
+        # save_into()'s own comment for why this can't just be "whatever
+        # the combo currently shows."
+        self._output_mode_configured = False
         super().__init__(parent)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(14, 12, 14, 12)
@@ -186,6 +204,7 @@ class _StickSideWidget(CategorySideWidget):
             w.toggled.connect(self._emit_changed)
         self.output_mode.currentIndexChanged.connect(self._update_visibility)
         self.output_mode.currentIndexChanged.connect(self._emit_changed)
+        self.output_mode.currentIndexChanged.connect(self._mark_output_mode_configured)
 
     def _update_curve_points_enabled(self) -> None:
         custom = self.curve.currentText() == "custom"
@@ -197,7 +216,21 @@ class _StickSideWidget(CategorySideWidget):
             seed = preset_points(self._last_preset) or preset_points("standard")
             self.curve_points.load(seed)
         if not custom:
+            # REAL BUG, found 2026-09-17 (Astra's bug-sweep): this branch
+            # used to only update _last_preset bookkeeping -- switching
+            # between two NAMED presets (e.g. Standard -> Concave) never
+            # touched curve_points/curve_editor at all, so the graph kept
+            # showing whatever shape was last displayed while the combo
+            # correctly said "Concave." A user who then started
+            # customizing was actually editing the stale, wrong points.
+            # Reload to the NEWLY selected preset's real shape every time
+            # -- load() doesn't emit its own `changed` (blockSignals), so
+            # this can't loop back into save_into() before _emit_changed
+            # fires next on this same signal (connection order, see the
+            # comment above this one).
             self._last_preset = self.curve.currentText()
+            self.curve_points.load(preset_points(self._last_preset))
+            self._sync_curve_editor()
         self.curve_points.set_points_enabled(custom)
         self._sync_curve_editor()
     # --- graphical curve editor ------------------------------------------
@@ -249,9 +282,18 @@ class _StickSideWidget(CategorySideWidget):
         self.resolution_bits.setValue(side_data.get("resolution_bits") or 12)
 
         am = side_data.get("advanced_mapping") or {}
-        idx = self.output_mode.findData(am.get("output_mode") or "left_stick")
-        # Index 0 is "left_stick" -- the confirmed factory default.
+        # Side-aware fallback -- see __init__'s comment for the bug this
+        # fixes. The confirmed factory default is "this stick controls
+        # itself", not universally "left_stick". The combo needs SOME item
+        # selected (it can't visually show "None"), but that's a display
+        # decision only -- _output_mode_configured (set right after, and
+        # updated only by a genuine user edit via
+        # _mark_output_mode_configured) is what save_into() actually
+        # trusts, so this fallback never leaks into a real write on its own.
+        default_output_mode = f"{self._side}_stick"
+        idx = self.output_mode.findData(am.get("output_mode") or default_output_mode)
         self.output_mode.setCurrentIndex(idx if idx >= 0 else 0)
+        self._output_mode_configured = am.get("output_mode") is not None
         self.invert_x.setChecked(bool(am.get("invert_x")))
         self.invert_y.setChecked(bool(am.get("invert_y")))
         self.sensitivity.setValue(am.get("sensitivity") if am.get("sensitivity") is not None else 50)
@@ -265,6 +307,31 @@ class _StickSideWidget(CategorySideWidget):
         self._update_visibility()
         self._sync_curve_editor()
 
+    def _mark_output_mode_configured(self, *_args: object) -> None:
+        # REAL BUG, found 2026-09-17 (Astra's bug-sweep), root cause traced
+        # further here after the first, insufficient fix attempt: making
+        # the DISPLAY fallback side-aware (right stick shows "right_stick"
+        # instead of "left_stick" when unconfigured) stopped the WRONG
+        # value from being written, but not the write itself -- save_into()
+        # unconditionally read back self.output_mode.currentData(), which
+        # is a display concern, and stored whatever that happened to be
+        # even when nothing about output_mode was ever actually touched.
+        # SticksView._on_edit() sweeps BOTH side widgets' save_into() on
+        # any single edit anywhere (this codebase's general pattern), so
+        # editing the left stick's sensitivity still converted the right
+        # stick's genuinely-unconfigured (None) output_mode into a real,
+        # concrete stored value -- just now a semantically-neutral one
+        # instead of a wrong-side one. Still a real, unrequested write.
+        #
+        # This flag is the actual fix: it only becomes True when THIS
+        # combo's own index changes for a real reason, guarded by the same
+        # `_loading` flag load() already uses -- so a programmatic
+        # setCurrentIndex() during _load_fields() never sets it, and a
+        # genuine user selection always does. save_into() trusts this flag,
+        # not the combo's raw display value.
+        if not self._loading:
+            self._output_mode_configured = True
+
     def save_into(self, side_data: dict) -> None:
         side_data["trajectory"] = self.trajectory.currentText()
         # Merge rather than replace: a plain assignment here dropped the
@@ -277,7 +344,7 @@ class _StickSideWidget(CategorySideWidget):
         side_data["anti_deadzone"] = {"initial": self.adz_initial.value(), "max": self.adz_max.value()}
         side_data["resolution_bits"] = self.resolution_bits.value()
         am = side_data.setdefault("advanced_mapping", {})
-        am["output_mode"] = self.output_mode.currentData()
+        am["output_mode"] = self.output_mode.currentData() if self._output_mode_configured else None
         am["invert_x"] = self.invert_x.isChecked()
         am["invert_y"] = self.invert_y.isChecked()
         am["sensitivity"] = self.sensitivity.value()
@@ -297,7 +364,7 @@ class SticksView(QWidget):
         self._state = None
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
-        self.sides = {"left": _StickSideWidget(), "right": _StickSideWidget()}
+        self.sides = {"left": _StickSideWidget("left"), "right": _StickSideWidget("right")}
         for side, widget in self.sides.items():
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)

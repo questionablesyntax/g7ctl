@@ -22,6 +22,7 @@ from pyg7 import (
     report_rate,
     sticks,
     triggers,
+    values,
     vibration,
 )
 from pyg7.constants import CMD_WRITE, prefix_sticks, prefix_triggers_vibration
@@ -294,6 +295,16 @@ class StickWriteTest(unittest.TestCase):
             sess = FakeSession()
             sticks.set_value(sess, "left", "trajectory", value, profile=1)
             self.assertEqual(sess.only_payload()[-1], expected)
+
+    def test_unknown_trajectory_is_rejected_not_silently_circle(self):
+        # REAL BUG, found 2026-09-17 (Sol's bug-sweep): this used to treat
+        # ANY string that wasn't exactly "raw" as "circle" -- a typo
+        # ("rew", "Circl") became a real, wrong write instead of a
+        # rejected input.
+        for typo in ("rew", "Circl", "banana", ""):
+            with self.subTest(typo=typo):
+                with self.assertRaises(ValueError):
+                    sticks.set_value(FakeSession(), "left", "trajectory", typo, profile=1)
 
     def test_output_mode_encoding(self):
         sess = FakeSession()
@@ -578,6 +589,24 @@ class MotionWriteTest(unittest.TestCase):
         motion.set_value(sess, "aim", "activate_button", "native_l5", profile=1)
         self.assertEqual(sess.only_payload()[-1], 0x1F)
 
+    def test_clearing_activate_button_encodes_the_unbound_sentinel(self):
+        # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps,
+        # independently): set_value() used to call resolve_keycode(value)
+        # directly, which crashes on a bare None (it calls .lower() on its
+        # argument). state.py's _motion_steps() worked around that by
+        # never calling set_value() with None at all -- so clearing this
+        # binding in the GUI updated in-memory state but scheduled no
+        # write. 0xFF is the same sentinel decode_settings() already reads
+        # back as unconfigured (motion.py:196-197).
+        sess = FakeSession()
+        motion.set_value(sess, "aim", "activate_button", None, profile=1)
+        self.assertEqual(sess.only_payload()[-1], 0xFF)
+
+    def test_clearing_a_direction_binding_encodes_the_unbound_sentinel(self):
+        sess = FakeSession()
+        motion.set_value(sess, "aim", "direction_up", None, profile=1)
+        self.assertEqual(sess.only_payload()[-1], 0xFF)
+
     def test_direction_bindings_are_four_independent_writes_not_bulk(self):
         # Unlike sticks.py's direction_bindings (one 5-byte bulk write),
         # Motion's four directions are four separate single-byte settings --
@@ -649,6 +678,16 @@ class DpadOptionsTest(unittest.TestCase):
         sess = FakeSession()
         dpad_options.set_diagonal_lock(sess, "off", profile=1)
         self.assertEqual(sess.only_payload()[-1], 0x00)
+
+    def test_diagonal_lock_rejects_a_typo_instead_of_silently_writing_false(self):
+        # REAL BUG, found 2026-09-17 (Sol's bug-sweep): values.boolean()
+        # used to return False for ANY string not in the true set -- a
+        # typo'd "flase"/"onn" (or an unrelated word) became a real, wrong
+        # write to persistent device config instead of a rejected input.
+        for typo in ("flase", "onn", "banana"):
+            with self.subTest(typo=typo):
+                with self.assertRaises(ValueError):
+                    dpad_options.set_diagonal_lock(FakeSession(), typo, profile=1)
 
     def test_swap_stick_dpad_accepts_the_cli_off_string(self):
         sess = FakeSession()
@@ -950,3 +989,30 @@ class ContinuousTriggerTest(unittest.TestCase):
         decoded = buttons.decode_continuous_triggers(bytes(0x100))
         named = [s for s in buttons.BUTTON_TABLE_SLOTS if s]
         self.assertEqual(sorted(decoded), sorted(named))
+
+
+class BooleanCoercionTest(unittest.TestCase):
+    """values.boolean() -- shared by every flag setting across sticks,
+    triggers, dock_settings, dpad_options, motion. See
+    test_diagonal_lock_rejects_a_typo_instead_of_silently_writing_false
+    above for the same fix confirmed through a real category module."""
+
+    def test_real_bools_pass_through(self):
+        self.assertTrue(values.boolean(True))
+        self.assertFalse(values.boolean(False))
+
+    def test_every_true_token(self):
+        for token in ("1", "true", "on", "yes", "TRUE", "On"):
+            with self.subTest(token=token):
+                self.assertTrue(values.boolean(token))
+
+    def test_every_false_token(self):
+        for token in ("0", "false", "off", "no", "FALSE", "Off"):
+            with self.subTest(token=token):
+                self.assertFalse(values.boolean(token))
+
+    def test_an_unrecognized_string_is_rejected_not_coerced_to_false(self):
+        for typo in ("flase", "onn", "banana", ""):
+            with self.subTest(typo=typo):
+                with self.assertRaises(ValueError):
+                    values.boolean(typo)

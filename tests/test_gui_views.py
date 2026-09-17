@@ -120,6 +120,91 @@ class SticksViewRoundTripTest(unittest.TestCase):
         self.assertTrue(left.overlap_area.isHidden())
         self.assertTrue(left.direction_box.isHidden())
 
+    def test_editing_left_stick_does_not_remap_right_stick_output(self):
+        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): _StickSideWidget
+        # had no idea which side it represented, so its output_mode display
+        # fallback for an unconfigured (None) value was hardcoded to
+        # "left_stick" for BOTH instances. SticksView._on_edit() sweeps
+        # BOTH side widgets' save_into() on any single edit -- so touching
+        # only the left stick still read back the right widget's currently-
+        # displayed (wrongly-defaulted) output_mode and wrote a real
+        # "Right Stick: output_mode=left_stick" step. This mirrors a real
+        # device read (both sticks genuinely unconfigured, output_mode=None
+        # -- confirmed against tests/fixtures/live_read.json's
+        # profile3_factory) round-tripped through the GUI.
+        from g7ctlc.views.sticks_view import SticksView
+        state = state_mod.default_state_dict("test")
+        state["sticks"]["left"]["advanced_mapping"]["output_mode"] = None
+        state["sticks"]["right"]["advanced_mapping"]["output_mode"] = None
+        view = SticksView()
+        view.load_state(state)
+
+        # Edit ONLY the left stick's sensitivity -- a field with nothing to
+        # do with output_mode at all.
+        view.sides["left"].sensitivity.setValue(77)
+
+        self.assertIsNone(
+            state["sticks"]["right"]["advanced_mapping"]["output_mode"],
+            "editing the left stick must not remap the right stick's output_mode")
+        self.assertIsNone(
+            state["sticks"]["left"]["advanced_mapping"]["output_mode"],
+            "an untouched field on the same widget must not gain a value either")
+
+    def test_switching_between_named_presets_refreshes_the_displayed_points(self):
+        # REAL BUG, found 2026-09-17 (Astra's bug-sweep):
+        # _update_curve_points_enabled() used to only update _last_preset
+        # bookkeeping when switching between two NAMED presets -- the
+        # combo correctly showed "Concave" but curve_points/curve_editor
+        # kept displaying Standard's shape, and a user who then started
+        # customizing was actually editing those stale, wrong points.
+        from g7ctlc.views.sticks_view import SticksView
+        from pyg7.curves import preset_points
+        state = state_mod.default_state_dict("test")
+        view = SticksView()
+        view.load_state(state)
+        left = view.sides["left"]
+
+        left.curve.setCurrentIndex(left.curve.findText("standard"))
+        self.assertEqual(left.curve_points.points(), preset_points("standard"))
+
+        left.curve.setCurrentIndex(left.curve.findText("concave"))
+        self.assertEqual(left.curve_points.points(), preset_points("concave"),
+                          "switching to a new named preset must refresh the displayed points")
+
+        # Entering Custom next must preserve what's now actually on screen
+        # (Concave's shape), not silently fall back to a stale seed.
+        left.curve.setCurrentIndex(left.curve.findText("custom"))
+        self.assertEqual(left.curve_points.points(), preset_points("concave"))
+
+    def test_a_brand_new_state_defaults_both_sticks_output_mode_to_unconfigured(self):
+        # REAL BUG, found 2026-09-17 (flagged while fixing the B2
+        # bug-sweep finding, same night, not part of either model's
+        # report): _default_stick_settings() used to hardcode
+        # "output_mode": "left_stick" for BOTH sides identically, so a
+        # brand-new "New State" (never read from a device) showed the
+        # RIGHT stick's Advanced Mapping Output Mode as "Left Stick" from
+        # the moment it was loaded -- before any edit, and never matching
+        # what a real device's factory-default actually decodes to (None
+        # for both sticks, confirmed via tests/fixtures/live_read.json's
+        # profile3_factory).
+        from g7ctlc.views.sticks_view import SticksView
+        state = state_mod.default_state_dict("brand new")
+        self.assertIsNone(state["sticks"]["left"]["advanced_mapping"]["output_mode"])
+        self.assertIsNone(state["sticks"]["right"]["advanced_mapping"]["output_mode"])
+
+        view = SticksView()
+        view.load_state(state)
+        # Side-aware display fallback (B2's own fix) shows the correct
+        # per-side default -- confirms this doesn't just leave the field
+        # None in state, it displays sensibly too, without writing
+        # anything until a real edit happens.
+        self.assertEqual(view.sides["left"].output_mode.currentData(), "left_stick")
+        self.assertEqual(view.sides["right"].output_mode.currentData(), "right_stick")
+        out = {"advanced_mapping": {}}
+        view.sides["right"].save_into(out)
+        self.assertIsNone(out["advanced_mapping"]["output_mode"],
+                          "an unconfigured stick must not save a spurious display value")
+
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
 class TriggersViewRoundTripTest(unittest.TestCase):
@@ -198,8 +283,37 @@ class VibrationViewRoundTripTest(unittest.TestCase):
         self.assertEqual(view.sliders["left_grip"].value(), 2)  # index of 50 in LEVELS
         self.assertEqual(state["vibration"]["left_grip"], 43, "load_state() must not rewrite the value it was given")
 
-        view._on_edit()  # a genuine edit now DOES normalize it
+        # Corrected 2026-09-17 (real bug, found by Astra's bug-sweep): this
+        # used to call view._on_edit() directly and assert THAT alone
+        # normalizes the value -- but _on_edit() firing at all used to be
+        # treated as equivalent to "the slider was touched," which is
+        # exactly the bug (toggling an unrelated Force/Sync flag also
+        # fires _on_edit(), and used to round every slider along with it).
+        # Actually moving the slider is what should trigger normalization
+        # now -- setValue() to the SAME index is a Qt no-op (no signal
+        # fires), so this moves away and back to land a real
+        # valueChanged. See test_untouched_off_scale_value_survives_an_
+        # unrelated_edit below for the case this really guards against.
+        view.sliders["left_grip"].setValue(0)
+        view.sliders["left_grip"].setValue(2)
         self.assertEqual(state["vibration"]["left_grip"], 50)
+
+    def test_untouched_off_scale_value_survives_an_unrelated_edit(self):
+        # The actual bug: toggling a Force/Sync checkbox (or moving a
+        # DIFFERENT slider) used to re-derive EVERY vibration key from its
+        # slider's current position, silently rounding an off-scale value
+        # someone else set even though nothing about it was touched.
+        from g7ctlc.views.vibration_view import VibrationView
+        state = state_mod.default_state_dict("test")
+        state["vibration"]["left_grip"] = 43  # nearest stop is 50, must stay 43
+        view = VibrationView()
+        view.load_state(state)
+
+        view.checks["right_trigger_force"].setChecked(True)  # unrelated edit
+
+        self.assertEqual(state["vibration"]["left_grip"], 43,
+                          "an untouched slider's exact value must survive an unrelated edit")
+        self.assertTrue(state["vibration"]["right_trigger_force"])  # the real edit still landed
 
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
@@ -239,8 +353,31 @@ class SettingsViewRoundTripTest(unittest.TestCase):
         self.assertEqual(view.brightness.currentIndex(), 0)  # index of 0% in BRIGHTNESS_OPTIONS
         self.assertEqual(state["dock_led_brightness"], 10, "load_state() must not rewrite the value it was given")
 
-        view._on_edit()  # a genuine edit now DOES normalize it
+        # Corrected 2026-09-17 -- same correction and same reasoning as
+        # vibration_view.py's equivalent test; see its own comment.
+        # setCurrentIndex() to the SAME index is a Qt no-op (no signal
+        # fires), so this moves away and back to land a real
+        # currentIndexChanged.
+        view.brightness.setCurrentIndex(1)
+        view.brightness.setCurrentIndex(0)
         self.assertEqual(state["dock_led_brightness"], 0)
+
+    def test_untouched_off_scale_brightness_survives_an_unrelated_edit(self):
+        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): toggling
+        # auto_on_off used to re-derive dock_led_brightness from the
+        # combo's current (coarse, nearest-stop) selection too, silently
+        # rounding an off-scale exact value even though nothing about
+        # brightness was touched.
+        from g7ctlc.views.settings_view import SettingsView
+        state = state_mod.default_state_dict("test")
+        state["dock_led_brightness"] = 43  # nearest stop is 50, must stay 43
+        view = SettingsView()
+        view.load_state(state)
+
+        view.auto_on_off.setChecked(not view.auto_on_off.isChecked())  # unrelated edit
+
+        self.assertEqual(state["dock_led_brightness"], 43,
+                          "an untouched brightness value must survive an unrelated edit")
 
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
