@@ -263,10 +263,33 @@ class ButtonsView(QWidget):
         for (button_id, layer), combo in self._combos.items():
             value = combo.currentData()
             layer_dict = self._state["buttons"].setdefault(layer, {})
-            if value in (None, "__header__"):
-                layer_dict.pop(button_id, None)
-            else:
-                layer_dict[button_id] = value
+            if value == "__header__":
+                # Defensive only -- header rows have ItemIsEnabled cleared
+                # (see widgets.py's make_keycode_combo()), so currentData()
+                # should never actually return this via normal interaction.
+                # If it somehow does, leave this button's existing entry
+                # alone rather than either committing a bogus value or
+                # wiping a real one.
+                continue
+            # value is a real keycode name, or None for "(Default)" -- store
+            # it explicitly either way, never pop the key.
+            #
+            # REAL BUG, found 2026-09-17 (both Astra and Sol's bug-sweeps,
+            # independently): this used to pop the key on Default, so
+            # _build_steps() (which only visits keys that EXIST in the
+            # dict) never saw the reset at all and scheduled no unbind() --
+            # the old hardware binding stayed live even though the GUI
+            # showed "(Default)" and Sync reported success. Storing an
+            # explicit None instead works cleanly with _build_steps()'s
+            # existing baseline-diff logic without any change there:
+            # decode_button_table() (the read path that produces both a
+            # fresh device read AND the sync baseline) already returns
+            # None for every genuinely-unconfigured slot, not a missing
+            # key -- so None-vs-None still skips via baseline diffing
+            # (no wasted write for a button that was already Default), and
+            # a real-value-to-None transition now correctly falls through
+            # to _build_steps()'s "if keycode_name is None: unbind" branch.
+            layer_dict[button_id] = value
         continuous = self._state.setdefault("continuous_trigger", {})
         for button_id, check in self._continuous.items():
             continuous[button_id] = check.isChecked()

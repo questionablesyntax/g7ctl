@@ -87,12 +87,67 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
             self.assertEqual(state["buttons"]["default"].get(button), expected,
                              f"{button} lost its unnamed keycode")
 
-    def test_deliberate_unbind_still_works(self):
-        # The flip side: selecting "(Unbound)" must genuinely clear it.
+    def test_deliberate_default_reset_stores_explicit_none_not_a_missing_key(self):
+        # The flip side: selecting "(Default)" must genuinely register as a
+        # reset, not just look like one.
+        #
+        # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps,
+        # independently): this test used to assert only
+        # `assertIsNone(state["buttons"]["default"].get("a"))`, which passes
+        # identically whether "a" is present with value None OR missing from
+        # the dict entirely -- so it kept passing right through the actual
+        # bug (ButtonsView._on_edit() popped the key on Default instead of
+        # storing None), masking it instead of catching it. Strengthened to
+        # assert key presence, which the old buggy code fails and the fix
+        # passes.
         view, state = self._view_with({"a": "f11"})
         combo = view._combos[("a", "default")]
         combo.setCurrentIndex(combo.findData(None))
-        self.assertIsNone(state["buttons"]["default"].get("a"))
+        self.assertIn("a", state["buttons"]["default"],
+                       "Default must store an explicit reset, not remove the key")
+        self.assertIsNone(state["buttons"]["default"]["a"])
+
+    def test_default_reset_emits_a_real_unbind_write(self):
+        # The actual end-to-end consequence of the bug above: without an
+        # explicit None in the state dict, _build_steps() -- which only
+        # visits keys that exist -- never saw the reset and scheduled no
+        # unbind() at all, so the old hardware binding stayed live even
+        # though Sync reported success.
+        from pyg7 import state as state_mod
+        view, state = self._view_with({"a": "f11"})
+        combo = view._combos[("a", "default")]
+        combo.setCurrentIndex(combo.findData(None))
+        # A real device baseline where "a" was previously bound to f11 --
+        # decode_button_table()'s real shape, not a synthetic shortcut.
+        baseline = state_mod.default_state_dict("baseline")
+        baseline["buttons"]["default"]["a"] = "f11"
+        steps, _skipped = state_mod._build_steps(state, baseline)
+        labels = [label for label, _fn in steps]
+        self.assertTrue(any("unbind" in label.lower() for label in labels),
+                         f"expected an unbind step for button 'a', got: {labels}")
+
+    def test_button_left_at_default_the_whole_time_emits_no_write(self):
+        # Guard against the naive fix's own failure mode: since _on_edit()
+        # sweeps EVERY combo on any single edit, always storing an explicit
+        # None must not turn every already-Default button into a real write
+        # every time -- that would flood every sync with redundant,
+        # heartbeat-paced writes for buttons nobody touched. Confirms
+        # _build_steps()'s existing baseline-diff logic (None-vs-None still
+        # skips) actually protects against this once "a" is edited.
+        from pyg7 import state as state_mod
+        view, state = self._view_with({"a": "f11"})
+        combo = view._combos[("a", "default")]
+        combo.setCurrentIndex(combo.findData("f12"))  # edit a DIFFERENT value on "a"
+        # "b" was never configured on this device either side -- both state
+        # and baseline should agree it's None, matching decode_button_table()'s
+        # real shape (an unconfigured slot decodes to None, not a missing key).
+        baseline = state_mod.default_state_dict("baseline")
+        baseline["buttons"]["default"]["a"] = "f11"
+        baseline["buttons"]["default"]["b"] = None
+        steps, _skipped = state_mod._build_steps(state, baseline)
+        labels = [label for label, _fn in steps]
+        self.assertFalse(any("Button b " in label for label in labels),
+                          f"button 'b' was never touched and should generate no write, got: {labels}")
 
     def test_every_known_button_has_a_row(self):
         from pyg7.buttons import KNOWN_BUTTON_IDS
