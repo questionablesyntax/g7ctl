@@ -200,7 +200,25 @@ class VendorSession:
         if self.dev.is_kernel_driver_active(IFACE):
             self.dev.detach_kernel_driver(IFACE)
             self._detached = True
-        usb.util.claim_interface(self.dev, IFACE)
+        try:
+            usb.util.claim_interface(self.dev, IFACE)
+        except Exception:
+            # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps,
+            # independently): claim_interface() used to sit outside any
+            # try/finally, and __enter__ raising means __exit__ is NEVER
+            # called (that's how `with` works) -- so a failed claim right
+            # after a successful detach left the kernel driver detached
+            # with nothing to ever reattach it. The controller stayed
+            # unavailable to xpad/usbhid until a manual replug. Rolling
+            # back has to happen here, inside __enter__ itself, before
+            # re-raising -- there's no __exit__ to do it for us.
+            if self._detached:
+                try:
+                    self.dev.attach_kernel_driver(IFACE)
+                    self._detached = False
+                except Exception as e:
+                    log.debug("attach_kernel_driver failed during claim-failure rollback: %s", e)
+            raise
         self._claimed = True
         return self
 
@@ -395,9 +413,17 @@ class VendorSession:
         self.send_raw(CMD_READ, req_payload)
 
         echo = bytes([CMD_READ, category, (offset >> 8) & 0xFF, offset & 0xFF, length])
-        deadline = time.time() + timeout
+        # REAL BUG, found 2026-09-17 (Sol's bug-sweep): this and the other
+        # two deadline/remaining pairs in this module used to use
+        # time.time() (the adjustable wall clock) -- an NTP correction or a
+        # manual clock change mid-read could make a real response look
+        # timed out early, or let a genuinely stuck read run well past its
+        # configured timeout. time.monotonic() only ever moves forward at
+        # a steady rate, which is what a same-process elapsed-time
+        # deadline actually needs.
+        deadline = time.monotonic() + timeout
         while True:
-            remaining = deadline - time.time()
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError(
                     f"no response to read_chunk(category={category:#04x}, offset={offset:#06x}, "
@@ -427,9 +453,9 @@ class VendorSession:
         """
         if timeout is None:
             timeout = READ_CHUNK_TIMEOUT
-        deadline = time.time() + timeout
+        deadline = time.monotonic() + timeout
         while True:
-            remaining = deadline - time.time()
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError(f"no input frame within {timeout}s")
             try:
@@ -485,9 +511,9 @@ class VendorSession:
         if timeout is None:
             timeout = READ_CHUNK_TIMEOUT
         self.send_raw(CMD_DEVICE_INFO, bytes([selector]))
-        deadline = time.time() + timeout
+        deadline = time.monotonic() + timeout
         while True:
-            remaining = deadline - time.time()
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError(f"no answer to device-info selector {selector:#04x} within {timeout}s")
             try:

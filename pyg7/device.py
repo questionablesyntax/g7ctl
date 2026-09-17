@@ -536,12 +536,17 @@ def _find_stable_hid_device(min_interval: float,
     dev = find_hid_device()
     if dev is None or min_interval <= 0:
         return dev
-    deadline = time.time() + max_wait_s
+    # Same real bug and same fix as session.py's own deadlines -- see its
+    # comment. This is a same-process elapsed-time wait, not a comparison
+    # against a real-world timestamp (unlike seconds_since_enumeration()'s
+    # own time.time() - st_ctime, which genuinely needs the wall clock
+    # since st_ctime is a filesystem timestamp, not a monotonic reference).
+    deadline = time.monotonic() + max_wait_s
     while True:
         age = seconds_since_enumeration(dev)
         if age is None or age >= min_interval:
             return dev
-        if time.time() >= deadline:
+        if time.monotonic() >= deadline:
             return None
         _pace_handshake(dev, min_interval, age=age)  # reuse the age just read above, not a second sysfs scan
         dev = find_hid_device()  # re-find fresh -- may have re-enumerated during that sleep
@@ -657,7 +662,21 @@ def switch_to_xid(timeout_s: float = 10.0,
         dev.detach_kernel_driver(IFACE)
         detached = True
 
-    usb.util.claim_interface(dev, IFACE)
+    try:
+        usb.util.claim_interface(dev, IFACE)
+    except Exception:
+        # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps,
+        # independently), same shape and same fix as VendorSession's own
+        # __enter__ (session.py): claim_interface() used to sit BEFORE the
+        # try/finally that handles cleanup, so a claim failure right after
+        # a successful detach skipped that finally block entirely, leaving
+        # the driver detached with nothing left to reattach it.
+        if detached:
+            try:
+                dev.attach_kernel_driver(IFACE)
+            except Exception as e:
+                log.debug("attach_kernel_driver failed during claim-failure rollback: %s", e)
+        raise
     try:
         for pkt in make_handshake_packets():
             dev.write(EP_OUT, pkt)
@@ -682,8 +701,9 @@ def switch_to_xid(timeout_s: float = 10.0,
                 log.debug("attach_kernel_driver failed (likely already re-enumerating): %s", e)
 
     log.info("Handshake sent, waiting for it to switch off PID_HID...")
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
+    # Same real bug and same fix as this function's earlier deadline above.
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
         # Redesigned 2026-08-29: reuses find_writable_device() rather than
         # looping known PIDs directly -- same VID-wide scan, structural
         # classification, recognizes a brand-new variant's PID with no

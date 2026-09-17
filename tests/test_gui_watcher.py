@@ -164,7 +164,14 @@ class EstablishSessionTest(unittest.TestCase):
         import time
         session = _FakeSession(via_dongle=False, live=False)
         watcher = self._watcher(session)
-        before = time.time()
+        # time.monotonic(), not time.time() -- _probe_backoff_until switched
+        # clocks 2026-09-17 (real bug, found by Sol's bug-sweep: it used to
+        # use the adjustable wall clock, genuinely inconsistent with this
+        # same file's own time.monotonic() elsewhere). Comparing a
+        # monotonic deadline against a wall-clock "before" would be
+        # comparing two different clocks' arbitrary reference points, not
+        # a real check.
+        before = time.monotonic()
         watcher._establish()
         self.assertGreater(watcher._probe_backoff_until, before)
 
@@ -403,8 +410,10 @@ class RunLoopBackoffTest(unittest.TestCase):
         def fake_establish():
             establish_calls.append(1)
             # Mirrors what a real failure inside _establish() does: sets
-            # the backoff deadline before returning None.
-            watcher._probe_backoff_until = time.time() + PROBE_FAILURE_BACKOFF
+            # the backoff deadline before returning None. time.monotonic(),
+            # matching the real code since 2026-09-17 -- see
+            # test_no_controller_sets_a_probe_failure_backoff's own comment.
+            watcher._probe_backoff_until = time.monotonic() + PROBE_FAILURE_BACKOFF
             return None
 
         watcher._establish = fake_establish
@@ -615,3 +624,44 @@ class EmitErrorIsLoggedTest(unittest.TestCase):
         with self.assertRaises(AssertionError):  # assertLogs itself raises if nothing logs
             with self.assertLogs("g7ctlc.watcher", level=logging.WARNING):
                 watcher._emit_error("USB error: gone")  # same message again
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class ForceDockReadTest(unittest.TestCase):
+    """DeviceWatcher._do_read()'s force_dock override.
+
+    REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps independently):
+    _dock_known's skip-after-first-read optimization is real and correct
+    for automatic reads (profile switch, auto-read-on-connect), but the
+    explicit "Read from Device" button's whole promised contract is
+    "discard my edits, show me the truth" -- without force_dock,
+    an unsynced local dock edit survived even that explicit read (this
+    method returning None for dock preserves whatever's already showing)
+    and got marked clean by set_read_finished()'s unconditional
+    self._set_dirty(False). No test exercised _do_read()/include_dock at
+    all before this.
+    """
+
+    def test_after_first_read_a_normal_read_skips_dock(self):
+        from g7ctlc.watcher import DeviceWatcher
+        watcher = DeviceWatcher()
+        watcher._dock_known = True
+        with mock.patch("g7ctlc.watcher.state_mod.read_state") as read_state:
+            watcher._do_read(mock.Mock(), slot=1)
+        self.assertFalse(read_state.call_args.kwargs["include_dock"])
+
+    def test_force_dock_overrides_dock_known_on_this_one_call(self):
+        from g7ctlc.watcher import DeviceWatcher
+        watcher = DeviceWatcher()
+        watcher._dock_known = True
+        with mock.patch("g7ctlc.watcher.state_mod.read_state") as read_state:
+            watcher._do_read(mock.Mock(), slot=1, force_dock=True)
+        self.assertTrue(read_state.call_args.kwargs["include_dock"])
+
+    def test_first_read_of_a_connection_includes_dock_regardless(self):
+        from g7ctlc.watcher import DeviceWatcher
+        watcher = DeviceWatcher()
+        self.assertFalse(watcher._dock_known)
+        with mock.patch("g7ctlc.watcher.state_mod.read_state") as read_state:
+            watcher._do_read(mock.Mock(), slot=1)
+        self.assertTrue(read_state.call_args.kwargs["include_dock"])

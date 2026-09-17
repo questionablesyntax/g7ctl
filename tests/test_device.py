@@ -546,5 +546,49 @@ class SwitchToXidLandingIdentityTest(unittest.TestCase):
         self.assertTrue(any("Timed out" in msg for msg in cm.output))
 
 
+class _TracksDriverCallsDev(_FakeDev):
+    """Like _FakeDev, but is_kernel_driver_active() reports a real driver
+    bound (so detach genuinely happens) and every detach/attach call is
+    recorded, so a test can assert reattachment actually fired."""
+
+    def __init__(self, pid, interfaces, product=""):
+        super().__init__(pid, interfaces, product)
+        self.detach_calls = 0
+        self.attach_calls = 0
+
+    def is_kernel_driver_active(self, iface):
+        return True
+
+    def detach_kernel_driver(self, iface):
+        self.detach_calls += 1
+
+    def attach_kernel_driver(self, iface):
+        self.attach_calls += 1
+
+
+class ClaimFailureRollbackTest(unittest.TestCase):
+    """A failed usb.util.claim_interface() must reattach a driver it just
+    detached -- found 2026-09-17 (Astra and Sol's bug-sweeps,
+    independently): claim_interface() used to sit BEFORE the try/finally
+    that handles cleanup, so a claim failure right after a successful
+    detach skipped that finally block entirely. Confirmed real and
+    reachable: switch_to_xid()'s handshake path detaches unconditionally
+    whenever a kernel driver is active, with no pre-check gating it the
+    way the higher-level callers gate the function itself."""
+
+    def test_claim_failure_reattaches_the_detached_driver(self):
+        hid_dev = _TracksDriverCallsDev(HID_PID, [_FakeIntf(0, 0xFF), _FakeIntf(1, 0x03)],
+                                        "Xbox 360 Controller for Windows")
+        with mock.patch("usb.core.find", return_value=[hid_dev]), \
+             mock.patch("usb.util.claim_interface", side_effect=usb.core.USBError("busy")), \
+             mock.patch("usb.util.release_interface"), \
+             mock.patch.object(device.time, "sleep"):
+            with self.assertRaises(usb.core.USBError):
+                device.switch_to_xid(timeout_s=1.0)
+        self.assertEqual(hid_dev.detach_calls, 1)
+        self.assertEqual(hid_dev.attach_calls, 1,
+                          "a failed claim must reattach the driver it detached")
+
+
 if __name__ == "__main__":
     unittest.main()

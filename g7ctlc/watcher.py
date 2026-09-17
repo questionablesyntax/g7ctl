@@ -98,7 +98,7 @@ class DeviceWatcher(QObject):
         super().__init__()
         self._stop = False
         self._paused = False
-        self._jobs = queue.Queue()  # ("sync", state_dict) or ("read", slot)
+        self._jobs = queue.Queue()  # ("sync", state_dict) or ("read", (slot, force_dock))
         self._state = "disconnected"
         self._last_error = None
         # Dock settings are device-global (see state_mod.read_state()'s
@@ -122,11 +122,17 @@ class DeviceWatcher(QObject):
         a separate session for the sync."""
         self._jobs.put(("sync", state))
 
-    def request_read(self, slot: int) -> None:
+    def request_read(self, slot: int, force_dock: bool = False) -> None:
         """Thread-safe: call from the GUI thread. Reads Profile `slot`'s
         current button bindings back from the device on this loop's
-        session the next time it's free -- see pyg7.state.read_state()."""
-        self._jobs.put(("read", slot))
+        session the next time it's free -- see pyg7.state.read_state().
+
+        `force_dock`, added 2026-09-17: overrides `_dock_known`'s own
+        skip-after-first-read optimization for this one call -- see
+        MainWindow.request_read_from_device()'s own comment for why the
+        explicit "Read from Device" button needs this and the automatic
+        callers (profile switch, auto-read-on-connect) don't."""
+        self._jobs.put(("read", (slot, force_dock)))
 
     def pause(self) -> None:
         """Thread-safe: call from the GUI thread. Releases the session and
@@ -228,7 +234,17 @@ class DeviceWatcher(QObject):
                     # liveness probe, rather than retrying every
                     # POLL_INTERVAL while the device may still be
                     # re-enumerating on its own.
-                    if time.time() < self._probe_backoff_until:
+                    #
+                    # REAL BUG, found 2026-09-17 (Sol's bug-sweep): every
+                    # _probe_backoff_until read/write here used to use
+                    # time.time() (the adjustable wall clock) -- genuinely
+                    # inconsistent with this same file's OWN
+                    # _read_firmware_once()/_poll_active_profile()
+                    # (time.monotonic(), lines 335/366), not just a
+                    # separate latent issue. An NTP correction or a manual
+                    # clock change mid-backoff could extend or cut short
+                    # this cooldown for no protocol reason.
+                    if time.monotonic() < self._probe_backoff_until:
                         time.sleep(POLL_INTERVAL)
                         continue
                     try:
@@ -242,7 +258,7 @@ class DeviceWatcher(QObject):
                         # itself) is just as plausibly re-enum-related, so
                         # back off the same way rather than retrying
                         # immediately.
-                        self._probe_backoff_until = time.time() + PROBE_FAILURE_BACKOFF
+                        self._probe_backoff_until = time.monotonic() + PROBE_FAILURE_BACKOFF
                     if session is None:
                         time.sleep(POLL_INTERVAL)
                         continue
@@ -272,7 +288,7 @@ class DeviceWatcher(QObject):
                     # immediately just re-sends the handshake into that and
                     # repeats the cycle. Back off before retrying, same as
                     # the establish-time failure.
-                    self._probe_backoff_until = time.time() + PROBE_FAILURE_BACKOFF
+                    self._probe_backoff_until = time.monotonic() + PROBE_FAILURE_BACKOFF
         finally:
             if session is not None:
                 self._teardown(session)
@@ -384,7 +400,8 @@ class DeviceWatcher(QObject):
         if kind == "sync":
             self._do_sync(session, payload)
         elif kind == "read":
-            self._do_read(session, payload)
+            slot, force_dock = payload
+            self._do_read(session, slot, force_dock)
 
     def _do_sync(self, session: VendorSession, state: dict) -> None:
         """Reads a fresh baseline from the device first (rsync-style: diff
@@ -427,14 +444,24 @@ class DeviceWatcher(QObject):
         except Exception as exc:
             self.sync_finished.emit(False, f"Sync failed: {exc}")
 
-    def _do_read(self, session: VendorSession, slot: int) -> None:
+    def _do_read(self, session: VendorSession, slot: int, force_dock: bool = False) -> None:
         # Only the first read per connection pays for the dock-settings
         # blob -- see __init__'s `_dock_known` comment and
         # state_mod.read_state()'s `include_dock` docstring. Every read
         # after that (profile switches especially) skips it; MainWindow's
         # merge logic keeps whatever dock values it already has when this
         # comes back None.
-        include_dock = not self._dock_known
+        #
+        # `force_dock`, added 2026-09-17 (real bug, found by Astra and
+        # Sol's bug-sweeps independently): the explicit "Read from Device"
+        # button's whole promised contract is "discard my edits, show me
+        # the truth" -- without this override, an unsynced local dock edit
+        # survived even an explicit discard-my-edits read (this method
+        # returning None for dock kept whatever was already showing) and
+        # got marked clean by set_read_finished()'s unconditional
+        # self._set_dirty(False). See MainWindow.request_read_from_device()
+        # for which callers pass this and why.
+        include_dock = force_dock or not self._dock_known
         try:
             state = state_mod.read_state(session, slot=slot, include_dock=include_dock)
             self._dock_known = True
@@ -527,7 +554,7 @@ class DeviceWatcher(QObject):
                 # was assumed to be the day before) -- back off before
                 # run() tries to re-establish, rather than retrying a fresh
                 # claim every POLL_INTERVAL while that's still settling.
-                self._probe_backoff_until = time.time() + PROBE_FAILURE_BACKOFF
+                self._probe_backoff_until = time.monotonic() + PROBE_FAILURE_BACKOFF
                 return None
         except usb.core.USBError:
             # Real bug, found 2026-09-01 (second bug-hunt pass): a

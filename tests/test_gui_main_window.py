@@ -84,6 +84,32 @@ class ConfirmationGateTest(unittest.TestCase):
         confirm.assert_called_once()
         self.assertFalse(window._syncing)
 
+    def test_read_button_click_forces_a_real_dock_read(self):
+        # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps
+        # independently): read_btn.clicked emits a `checked: bool` that Qt
+        # passes straight through to a directly-connected slot -- always
+        # False for a plain button -- which would silently defeat
+        # force_dock_read if connected without the explicit lambda this
+        # test is really checking for. A REAL Qt .click() (not calling
+        # request_read_from_device() directly, which would miss this
+        # exact class of bug) confirms the signal that actually reaches
+        # DeviceWatcher carries True.
+        window = self._window()
+        window._dirty = False
+        received = []
+        window.read_requested.connect(lambda slot, force_dock: received.append((slot, force_dock)))
+        window.read_btn.click()
+        self.assertEqual(received, [(1, True)])
+
+    def test_automatic_profile_switch_read_does_not_force_dock(self):
+        window = self._window()
+        window._dirty = False
+        window._loading_profile_combo = False
+        received = []
+        window.read_requested.connect(lambda slot, force_dock: received.append((slot, force_dock)))
+        window._on_profile_changed(0)
+        self.assertEqual(received, [(1, False)])
+
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
 class FailureSurfacingTest(unittest.TestCase):
@@ -736,6 +762,26 @@ class UnconfirmedStateDisplayTest(unittest.TestCase):
 
         self.assertTrue(w._syncing)
         self.assertTrue(self._content_locked(w))
+
+    def test_report_rate_combo_is_gated_too(self):
+        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): report_rate_combo
+        # lives in the top selector bar, built before self.tabs exists --
+        # _content_locked()'s own sweep (and _refresh_confirmed_display()'s
+        # real one) is keyed on self.tabs' QScrollArea children, so this
+        # control structurally could never be reached by it. It stayed
+        # live and editable through every state _content_locked() checks
+        # here, the exact same hazard already closed for every other
+        # control.
+        w = self._window()
+        self.assertFalse(w.report_rate_combo.isEnabled())  # freshly launched, unconfirmed
+
+        w.set_connection_state("connected")
+        w.set_read_finished(True, "read ok", state_mod.default_state_dict("read"))
+        self.assertTrue(w.report_rate_combo.isEnabled())  # confirmed, not syncing
+
+        with mock.patch.object(w, "_confirm", return_value=True):
+            w.request_sync_now()
+        self.assertFalse(w.report_rate_combo.isEnabled())  # confirmed but mid-sync
         # The banner is specifically about "go read the device" -- an
         # in-flight sync of an already-confirmed reading isn't that.
         self.assertFalse(w.unconfirmed_banner.isVisibleTo(w))

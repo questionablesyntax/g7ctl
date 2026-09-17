@@ -73,7 +73,10 @@ _AUTO_RELEASE_DELAY_MS = 400
 class MainWindow(QMainWindow):
     release_toggled = pyqtSignal(bool)  # True = release to XInput, False = reconnect
     sync_requested = pyqtSignal(dict)   # the state dict to push to the device
-    read_requested = pyqtSignal(int)    # the controller_slot to read bindings back from
+    # the controller_slot to read bindings back from, and whether to force a
+    # real dock-settings read regardless of DeviceWatcher's own _dock_known
+    # optimization -- see request_read_from_device()'s own comment.
+    read_requested = pyqtSignal(int, bool)
     # Emitted every time self._syncing changes -- so anything outside this
     # class (the tray icon's own Release Device action, currently) can stay
     # in step without reaching into a private attribute. Added 2026-09-01:
@@ -293,7 +296,11 @@ class MainWindow(QMainWindow):
             "Read the controller's actual current settings back from it, "
             "overwriting every tab here."
         )
-        self.read_btn.clicked.connect(self.request_read_from_device)
+        # Explicit lambda, not a direct connect: QPushButton.clicked emits a
+        # `checked: bool` that Qt would otherwise pass straight through as
+        # force_dock_read -- always False for a plain (non-checkable)
+        # button, silently defeating the whole point of this connection.
+        self.read_btn.clicked.connect(lambda: self.request_read_from_device(force_dock_read=True))
         button_bar.addWidget(self.read_btn)
         self.sync_btn = QPushButton("Sync Now")
         self.sync_btn.setProperty("role", "primary")
@@ -636,6 +643,16 @@ class MainWindow(QMainWindow):
             content = scroll.widget()
             if content is not None:
                 content.setEnabled(editable)
+        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): report_rate_combo
+        # lives in the top selector bar (_build_selector_bar()), built
+        # before self.tabs even exists -- so the sweep above, keyed on
+        # self.tabs' own QScrollArea children, structurally can never reach
+        # it. It stayed live and editable during an unconfirmed state or an
+        # in-flight sync/read, the exact same hazard this whole gate exists
+        # to close for every other control: an edit made mid-read could be
+        # silently overwritten the moment the read landed, or (mid-sync)
+        # raced the watcher thread iterating self._state concurrently.
+        self.report_rate_combo.setEnabled(editable)
         self.unconfirmed_banner.setVisible(not self._state_confirmed)
 
     def _on_release_clicked(self) -> None:
@@ -725,7 +742,23 @@ class MainWindow(QMainWindow):
             # Export/Import failure got a blocking dialog. Now both do.
             QMessageBox.warning(self, "Sync failed", message)
 
-    def request_read_from_device(self) -> None:
+    def request_read_from_device(self, force_dock_read: bool = False) -> None:
+        """`force_dock_read`, added 2026-09-17 (real bug, found by Astra and
+        Sol's bug-sweeps independently): DeviceWatcher skips the dock-
+        settings blob after the first read per connection (a real,
+        deliberate optimization -- dock settings don't change mid-
+        connection). That's fine for the automatic callers below (profile
+        switch, auto-read-on-connect), but the explicit "Read from Device"
+        BUTTON's whole promised contract is "discard my edits, show me the
+        controller's actual truth" -- and set_read_finished() clears the
+        dirty flag unconditionally at the end regardless of whether dock
+        settings were actually re-confirmed. An unsynced dock edit
+        therefore survived an explicit "discard my edits" read and got
+        marked clean, so a later Sync could push the overlooked edit
+        without ever being flagged as dirty again. Only the button's own
+        connection passes True; both automatic callers keep the
+        optimization exactly as before.
+        """
         if self._connection_state != "connected" or self._syncing:
             return
         # Covers both callers that can reach here with unsynced edits still
@@ -750,7 +783,7 @@ class MainWindow(QMainWindow):
         self._refresh_confirmed_display()  # locks every tab for the duration
         self.sync_status_label.setText("Reading from device…")
         slot = self._state.get("controller_slot") or 1
-        self.read_requested.emit(slot)
+        self.read_requested.emit(slot, force_dock_read)
 
     def set_read_finished(self, success: bool, message: str, device_state: Optional[dict]) -> None:
         self._syncing = False

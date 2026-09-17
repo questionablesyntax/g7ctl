@@ -6,6 +6,9 @@ project-wide, not just for the CLI's `raw` escape hatch that exercises it
 most directly.
 """
 import unittest
+from unittest import mock
+
+import usb.core
 
 from pyg7.constants import CMD_HEARTBEAT, CMD_WRITE
 from pyg7.session import (
@@ -245,6 +248,29 @@ class ConnectionAgnosticDefaultsTest(unittest.TestCase):
         sess = VendorSession(dev, via_dongle=True)
         sess.read_chunk(1, 0, 1, timeout=0.5)
         self.assertAlmostEqual(dev.read_timeouts[-1], 500, delta=5)
+
+
+class MonotonicDeadlineTest(unittest.TestCase):
+    """read_chunk()'s deadline/remaining pair must never consult the
+    adjustable wall clock at all.
+
+    REAL BUG, found 2026-09-17 (Sol's bug-sweep): this used to use
+    time.time() -- an NTP correction or a manual clock change mid-read
+    could make a real response look timed out early, or let a genuinely
+    stuck read run well past its configured timeout. Rather than
+    simulating a specific wall-clock jump (which would only prove ONE
+    jump size doesn't break it), this asserts the stronger property
+    directly: time.time() is never called at all during a successful
+    read_chunk(), so no wall-clock behavior -- jump, freeze, or otherwise
+    -- can affect it.
+    """
+
+    def test_read_chunk_never_touches_the_wall_clock(self):
+        dev = _FakeReadDevice([_read_response_report(1, 0, 1, b"\x00")])
+        sess = VendorSession(dev)
+        with mock.patch("pyg7.session.time.time",
+                        side_effect=AssertionError("read_chunk() must not call time.time()")):
+            sess.read_chunk(1, 0, 1)
 
 
 class ProbeControllerLiveTest(unittest.TestCase):
@@ -533,3 +559,43 @@ class ActiveProfileTest(unittest.TestCase):
     def test_skips_the_input_stream_on_the_shared_pipe(self):
         dev = _FakeReadDevice([_input_frame(46), _info_report(0x0b, b"\x02")])
         self.assertEqual(VendorSession(dev).read_active_profile(), 2)
+
+
+class _TracksDriverCallsDevice:
+    """Enough of the pyusb Device surface for VendorSession.__enter__() --
+    reports a real kernel driver bound (so detach genuinely happens) and
+    records every detach/attach call."""
+
+    def __init__(self):
+        self.detach_calls = 0
+        self.attach_calls = 0
+
+    def is_kernel_driver_active(self, iface):
+        return True
+
+    def detach_kernel_driver(self, iface):
+        self.detach_calls += 1
+
+    def attach_kernel_driver(self, iface):
+        self.attach_calls += 1
+
+
+class EnterClaimFailureRollbackTest(unittest.TestCase):
+    """A failed usb.util.claim_interface() inside __enter__() must reattach
+    a driver it just detached -- found 2026-09-17 (Astra and Sol's
+    bug-sweeps, independently). __enter__() raising means __exit__() is
+    NEVER called (that's how the `with` statement works), so the rollback
+    has to happen inside __enter__() itself, before re-raising -- there is
+    no __exit__() left to do it. VendorSession.__enter__()/__exit__() had
+    zero test coverage before this."""
+
+    def test_claim_failure_reattaches_the_detached_driver(self):
+        dev = _TracksDriverCallsDevice()
+        sess = VendorSession(dev)
+        with mock.patch("usb.util.claim_interface", side_effect=usb.core.USBError("busy")):
+            with self.assertRaises(usb.core.USBError):
+                sess.__enter__()
+        self.assertEqual(dev.detach_calls, 1)
+        self.assertEqual(dev.attach_calls, 1,
+                          "a failed claim must reattach the driver it detached")
+        self.assertFalse(sess._claimed)

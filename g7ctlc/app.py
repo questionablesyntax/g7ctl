@@ -213,9 +213,9 @@ def main() -> int:
 
     window.sync_requested.connect(_on_sync_requested)
 
-    def _on_read_requested(slot: int) -> None:
+    def _on_read_requested(slot: int, force_dock_read: bool) -> None:
         # Same reasoning as _on_sync_requested above.
-        watcher.request_read(slot)
+        watcher.request_read(slot, force_dock_read)
 
     window.read_requested.connect(_on_read_requested)
 
