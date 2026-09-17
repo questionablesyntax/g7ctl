@@ -84,6 +84,56 @@ class ReleaseActionSyncGuardTest(unittest.TestCase):
 
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class QuitSyncGuardTest(unittest.TestCase):
+    """TrayIcon's Quit action now confirms before quitting mid-sync.
+
+    Real bug, found 2026-09-17 (Astra and Sol's bug-sweeps independently):
+    _quit() was a bare @staticmethod calling QApplication.instance().quit()
+    unconditionally -- Quit was available and immediate even while a sync
+    was actively writing to persistent device config, and app.py's own
+    _shutdown() only gets a bounded 10s wait for the watcher thread before
+    proceeding anyway. Fixed the way app.py's own comment already
+    specified: confirm before quitting at all while main_window._syncing
+    is true, reusing the same MainWindow._confirm() seam Sync Now itself
+    already uses.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _tray(self, syncing: bool):
+        from g7ctlc.tray import TrayIcon
+        fake_window = mock.Mock()
+        fake_window._syncing = syncing
+        return TrayIcon(fake_window), fake_window
+
+    def test_quit_while_not_syncing_never_prompts(self):
+        tray, fake_window = self._tray(syncing=False)
+        with mock.patch("g7ctlc.tray.QApplication") as fake_app_cls:
+            tray._quit()
+        fake_window._confirm.assert_not_called()
+        fake_app_cls.instance.return_value.quit.assert_called_once()
+
+    def test_quit_while_syncing_prompts_and_respects_no(self):
+        tray, fake_window = self._tray(syncing=True)
+        fake_window._confirm.return_value = False
+        with mock.patch("g7ctlc.tray.QApplication") as fake_app_cls:
+            tray._quit()
+        fake_window._confirm.assert_called_once()
+        fake_app_cls.instance.return_value.quit.assert_not_called()
+
+    def test_quit_while_syncing_respects_yes(self):
+        tray, fake_window = self._tray(syncing=True)
+        fake_window._confirm.return_value = True
+        with mock.patch("g7ctlc.tray.QApplication") as fake_app_cls:
+            tray._quit()
+        fake_window._confirm.assert_called_once()
+        fake_app_cls.instance.return_value.quit.assert_called_once()
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
 class IconBuildDedupTest(unittest.TestCase):
     """_STATE_ICON_FILES maps "connecting" and "no_controller" to the same
     icon_yellow.png -- _state_icon() re-scales into all 9 _ICON_SIZES on

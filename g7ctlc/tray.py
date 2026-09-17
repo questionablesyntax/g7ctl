@@ -167,6 +167,25 @@ class TrayIcon(QSystemTrayIcon):
         self.main_window.raise_()
         self.main_window.activateWindow()
 
-    @staticmethod
-    def _quit() -> None:
+    def _quit(self) -> None:
+        # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps,
+        # independently), fixed exactly the way app.py's own _shutdown()
+        # comment already specified but deferred: "the real fix would be
+        # confirming with the user before quitting at all while a sync is
+        # in flight (the same pattern Sync Now itself already asks for)."
+        # Without this, Quit was available and unconditional even mid-sync
+        # -- app.py's bounded 10s wait for the watcher thread could still
+        # expire and proceed while a real, heartbeat-paced write to
+        # persistent device config was in flight.
+        #
+        # This was the only real quit path to guard: main_window.py's
+        # closeEvent() only hides to tray (setQuitOnLastWindowClosed(False)
+        # in app.py), it never quits on its own.
+        if self.main_window._syncing:
+            if not self.main_window._confirm(
+                "Sync in progress",
+                "A sync to the controller is still running. Quitting now may leave "
+                "a partial write on persistent device config.\n\nQuit anyway?",
+            ):
+                return
         QApplication.instance().quit()
