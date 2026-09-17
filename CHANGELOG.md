@@ -6,6 +6,8 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-09-17
+
 ### Changed
 
 - **`udev/61-g7ctl.rules` grants access by GameSir's USB vendor ID
@@ -15,6 +17,80 @@ adheres to [semantic versioning](https://semver.org/).
   by `pyg7` and still denied raw USB access until someone found its PID
   and hand-added a udev line. Confirmed live over a dongle connection on
   existing hardware before landing.
+
+### Fixed
+
+A full review pass across the whole codebase turned up 20 real bugs,
+each independently verified against source and fixed with a regression
+test proving it fails against the old code and passes against the fix.
+
+- **Importing a current Profile 2-4 export silently destroyed its real
+  Shift bindings.** The importer's own "was this poisoned by a
+  pre-0.1.4 bug" check stopped being able to tell current exports apart
+  from genuinely poisoned ones the moment the underlying read was fixed
+  (0.1.5) -- every Profile 2-4 export/import round trip since has had
+  its real Shift bindings silently wiped on load. Fixed using each
+  file's own save timestamp against the real fix's commit time, instead
+  of a check that could no longer distinguish the two cases.
+- **Selecting "(Default)" on a button binding updated the screen but
+  never reached the device** -- the reset was never scheduled as a real
+  write, so Sync reported success while the old binding stayed live on
+  the controller.
+- **Editing the left stick could silently remap the right stick's output
+  mode** to match the left one, from an edit that never touched the
+  right stick at all.
+- **Motion's activate-button and directional-button clears had the same
+  problem** -- clearing either one in the GUI updated the screen but
+  scheduled no write, leaving the old binding active on the controller.
+- **A batch script's `enter-vendor`/`diag` lines, or a device disconnect
+  mid-batch, could silently do the wrong thing under `--continue-on-error`**
+  -- a real USB disconnect was treated as an ordinary recoverable error
+  and the next line ran against a session that was already gone; a
+  malformed quoted line could crash the whole batch (or the interactive
+  session outright) instead of being reported and skipped; `diag`
+  validated clean in `--dry-run` but crashed when actually run.
+- **Interactive batch mode (`g7ctl batch`) could lose the session while
+  waiting on you to type the next command** -- nothing kept it alive
+  during that pause, and the firmware drops an unheartbeated session
+  within seconds.
+- **Quitting the GUI while a Sync was in flight could interrupt a
+  partial write to persistent device config.** Quit now asks first if a
+  sync is genuinely in progress.
+- **A failed USB claim could leave the kernel driver detached**,
+  stranding the controller off `xpad`/`usbhid` until a manual replug.
+- **Restoring a named curve preset from a device-read snapshot silently
+  reverted it to Custom.** Applying a named preset already writes its
+  real shape in one go; a stale follow-up points-write was overwriting
+  that with Custom's index right after.
+- **Switching between two named curve presets left the graph showing
+  the previous preset's shape** instead of the one actually selected.
+- **"Read from Device" could leave an unsynced Dock Settings edit in
+  place and mark it as confirmed**, even though the explicit intent of
+  that button is to discard local edits and show the controller's real
+  state.
+- **The Report Rate selector wasn't locked during an unconfirmed reading
+  or an in-flight Sync/Read**, the one control on the main screen that
+  had escaped that protection.
+- **Toggling one checkbox or slider could silently round a different,
+  untouched control's exact off-scale value** (Dock LED Brightness,
+  Vibration levels) to its nearest coarse display stop.
+- **A malformed or hand-edited state file with the wrong top-level JSON
+  shape crashed with a raw Python error** instead of a clear message.
+- **`stick-set`/`dpad`/similar CLI flags silently accepted a typo'd
+  boolean or trajectory value** ("flase", "onn", "rew") as if it were
+  false/circle, instead of rejecting it.
+- **Deadline and backoff timers throughout the connection/read/write
+  path used the adjustable wall clock**, so a clock correction (NTP, a
+  manual change) could cause a premature timeout or an over-long wait.
+- **The `-git` (VCS) Arch package never declared its test dependencies**,
+  so a clean build environment could fail to even run the test suite, or
+  silently skip most of it.
+- **A test suite helper leaked an open log-file handle on every run.**
+
+Additionally, while fixing the stick output-mode bug above: a brand-new
+("New State") configuration defaulted both sticks' output mode to
+"Left Stick" -- a real device's actual factory default is unconfigured
+for both. Now matches hardware.
 
 ## [0.3.2] - 2026-09-02
 
