@@ -21,6 +21,7 @@ import pyg7
 _ROOT = Path(__file__).resolve().parent.parent
 _PYPROJECT = _ROOT / "pyproject.toml"
 _PKGBUILD = _ROOT / "packaging" / "PKGBUILD"
+_GIT_PKGBUILD = _ROOT / "packaging" / "git" / "PKGBUILD"
 
 
 class VersionLockstepTest(unittest.TestCase):
@@ -49,3 +50,26 @@ class VersionLockstepTest(unittest.TestCase):
         self.assertEqual(match.group(1), pyg7.__version__,
                          "PKGBUILD pkgver and the packages disagree -- the release "
                          "tarball URL it builds from would point at the wrong tag")
+
+    @unittest.skipUnless(_GIT_PKGBUILD.is_file(), "packaging/git/PKGBUILD only exists in a checkout")
+    def test_git_pkgbuild_declares_the_same_checkdepends_as_the_release_one(self):
+        # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps,
+        # independently): packaging/git/PKGBUILD ran the identical
+        # check() suite but never declared checkdepends at all -- missing
+        # python-pyusb can prevent the suite from even being collected in
+        # a clean chroot; missing python-pyqt6 makes every g7ctlc test
+        # skip itself instead of failing, so check() goes green having
+        # covered none of them.
+        #
+        # This only proves the two files' checkdepends= lines agree, not
+        # that a clean chroot build actually succeeds -- this machine has
+        # no such environment available (see STATUS.md/HANDOFF.md's own
+        # documented limitation: no PKGBUILD build-test has ever run here,
+        # release or -git). A real clean-chroot build remains the honest
+        # next step to fully close this, same as it already was for the
+        # release PKGBUILD's own checkdepends before this fix existed.
+        release_match = re.search(r"^checkdepends=\((.+)\)$", _PKGBUILD.read_text(), re.MULTILINE)
+        git_match = re.search(r"^checkdepends=\((.+)\)$", _GIT_PKGBUILD.read_text(), re.MULTILINE)
+        self.assertIsNotNone(release_match, "no checkdepends= line found in packaging/PKGBUILD")
+        self.assertIsNotNone(git_match, "no checkdepends= line found in packaging/git/PKGBUILD")
+        self.assertEqual(git_match.group(1), release_match.group(1))

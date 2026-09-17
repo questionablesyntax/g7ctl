@@ -47,6 +47,14 @@ arch=('any')
 url="https://github.com/questionablesyntax/g7ctl"
 license=('Apache-2.0' 'GPL-3.0-or-later')
 makedepends=('git' 'python-build' 'python-installer' 'python-wheel' 'python-setuptools')
+# REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps, independently):
+# missing here even though check() below runs the same suite the release
+# PKGBUILD does. Without python-pyusb, pyg7 imports usb.core at module
+# level, so the suite can't even be collected in a clean chroot; without
+# python-pyqt6, every g7ctlc test skips itself instead of failing, so
+# check() goes green having covered none of them -- see the release
+# PKGBUILD's own comment on this exact pair for the full reasoning.
+checkdepends=('python-pyusb' 'python-pyqt6')
 
 source=("g7ctl::git+https://github.com/questionablesyntax/g7ctl.git")
 sha256sums=('SKIP')
