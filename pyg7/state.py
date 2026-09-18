@@ -220,7 +220,13 @@ def validate_state(data: dict) -> None:
             raise StateError(f"missing top-level section {key!r}")
 
     slot = data.get("controller_slot")
-    if slot is not None and slot not in (1, 2, 3, 4):
+    # isinstance(slot, bool) check: REAL BUG, found 2026-09-18 (Sol's
+    # bug-sweep). Python's bool is an int subclass and True == 1, so
+    # "controller_slot": true in a hand-edited file passed this membership
+    # check and behaved as slot 1 -- a plausible hand-editing typo silently
+    # retargeting a write. Same reasoning applies to dock_led_brightness and
+    # _validate_percent() below.
+    if slot is not None and (isinstance(slot, bool) or slot not in (1, 2, 3, 4)):
         raise StateError(f"controller_slot must be 1-4 or null, got {slot!r}")
 
     # report_rate_hz is optional (added after schema_version 1 already shipped,
@@ -256,7 +262,13 @@ def validate_state(data: dict) -> None:
     # Dock settings: same additive-field reasoning, and genuinely global/
     # device-wide (see dock_settings.py) -- not tied to controller_slot.
     brightness = data.get("dock_led_brightness")
-    if brightness is not None and not (isinstance(brightness, int) and 0 <= brightness <= 100):
+    # isinstance(brightness, bool) check: see controller_slot's identical
+    # 2026-09-18 fix/comment just above -- bool is an int subclass, so
+    # "dock_led_brightness": true used to pass isinstance(x, int) and reach
+    # the percent coercer as 1, writing 1% brightness.
+    if brightness is not None and (
+        isinstance(brightness, bool) or not (isinstance(brightness, int) and 0 <= brightness <= 100)
+    ):
         raise StateError(f"dock_led_brightness must be 0-100 or null, got {brightness!r}")
     auto = data.get("dock_auto_on_off")
     if auto is not None and not isinstance(auto, bool):
@@ -339,7 +351,10 @@ def _is_valid_keycode_value(s: str) -> bool:
 def _validate_percent(v: object, label: str) -> None:
     if v is None:
         return
-    if not isinstance(v, int) or not 0 <= v <= 100:
+    # isinstance(v, bool) check: same 2026-09-18 fix as controller_slot/
+    # dock_led_brightness above -- bool is an int subclass, so a vibration
+    # level of "true" used to pass this check as 1.
+    if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= 100:
         raise StateError(f"{label} must be 0-100, got {v!r}")
 
 

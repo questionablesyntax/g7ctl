@@ -96,6 +96,16 @@ class ValidateStateTest(unittest.TestCase):
         self.state["controller_slot"] = None
         state_mod.validate_state(self.state)
 
+    def test_rejects_bool_controller_slot(self):
+        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): Python's bool is an
+        # int subclass and True == 1, so "controller_slot": true in a
+        # hand-edited file used to pass `slot not in (1, 2, 3, 4)` and
+        # behave as slot 1 -- silently retargeting a write on a plausible
+        # hand-editing typo.
+        self.state["controller_slot"] = True
+        with self.assertRaises(state_mod.StateError):
+            state_mod.validate_state(self.state)
+
     def test_rejects_unknown_button(self):
         self.state["buttons"]["default"]["l9"] = "f1"
         with self.assertRaises(state_mod.StateError):
@@ -151,6 +161,12 @@ class ValidateStateTest(unittest.TestCase):
         with self.assertRaises(state_mod.StateError):
             state_mod.validate_state(self.state)
 
+    def test_rejects_bool_percent(self):
+        # Same 2026-09-18 fix as test_rejects_bool_controller_slot above.
+        self.state["vibration"]["left_grip"] = True
+        with self.assertRaises(state_mod.StateError):
+            state_mod.validate_state(self.state)
+
     def test_rejects_bad_report_rate(self):
         self.state["report_rate_hz"] = 750
         with self.assertRaises(state_mod.StateError):
@@ -168,6 +184,14 @@ class ValidateStateTest(unittest.TestCase):
 
     def test_rejects_bad_dock_brightness(self):
         self.state["dock_led_brightness"] = 101
+        with self.assertRaises(state_mod.StateError):
+            state_mod.validate_state(self.state)
+
+    def test_rejects_bool_dock_brightness(self):
+        # Same 2026-09-18 fix as test_rejects_bool_controller_slot above --
+        # isinstance(True, int) is True, so "dock_led_brightness": true used
+        # to pass and reach the percent coercer as 1, writing 1% brightness.
+        self.state["dock_led_brightness"] = True
         with self.assertRaises(state_mod.StateError):
             state_mod.validate_state(self.state)
 
