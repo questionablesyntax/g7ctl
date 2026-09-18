@@ -176,6 +176,31 @@ def profile_layer_byte(profile: int = 1, shift: bool = False) -> int:
     return SHIFT_CATEGORY if shift else profile
 
 
+def _looks_like_a_read_timeout(e: usb.core.USBError) -> bool:
+    """Whether a USBError from a read loop should be swallowed and retried
+    (an ordinary "nothing arrived yet") rather than raised.
+
+    REAL BUG, found 2026-09-18 (Sol's bug-sweep): the three read loops below
+    used to treat `errno is None` as equivalent to ETIMEDOUT outright,
+    regardless of the exception's own message. PyUSB backends commonly
+    construct errors with no numeric errno at all -- not limited to
+    timeouts -- so a genuine permission or backend error with no errno
+    (confirmed reproducible: `usb.core.USBError("access denied")`, errno
+    None) used to be retried silently until the deadline and then surfaced
+    as a misleading TimeoutError, losing the real cause.
+
+    Narrowed to errno 110 (ETIMEDOUT) or the exception's own message
+    actually saying so -- "timed out" (the real libusb1-backend wording
+    this project's own fakes.py reproduces) or "timeout". A genuine
+    errno-less timeout still matches via its message; a genuine
+    errno-less non-timeout error (like the access-denied case above) no
+    longer does."""
+    if getattr(e, "errno", None) == 110:
+        return True
+    msg = str(e).lower()
+    return "timed out" in msg or "timeout" in msg
+
+
 class VendorSession:
     """A claimed USB interface on the controller -- "vendor" here names the
     vendor-specific-class protocol this session speaks, not a device mode
@@ -431,7 +456,7 @@ class VendorSession:
             try:
                 report = bytes(self.dev.read(EP_IN, 64, timeout=max(1, int(remaining * 1000))))
             except usb.core.USBError as e:
-                if getattr(e, "errno", None) in (110, None) or "timeout" in str(e).lower():
+                if _looks_like_a_read_timeout(e):
                     continue
                 raise
             if (len(report) >= 4 + len(echo) + length
@@ -461,7 +486,7 @@ class VendorSession:
             try:
                 report = bytes(self.dev.read(EP_IN, 64, timeout=max(1, int(remaining * 1000))))
             except usb.core.USBError as e:
-                if getattr(e, "errno", None) in (110, None) or "timeout" in str(e).lower():
+                if _looks_like_a_read_timeout(e):
                     continue
                 raise
             if (len(report) > BATTERY_OFFSET
@@ -519,7 +544,7 @@ class VendorSession:
             try:
                 report = bytes(self.dev.read(EP_IN, 64, timeout=max(1, int(remaining * 1000))))
             except usb.core.USBError as e:
-                if getattr(e, "errno", None) in (110, None) or "timeout" in str(e).lower():
+                if _looks_like_a_read_timeout(e):
                     continue
                 raise
             # Same report ID as read responses and the input stream. Byte 4

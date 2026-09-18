@@ -250,6 +250,32 @@ class ConnectionAgnosticDefaultsTest(unittest.TestCase):
         self.assertAlmostEqual(dev.read_timeouts[-1], 500, delta=5)
 
 
+class ReadTimeoutMisclassificationTest(unittest.TestCase):
+    """REAL BUG, found 2026-09-18 (Sol's bug-sweep): read_chunk() (and
+    read_input_frame()/CMD_DEVICE_INFO's read loop, same pattern) used to
+    treat ANY USBError with no numeric errno as a timeout and retry it
+    silently until the deadline -- not just genuine timeouts. PyUSB
+    commonly constructs errors with no errno at all, so a real permission
+    or backend error with no errno was misclassified the same way,
+    surfacing as a misleading TimeoutError instead of the real cause."""
+
+    def test_errno_less_non_timeout_error_propagates(self):
+        dev = _FakeReadDevice([usb.core.USBError("access denied")])
+        sess = VendorSession(dev, via_dongle=False)
+        with self.assertRaises(usb.core.USBError) as ctx:
+            sess.read_chunk(1, 0, 1, timeout=0.05)
+        self.assertNotIsInstance(ctx.exception, TimeoutError)
+
+    def test_errno_less_timeout_message_still_retries(self):
+        # The default _FakeReadDevice exception ("timed out", no errno) --
+        # confirm it still correctly reads as a timeout after the fix, not
+        # just that a non-timeout error now propagates.
+        dev = _FakeReadDevice([])
+        sess = VendorSession(dev, via_dongle=False)
+        with self.assertRaises(TimeoutError):
+            sess.read_chunk(1, 0, 1, timeout=0.05)
+
+
 class MonotonicDeadlineTest(unittest.TestCase):
     """read_chunk()'s deadline/remaining pair must never consult the
     adjustable wall clock at all.
