@@ -84,6 +84,31 @@ class ConfirmationGateTest(unittest.TestCase):
         confirm.assert_called_once()
         self.assertFalse(window._syncing)
 
+    def test_declining_profile_switch_read_blocks_export(self):
+        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): _on_profile_changed()
+        # sets self._state["controller_slot"] to the NEWLY selected profile
+        # unconditionally, before the "Discard unsynced changes?" prompt.
+        # Declining that prompt used to leave Export fully available --
+        # self._state["controller_slot"] would say the new profile while
+        # self._state itself still held the previous, dirty profile's real
+        # values, so Export wrote that data out mislabeled as the new
+        # profile. _state_confirmed=False (set by _on_profile_changed()
+        # right alongside controller_slot, for exactly this reason) must
+        # gate Export the same way it already gates Sync.
+        window = self._window()
+        window._dirty = True
+        window._loading_profile_combo = False
+        with mock.patch.object(window, "_confirm", return_value=False):
+            window._on_profile_changed(0)
+        self.assertFalse(window._state_confirmed)
+
+        with mock.patch.object(state_mod, "save_state") as save_state, mock.patch(
+            "g7ctlc.main_window.QFileDialog.getSaveFileName",
+            return_value=("/tmp/snapshot.json", ""),
+        ), mock.patch("g7ctlc.main_window.QMessageBox.warning"):
+            window._on_export()
+        save_state.assert_not_called()
+
     def test_read_button_click_forces_a_real_dock_read(self):
         # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps
         # independently): read_btn.clicked emits a `checked: bool` that Qt

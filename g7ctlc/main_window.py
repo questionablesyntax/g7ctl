@@ -976,6 +976,23 @@ class MainWindow(QMainWindow):
         # here would be a data race.
         if self._syncing:
             return
+        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): declining "Discard
+        # unsynced changes?" after picking a different profile in the combo
+        # leaves self._state["controller_slot"] pointing at the NEWLY
+        # selected profile (set unconditionally in _on_profile_changed(),
+        # before the confirm prompt) while self._state itself still holds
+        # the PREVIOUS profile's real, dirty values -- exactly the case
+        # _state_confirmed=False exists to flag (see _on_profile_changed()'s
+        # own comment). Export previously only checked self._syncing, so it
+        # would write that stale, now-mislabeled data out under the new
+        # profile's slot number with no warning at all.
+        if not self._state_confirmed:
+            QMessageBox.warning(
+                self, "Export unavailable",
+                "The current settings haven't been confirmed against the controller "
+                "(or an import) yet -- read from the device or import a snapshot first.",
+            )
+            return
         path, _filter = QFileDialog.getSaveFileName(
             self, "Export State", self._default_snapshot_dir(), "JSON files (*.json)",
         )
