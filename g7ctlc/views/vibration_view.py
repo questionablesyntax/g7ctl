@@ -96,8 +96,10 @@ class VibrationView(QWidget):
                 "felt-tested on hardware, values below 25 produced no "
                 "detectable vibration."
             )
-            slider.valueChanged.connect(self._on_edit)
+            # Order matters -- see settings_view.py's identical fix/comment
+            # for why the touched-marker must connect before _on_edit.
             slider.valueChanged.connect(lambda _v, k=key: self._mark_slider_touched(k))
+            slider.valueChanged.connect(self._on_edit)
             form.addRow(label, container)
             self.sliders[key] = slider
         outer.addWidget(levels_box)

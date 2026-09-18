@@ -68,8 +68,15 @@ class SettingsView(QWidget):
             "Dock LED brightness. Device-wide -- not per-profile, unlike "
             "every other tab in this app."
         )
-        self.brightness.currentIndexChanged.connect(self._on_edit)
+        # Order matters: Qt fires same-signal slots in connection order, and
+        # _on_edit() below only writes brightness into state when
+        # _brightness_touched is already True. REAL BUG, found 2026-09-18
+        # (Sol's bug-sweep): this used to connect _on_edit first, so the
+        # FIRST edit after a load ran it while the flag was still False --
+        # the combo showed the new value but state silently kept the old
+        # one until a second edit. _mark_brightness_touched must run first.
         self.brightness.currentIndexChanged.connect(self._mark_brightness_touched)
+        self.brightness.currentIndexChanged.connect(self._on_edit)
         form.addRow("LED Brightness", self.brightness)
 
         self.auto_on_off = QCheckBox("Auto On/Off (with docking/undocking)")

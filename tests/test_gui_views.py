@@ -315,6 +315,29 @@ class VibrationViewRoundTripTest(unittest.TestCase):
                           "an untouched slider's exact value must survive an unrelated edit")
         self.assertTrue(state["vibration"]["right_trigger_force"])  # the real edit still landed
 
+    def test_first_edit_after_load_writes_immediately(self):
+        # REAL BUG, found 2026-09-18 (Sol's bug-sweep) -- a regression this
+        # same fix introduced (2026-09-17, see the class docstring above):
+        # valueChanged connects _on_edit BEFORE _mark_slider_touched, and Qt
+        # fires same-signal slots in connection order. So the FIRST edit
+        # after a load ran _on_edit while the touched flag was still False
+        # (set only afterward by the second-connected slot), silently
+        # dropping that edit from state -- Sync would then send the OLD
+        # value while the slider displayed the new one. The tests above
+        # never caught this because they each move a control TWICE (away
+        # and back, to get a real signal past a same-value Qt no-op) and
+        # only check state after the second move, by which point the
+        # touched flag is already set from the first.
+        from g7ctlc.views.vibration_view import VibrationView
+        state = state_mod.default_state_dict("test")
+        state["vibration"]["left_grip"] = 0  # nearest stop is index 0
+        view = VibrationView()
+        view.load_state(state)
+
+        view.sliders["left_grip"].setValue(2)  # ONE edit -- must land immediately
+        self.assertEqual(state["vibration"]["left_grip"], 50,
+                          "the first edit after a load must write into state immediately, not require a second edit")
+
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
 class SettingsViewRoundTripTest(unittest.TestCase):
@@ -378,6 +401,22 @@ class SettingsViewRoundTripTest(unittest.TestCase):
 
         self.assertEqual(state["dock_led_brightness"], 43,
                           "an untouched brightness value must survive an unrelated edit")
+
+    def test_first_edit_after_load_writes_immediately(self):
+        # REAL BUG, found 2026-09-18 (Sol's bug-sweep) -- same regression and
+        # same cause as VibrationViewRoundTripTest's identically-named test;
+        # see its comment. currentIndexChanged connects _on_edit BEFORE
+        # _mark_brightness_touched, so the first edit after a load is
+        # silently dropped from state.
+        from g7ctlc.views.settings_view import SettingsView
+        state = state_mod.default_state_dict("test")
+        state["dock_led_brightness"] = 0  # nearest stop is index 0
+        view = SettingsView()
+        view.load_state(state)
+
+        view.brightness.setCurrentIndex(1)  # ONE edit -- must land immediately
+        self.assertEqual(state["dock_led_brightness"], 25,
+                          "the first edit after a load must write into state immediately, not require a second edit")
 
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
