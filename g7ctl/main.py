@@ -72,7 +72,7 @@ from pyg7.device import (
     has_hid_interface,
     switch_to_xid,
 )
-from pyg7.session import VendorSession
+from pyg7.session import EARLY_PROBE_HEARTBEATS, VendorSession
 from pyg7.variants import identify_unsupported, identify_variant
 
 from . import __version__
@@ -650,7 +650,25 @@ def _connect_session(min_interval: float = HANDSHAKE_MIN_INTERVAL):
     with VendorSession(vdev, via_dongle=via_dongle) as sess:
         # A just-claimed session accepts heartbeats but isn't ready to
         # service CMD_READ yet -- see VendorSession.settle().
-        sess.settle()
+        #
+        # Two-tier, not a single settle()+probe: REAL BUG, found 2026-09-18
+        # (Sol's bug-sweep). ROADMAP.md item 54's 2026-09-02 root-cause
+        # investigation found the FULL warmup (SETTLE_HEARTBEATS, 24
+        # heartbeats/6s, zero reads) before the first real read is itself
+        # what destabilizes the connection right after a live profile
+        # switch to one that needs HID -- and fixed it with this exact
+        # two-tier fast/slow strategy, but only inside
+        # DeviceWatcher._establish() (the GUI). This CLI path kept calling
+        # the full, unconditional settle() the whole time -- so every
+        # device-touching CLI command still ran the exact sequence that
+        # investigation found destabilizes the connection in that scenario,
+        # three weeks after the fix landed for the GUI. Mirrors
+        # _establish()'s own comment; see that method for the full account.
+        sess.settle(count=EARLY_PROBE_HEARTBEATS)
+        live = sess.probe_controller_live(retries=0)
+        if not live:
+            sess.settle()
+            live = sess.probe_controller_live()
         # The dongle enumerates on USB (and claims, and heartbeats fine)
         # whether or not a physical controller is actually powered on and
         # paired to it -- they're two separate things joined by an RF
@@ -661,7 +679,7 @@ def _connect_session(min_interval: float = HANDSHAKE_MIN_INTERVAL):
         # possible at all; see find_writable_device()'s docstring), and
         # the cost of running this against a genuinely-wired connection is
         # just one harmless extra read. See VendorSession.probe_controller_live().
-        if not sess.probe_controller_live():
+        if not live:
             if via_dongle:
                 print("Dongle detected, but no controller answered. Make sure "
                       "it's powered on and paired (or hold Menu+Share on the "

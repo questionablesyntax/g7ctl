@@ -75,6 +75,35 @@ class _NoOpSettleSession(FakeSession):
         return True
 
 
+class _RecordingTwoTierSession(FakeSession):
+    """Records every settle()/probe_controller_live() call verbatim (args +
+    kwargs), and fails the FAST probe once before succeeding on the full
+    one -- proves _connect_session() actually tries the fast path first and
+    only falls back to the full warmup+probe when it doesn't land, the
+    same two-tier order watcher.py's _establish() already uses."""
+
+    def __init__(self):
+        super().__init__()
+        self.settle_calls = []
+        self.probe_calls = []
+        self._probe_results = [False, True]
+
+    def settle(self, *a, **k):
+        self.settle_calls.append((a, k))
+
+    def probe_controller_live(self, *a, **k):
+        self.probe_calls.append((a, k))
+        return self._probe_results.pop(0)
+
+
+class _RecordingSessionCM(_FakeSessionCM):
+    captured = None
+
+    def __init__(self, _dev, via_dongle=False):
+        self.session = _RecordingTwoTierSession()
+        type(self).captured = self.session
+
+
 class _FakeSessionCMNoOpSettle(_FakeSessionCM):
     def __init__(self, _dev, via_dongle=False):
         self.session = _NoOpSettleSession()
@@ -324,6 +353,47 @@ class DongleNoControllerTest(unittest.TestCase):
         self.assertIn("no controller answered", stderr.lower())
         self.assertNotIn("Dongle detected", stderr)
         self.assertNotIn("Traceback", stderr)
+
+
+class ConnectSessionTwoTierWarmupTest(unittest.TestCase):
+    """REAL BUG, found 2026-09-18 (Sol's bug-sweep): _connect_session()
+    called sess.settle() unconditionally, defaulting to the full
+    SETTLE_HEARTBEATS warmup on every command -- ROADMAP.md item 54's
+    2026-09-02 root-cause investigation found that exact full warmup is
+    what destabilizes the connection right after a profile switch to one
+    that needs HID, and fixed it in the GUI's watcher.py with a two-tier
+    fast/slow strategy the CLI never adopted. Confirms _connect_session()
+    now tries the fast path (EARLY_PROBE_HEARTBEATS, no probe retries)
+    first, and only falls back to the full settle()+probe when that fast
+    probe doesn't land -- the same order _establish() uses."""
+
+    def setUp(self):
+        self._orig_find = cli_main.find_writable_device
+        self._orig_session = cli_main.VendorSession
+        self._orig_argv = sys.argv
+        cli_main.find_writable_device = lambda: (object(), False)
+        cli_main.VendorSession = _RecordingSessionCM
+
+    def tearDown(self):
+        cli_main.find_writable_device = self._orig_find
+        cli_main.VendorSession = self._orig_session
+        sys.argv = self._orig_argv
+
+    def test_fast_probe_tried_before_falling_back_to_the_full_warmup(self):
+        sys.argv = ["g7ctl", "remap", "a", "f12", "--interval", "0"]
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            cli_main.main()
+        session = _RecordingSessionCM.captured
+        self.assertEqual(
+            session.settle_calls,
+            [((), {"count": cli_main.EARLY_PROBE_HEARTBEATS}), ((), {})],
+            "must try the fast, patient-free warmup before falling back to the full one",
+        )
+        self.assertEqual(
+            session.probe_calls,
+            [((), {"retries": 0}), ((), {})],
+            "the fast path's own probe must not retry -- only the fallback probe should",
+        )
 
 
 class DpadDockSetCommandTest(unittest.TestCase):
