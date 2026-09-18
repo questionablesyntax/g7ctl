@@ -375,6 +375,38 @@ class DpadDockSetCommandTest(unittest.TestCase):
                 cli_main.build_parser().parse_args(sys.argv[1:])
         self.assertNotEqual(ctx.exception.code, 0)
 
+    def test_negative_pre_heartbeats_rejected_via_argparse(self):
+        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): plain type=int
+        # accepted any signed value -- a negative count silently suppressed
+        # the corresponding safety heartbeat (range() on a negative count
+        # just doesn't loop) instead of being rejected.
+        sys.argv = ["g7ctl", "remap", "a", "f12", "--pre-heartbeats", "-1"]
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as ctx:
+                cli_main.build_parser().parse_args(sys.argv[1:])
+        self.assertNotEqual(ctx.exception.code, 0)
+
+    def test_negative_post_heartbeats_rejected_via_argparse(self):
+        sys.argv = ["g7ctl", "remap", "a", "f12", "--post-heartbeats", "-1"]
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as ctx:
+                cli_main.build_parser().parse_args(sys.argv[1:])
+        self.assertNotEqual(ctx.exception.code, 0)
+
+    def test_negative_interval_rejected_via_argparse(self):
+        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): plain type=float
+        # accepted a negative interval. With --pre-heartbeats 0
+        # --post-heartbeats 1 --interval -1, _wrapped_write() did the real
+        # persistent write BEFORE the post-heartbeat sleep(-1) raised --
+        # the CLI reported failure for a write that had already landed.
+        # Rejecting the value up front at parse time means _wrapped_write()
+        # is never reached with it at all.
+        sys.argv = ["g7ctl", "remap", "a", "f12", "--interval", "-1"]
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as ctx:
+                cli_main.build_parser().parse_args(sys.argv[1:])
+        self.assertNotEqual(ctx.exception.code, 0)
+
     def test_motion_set_aim_deadzone(self):
         payload = self._run(["motion-set", "aim", "deadzone_initial", "17", "--profile", "1"])
         self.assertEqual(payload[3], 0xA0)   # SETTING_ID

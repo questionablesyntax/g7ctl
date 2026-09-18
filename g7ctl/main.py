@@ -125,12 +125,41 @@ class _NonExitingArgumentParser(argparse.ArgumentParser):
         raise _BatchLineError("this option isn't valid inside a batch session")
 
 
+def _non_negative_int(s: str) -> int:
+    """argparse `type=` for --pre-heartbeats/--post-heartbeats.
+
+    REAL BUG, found 2026-09-18 (Sol's bug-sweep): plain `type=int` accepts
+    any signed value, including negative counts. A negative heartbeat count
+    silently suppressed the corresponding safety heartbeat entirely (range()
+    on a negative count just doesn't loop) rather than being rejected --
+    quietly weaker pacing around a persistent write, not an error."""
+    v = int(s)
+    if v < 0:
+        raise argparse.ArgumentTypeError(f"must be 0 or greater, got {v}")
+    return v
+
+
+def _non_negative_float(s: str) -> float:
+    """argparse `type=` for --interval.
+
+    REAL BUG, found 2026-09-18 (Sol's bug-sweep): plain `type=float` accepts
+    a negative interval. `_wrapped_write()` does the persistent write BEFORE
+    the post-heartbeat sleep -- with e.g. `--pre-heartbeats 0
+    --post-heartbeats 1 --interval -1`, sleep(-1) raised ValueError only
+    AFTER the write had already landed, so the CLI reported failure for a
+    write that had, in fact, succeeded."""
+    v = float(s)
+    if v < 0:
+        raise argparse.ArgumentTypeError(f"must be 0 or greater, got {v}")
+    return v
+
+
 def _add_heartbeat_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--pre-heartbeats", type=int, default=DEFAULT_PRE_HEARTBEATS,
+    parser.add_argument("--pre-heartbeats", type=_non_negative_int, default=DEFAULT_PRE_HEARTBEATS,
                          help=f"Heartbeats to send before the write, to look like an established session (default {DEFAULT_PRE_HEARTBEATS})")
-    parser.add_argument("--post-heartbeats", type=int, default=DEFAULT_POST_HEARTBEATS,
+    parser.add_argument("--post-heartbeats", type=_non_negative_int, default=DEFAULT_POST_HEARTBEATS,
                          help=f"Heartbeats to send after the write, to let it 'stick' before we go silent (default {DEFAULT_POST_HEARTBEATS})")
-    parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL,
+    parser.add_argument("--interval", type=_non_negative_float, default=DEFAULT_INTERVAL,
                          help=f"Seconds between heartbeats, matches observed app cadence (default {DEFAULT_INTERVAL})")
 
 
