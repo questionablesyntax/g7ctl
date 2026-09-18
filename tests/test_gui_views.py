@@ -852,3 +852,50 @@ class ButtonsViewContinuousTriggerTest(unittest.TestCase):
         view.set_layer("shift")
         self.assertFalse(view.continuous_header.isVisible())
         view.set_layer("default")
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class MotionViewRoundTripTest(unittest.TestCase):
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_custom_curve_points_survive_an_unrelated_edit(self):
+        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): save_into() used to
+        # set curve["points"] = None UNCONDITIONALLY on every edit --
+        # actively discarding real custom points a device read may have
+        # successfully decoded (pyg7.motion.decode_settings() does return
+        # them when the block is configured; only the WRITE side has no
+        # curve_points setting yet). This widget has no point-editor UI of
+        # its own, so it can't legitimately claim to know better than
+        # whatever was already there.
+        from g7ctlc.views.motion_view import MotionView
+        state = state_mod.default_state_dict("test")
+        points = [[1, 2], [3, 4], [5, 6]]
+        state["motion"]["aim"]["curve"] = {"preset": "custom", "points": points}
+        view = MotionView()
+        view.load_state(state)
+
+        view._on_edit()  # an edit touching fields this widget DOES own
+
+        self.assertEqual(state["motion"]["aim"]["curve"]["points"], points,
+                          "an edit to fields this widget owns must not erase "
+                          "custom curve points that were already in state")
+
+    def test_a_brand_new_curve_defaults_points_to_none(self):
+        # Not a regression guard for the bug above -- confirms the fix
+        # didn't just remove the assignment outright: a curve dict that
+        # never had a "points" key at all (a fresh state, or an older
+        # export predating this section) still gets one, same as before.
+        from g7ctlc.views.motion_view import MotionView
+        state = state_mod.default_state_dict("test")
+        del state["motion"]["aim"]["curve"]
+        view = MotionView()
+        view.load_state(state)
+
+        view._on_edit()
+
+        self.assertIn("points", state["motion"]["aim"]["curve"])
+        self.assertIsNone(state["motion"]["aim"]["curve"]["points"])

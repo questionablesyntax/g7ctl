@@ -218,10 +218,21 @@ class _MotionSideWidget(CategorySideWidget):
         side_data["x_axis_output_mode"] = self.x_axis_output_mode.currentData()
         curve = side_data.setdefault("curve", {})
         curve["preset"] = self.curve.currentText()
-        # Points are never written for Motion (no curve_points setting in
-        # pyg7.motion yet) -- always None here, unlike Sticks, so a fresh
-        # export doesn't claim editable points that don't exist.
-        curve["points"] = None
+        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): this used to set
+        # curve["points"] = None unconditionally on every edit, actively
+        # discarding real custom points that a device read may have
+        # successfully decoded (pyg7.motion.decode_settings() does return
+        # them when the block is configured -- only the WRITE side has no
+        # curve_points setting yet, see this module's own docstring and
+        # motion.py's). This widget has no point-editor UI and so has no
+        # in-memory copy of its own to write back -- but it must not erase
+        # points that were already there just because an unrelated field on
+        # this same side (activate_method, deadzone, ...) was edited.
+        # setdefault(), not an unconditional assignment: leaves whatever's
+        # already in state untouched, only defaulting to None for a
+        # brand-new curve dict that never had any -- same reasoning
+        # Sticks' own curve_points editor has for a state it never wrote.
+        curve.setdefault("points", None)
         side_data["deadzone"] = {"initial": self.dz_initial.value(), "max": self.dz_max.value()}
         side_data["anti_deadzone"] = {"initial": self.adz_initial.value(), "max": self.adz_max.value()}
         side_data["invert_y"] = self.invert_y.isChecked()
