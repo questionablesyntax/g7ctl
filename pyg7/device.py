@@ -434,10 +434,29 @@ def find_hid_device() -> Optional[usb.core.Device]:
     return None
 
 
-def find_writable_device() -> tuple[Optional[usb.core.Device], bool]:
+def find_writable_device(
+    *, bus: Optional[int] = None, port_numbers: Optional[tuple] = None
+) -> tuple[Optional[usb.core.Device], bool]:
     """Find a device *already* ready to accept 0x0f config writes -- any
     baseline (no-HID) identity, wired or dongle. Returns
     (device, via_dongle) or (None, False).
+
+    `bus`/`port_numbers`, if given, restrict the scan to devices on that
+    exact physical USB port. REAL BUG, found 2026-09-18 (Sol's bug-sweep,
+    reproduced with two fake devices): without this, switch_to_xid()'s
+    re-enumeration loop called this with no scoping at all, so with two
+    controllers attached -- one being handshaken off PID_HID, a second
+    already sitting writable -- the first writable device this function's
+    unscoped, first-match scan happened to see could be the WRONG one, and
+    the caller would open a session on a controller it never sent the
+    handshake to. `.address` can't be used for this: it's reassigned by
+    the host on every re-enumeration, which is exactly the event being
+    waited through here. `.bus`/`.port_numbers` (the physical port path)
+    stay fixed across it -- confirmed by this module's own docstring
+    elsewhere ("same USB port, disconnect at handshake, re-enumerated ...
+    ~2s later"). Not hardware-reverified specifically for the two-controller
+    case (would need a second physical unit); verified against fakes, same
+    method the bug-sweep itself used.
 
     PID_XID was never a distinct "vendor mode" the controller gets switched
     into and falls back out of -- see the module docstring and PROTOCOL.md
@@ -473,6 +492,10 @@ def find_writable_device() -> tuple[Optional[usb.core.Device], bool]:
     needed.
     """
     for dev in _candidate_devices():
+        if bus is not None and dev.bus != bus:
+            continue
+        if port_numbers is not None and tuple(getattr(dev, "port_numbers", None) or ()) != tuple(port_numbers):
+            continue
         if _has_vendor_interface(dev) and not has_hid_interface(dev):
             return dev, is_known_dongle_pid(dev.idProduct)
     return None, False
@@ -657,6 +680,12 @@ def switch_to_xid(timeout_s: float = 10.0,
         return None, False
 
     log.info("Found a stable PID_HID device (bus=%s addr=%s).", dev.bus, dev.address)
+    # Captured before the handshake, used below to scope the re-enumeration
+    # poll to this exact physical device -- see find_writable_device()'s own
+    # bus/port_numbers comment for why (not .address: that's reassigned by
+    # the host on every re-enumeration, the very event being waited through).
+    handshaken_bus = dev.bus
+    handshaken_port_numbers = tuple(getattr(dev, "port_numbers", None) or ())
     detached = False
     if dev.is_kernel_driver_active(IFACE):
         dev.detach_kernel_driver(IFACE)
@@ -714,7 +743,18 @@ def switch_to_xid(timeout_s: float = 10.0,
         # matching on PID alone would return the *pre*-handshake device
         # immediately and every read after it fails. Waiting for interface
         # 1 to stop being HID waits for the thing that actually changes.
-        vdev, via_dongle = find_writable_device()
+        #
+        # bus/port_numbers scoping: REAL BUG, found 2026-09-18 (Sol's
+        # bug-sweep). An unscoped call here returns whichever writable
+        # device this VID-wide scan sees FIRST -- with a second controller
+        # already sitting writable while this one is still mid-handshake,
+        # that could be the wrong device entirely, and the caller would
+        # open a session on a controller it never sent the handshake to.
+        # Scoping to the exact physical port the handshake was actually
+        # sent to (captured as handshaken_bus/handshaken_port_numbers
+        # above, before the handshake) fixes that.
+        vdev, via_dongle = find_writable_device(
+            bus=handshaken_bus, port_numbers=handshaken_port_numbers)
         if vdev is not None:
             # Real answer to roadmap item 36's original question -- which
             # G7 Pro colourway is this -- via this PID itself, not a

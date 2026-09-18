@@ -519,6 +519,7 @@ class SwitchToXidLandingIdentityTest(unittest.TestCase):
         self.assertIs(dev, landed)
         self.assertFalse(via_dongle)
 
+
     def test_other_variant_dongle_landing_is_recognized_too(self):
         (dev, via_dongle), landed = self._run(TRIMODE_DONGLE_PID)
         self.assertIs(dev, landed)
@@ -544,6 +545,40 @@ class SwitchToXidLandingIdentityTest(unittest.TestCase):
         self.assertIsNone(dev)
         self.assertFalse(via_dongle)
         self.assertTrue(any("Timed out" in msg for msg in cm.output))
+
+
+class SwitchToXidMultiControllerTest(unittest.TestCase):
+    """REAL BUG, found 2026-09-18 (Sol's bug-sweep, reproduced with two fake
+    devices): the post-handshake re-enumeration loop used to call
+    find_writable_device() completely unscoped, so with a second
+    controller already sitting writable on a DIFFERENT USB port,
+    switch_to_xid()'s first-match scan could return that one instead of
+    the device actually handshaken -- reporting success while having
+    opened a session on the wrong physical controller."""
+
+    def test_returns_the_handshaken_device_not_a_different_writable_one(self):
+        hid_dev = _hid_shaped(HID_PID)
+        hid_dev.bus = 5
+        other_writable = _xid_shaped(XID_PID)
+        other_writable.bus = 9  # a second, unrelated controller, already writable
+        landed_dev = _xid_shaped(XID_PID)
+        landed_dev.bus = 5  # same physical port as hid_dev, after re-enumerating
+
+        # Post-handshake polling sees the OTHER controller's writable device
+        # FIRST -- an unscoped, first-match scan would return it immediately,
+        # before ever considering landed_dev.
+        find_effect = itertools.chain(
+            [[hid_dev]], itertools.repeat([other_writable, landed_dev]))
+
+        with mock.patch("usb.core.find", side_effect=find_effect), \
+             mock.patch("usb.util.claim_interface"), \
+             mock.patch("usb.util.release_interface"), \
+             mock.patch.object(device.time, "sleep"):
+            dev, via_dongle = device.switch_to_xid(timeout_s=1.0)
+
+        self.assertIs(dev, landed_dev,
+                       "must return the device actually handshaken, not a "
+                       "different controller's writable device")
 
 
 class _TracksDriverCallsDev(_FakeDev):
