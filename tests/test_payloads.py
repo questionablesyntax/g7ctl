@@ -250,6 +250,16 @@ class VibrationTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             vibration.set_value(FakeSession(), "left_trigger_flags", -1)
 
+    def test_flags_string_typo_rejected(self):
+        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): the string-token
+        # path used to check only whether a token was in the true set --
+        # any other string, including a typo like "onn", silently meant
+        # False rather than being rejected. `g7ctl vibration-set
+        # left_trigger_flags onn,off` used to write force=False/sync=False
+        # (payload byte 0) with no error at all.
+        with self.assertRaises(ValueError):
+            vibration.set_value(FakeSession(), "left_trigger_flags", "onn,off")
+
     def test_out_of_range_level_rejected(self):
         with self.assertRaises(ValueError):
             vibration.set_value(FakeSession(), "left_grip", 101)

@@ -8,7 +8,7 @@ module docstring.
 """
 from .constants import CMD_WRITE, prefix_triggers_vibration
 from .session import VendorSession
-from .values import SettingValue
+from .values import SettingValue, boolean
 
 LEVEL_SETTING_IDS = {
     "left_grip": 0x20,
@@ -112,11 +112,21 @@ def set_value(session: VendorSession, setting: str, value: SettingValue, profile
             val = value
         else:
             # "force,sync" as two on/off tokens, e.g. "on,off"
-            parts = [p.strip().lower() for p in str(value).split(",")]
+            #
+            # REAL BUG, found 2026-09-18 (Sol's bug-sweep): this used to
+            # check each token against only the true-token set inline
+            # (`parts[0] in ("1", "true", "on", "yes")`), so ANY other
+            # string -- a typo like "onn", or an unrelated word -- silently
+            # meant False rather than being rejected. Same bug boolean()
+            # itself had until 2026-09-17 (see that function's own comment)
+            # -- this call site is a separate, drifted copy of the same
+            # logic that survived that fix untouched because it was never
+            # routed through the shared helper. Now it is.
+            parts = [p.strip() for p in str(value).split(",")]
             if len(parts) != 2:
                 raise ValueError("flags value must be an int 0-3, or 'force,sync' e.g. 'on,off'")
-            force = parts[0] in ("1", "true", "on", "yes")
-            sync = parts[1] in ("1", "true", "on", "yes")
+            force = boolean(parts[0])
+            sync = boolean(parts[1])
             val = flags_byte(force, sync)
         payload = prefix + bytes([sid, 0x01, val])
     else:
