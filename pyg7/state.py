@@ -204,12 +204,27 @@ class StateError(ValueError):
     """Raised by validate_state() / load_state() on a malformed state dict."""
 
 
+def _require_dict(v: object, label: str) -> None:
+    """Raise StateError (not AttributeError) if `v` isn't a dict/object --
+    guards every `.items()`/`.get()` call this function makes on a section
+    or sub-section, one level deep. REAL BUG, found 2026-09-18 (Sol's
+    bug-sweep): before this existed, a hand-edited "buttons": [] (wrong
+    container type) hit .items() on a list and raised a plain
+    AttributeError -- a different exception class than every other
+    rejection in this function, so it escaped the CLI's and GUI's
+    `except (OSError, ValueError)` handlers as a raw traceback."""
+    if not isinstance(v, dict):
+        raise StateError(f"{label} must be an object, got {v!r}")
+
+
 def validate_state(data: dict) -> None:
     """Raises StateError with a clear message on the first problem found.
-    Not exhaustive on deeply-nested structure (trusts JSON-shape mistakes to
-    surface as KeyError/TypeError during write_state instead), but catches
-    the mistakes most likely from hand-editing or a GUI bug: unknown names,
-    out-of-range values, wrong top-level shape.
+    Not exhaustive on arbitrarily-deep nested structure (trusts JSON-shape
+    mistakes past the first level to surface as KeyError/TypeError during
+    write_state instead), but catches the mistakes most likely from
+    hand-editing or a GUI bug: unknown names, out-of-range values, wrong
+    top-level shape, and wrong container type one level into each section
+    (`_require_dict()` above).
     """
     if not isinstance(data, dict):
         raise StateError("state must be a JSON object")
@@ -274,32 +289,48 @@ def validate_state(data: dict) -> None:
     if auto is not None and not isinstance(auto, bool):
         raise StateError(f"dock_auto_on_off must be a bool or null, got {auto!r}")
 
+    # _require_dict() calls below: REAL BUG, found 2026-09-18 (Sol's
+    # bug-sweep). A hand-edited snapshot with e.g. "buttons": [] (wrong
+    # container type, not just a wrong-shaped dict) hit .items() on a list
+    # and raised a raw AttributeError -- a different exception class than
+    # the StateError (a ValueError subclass) every other rejection here
+    # raises, so it escaped the CLI's and GUI's `except (OSError, ValueError)`
+    # handlers as an unhandled traceback instead of a clean error message.
+    _require_dict(data["buttons"], "buttons")
     for layer_name, bindings in data["buttons"].items():
         if layer_name not in ("default", "shift"):
             raise StateError(f"unknown button layer {layer_name!r}, expected 'default' or 'shift'")
+        _require_dict(bindings, f"buttons.{layer_name}")
         for btn, keycode_name in bindings.items():
             if btn.lower() not in buttons.KNOWN_BUTTON_IDS:
                 raise StateError(f"unknown button {btn!r}")
             if keycode_name is not None and not _is_valid_keycode_value(keycode_name):
                 raise StateError(f"unknown keycode {keycode_name!r} for button {btn!r}")
 
+    _require_dict(data["sticks"], "sticks")
     for side_name, side_data in data["sticks"].items():
         if side_name not in ("left", "right"):
             raise StateError(f"unknown stick side {side_name!r}")
+        _require_dict(side_data, f"sticks.{side_name}")
         _validate_stick_settings(side_data)
 
+    _require_dict(data["triggers"], "triggers")
     for side_name, side_data in data["triggers"].items():
         if side_name not in ("left", "right"):
             raise StateError(f"unknown trigger side {side_name!r}")
+        _require_dict(side_data, f"triggers.{side_name}")
         _validate_trigger_settings(side_data)
 
     # Additive, same reasoning as report_rate_hz/continuous_trigger above --
     # older state JSON exported before this section existed still validates.
     motion_data = data.get("motion")
     if motion_data is not None:
+        _require_dict(motion_data, "motion")
         for side_name, side_data in motion_data.items():
             if side_name not in ("aim", "tilt"):
                 raise StateError(f"unknown motion side {side_name!r}")
+            if side_data is not None:
+                _require_dict(side_data, f"motion.{side_name}")
             _validate_motion_settings(side_name, side_data or {})
 
     # 0-100, NOT vibration.LEVELS. The five-value restriction is a rule about
@@ -310,6 +341,7 @@ def validate_state(data: dict) -> None:
     # on a perfectly readable controller and made older exports un-importable.
     # The restriction is enforced in _vibration_steps(), at the point a write
     # is actually produced.
+    _require_dict(data["vibration"], "vibration")
     _validate_percent(data["vibration"].get("left_grip"), "vibration.left_grip")
     _validate_percent(data["vibration"].get("right_grip"), "vibration.right_grip")
     _validate_percent(data["vibration"].get("left_trigger"), "vibration.left_trigger")
@@ -339,7 +371,15 @@ def _is_valid_keycode_value(s: str) -> bool:
 
     Range-checked against 0-255 (a keycode is one wire byte) -- without this,
     a value like "1ff" passed validation cleanly and then crashed
-    write_state()/remap() with an opaque bytes-range error far from here."""
+    write_state()/remap() with an opaque bytes-range error far from here.
+
+    isinstance(s, str) check: REAL BUG, found 2026-09-18 (Sol's bug-sweep).
+    A hand-edited binding like "a": 123 (a raw int, not a string) reached
+    s.lower() and raised a plain AttributeError -- same escaped-exception
+    problem as _require_dict() above, just here instead of a container
+    type."""
+    if not isinstance(s, str):
+        return False
     if s.lower() in buttons.KNOWN_KEYCODES:
         return True
     try:

@@ -106,6 +106,44 @@ class ValidateStateTest(unittest.TestCase):
         with self.assertRaises(state_mod.StateError):
             state_mod.validate_state(self.state)
 
+    def test_rejects_wrong_container_type_for_buttons(self):
+        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): "buttons": [] (a
+        # list, not a dict) used to hit .items() and raise a plain
+        # AttributeError -- a different exception class than every other
+        # rejection here, so it escaped the CLI's and GUI's
+        # `except (..., ValueError)` handlers as a raw traceback.
+        self.state["buttons"] = []
+        with self.assertRaises(state_mod.StateError):
+            state_mod.validate_state(self.state)
+
+    def test_rejects_wrong_container_type_for_button_layer(self):
+        self.state["buttons"]["default"] = []
+        with self.assertRaises(state_mod.StateError):
+            state_mod.validate_state(self.state)
+
+    def test_rejects_wrong_container_type_for_sticks(self):
+        self.state["sticks"] = []
+        with self.assertRaises(state_mod.StateError):
+            state_mod.validate_state(self.state)
+
+    def test_rejects_wrong_container_type_for_triggers(self):
+        self.state["triggers"] = []
+        with self.assertRaises(state_mod.StateError):
+            state_mod.validate_state(self.state)
+
+    def test_rejects_wrong_container_type_for_vibration(self):
+        self.state["vibration"] = []
+        with self.assertRaises(state_mod.StateError):
+            state_mod.validate_state(self.state)
+
+    def test_rejects_non_string_keycode_value(self):
+        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): a hand-edited
+        # binding like "a": 123 (a raw int) used to reach s.lower() inside
+        # _is_valid_keycode_value() and raise a plain AttributeError.
+        self.state["buttons"]["default"]["a"] = 123
+        with self.assertRaises(state_mod.StateError):
+            state_mod.validate_state(self.state)
+
     def test_rejects_unknown_button(self):
         self.state["buttons"]["default"]["l9"] = "f1"
         with self.assertRaises(state_mod.StateError):
