@@ -1,4 +1,6 @@
 """Main window: category tabs, Import/Export, Sync Now, Read from Device."""
+import copy
+import json
 import os
 from pathlib import Path
 from typing import Optional
@@ -271,14 +273,29 @@ class MainWindow(QMainWindow):
         self.import_export_btn.setText("Import / Export")
         self.import_export_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         import_export_menu = QMenu(self.import_export_btn)
-        import_action = QAction("Import…", self)
-        import_action.setToolTip("Load a previously exported JSON snapshot file")
+        import_action = QAction("Import Game Profile…", self)
+        import_action.setToolTip(
+            "Load a game profile without changing the device-global Shared Shift layer"
+        )
         import_action.triggered.connect(self._on_import)
         import_export_menu.addAction(import_action)
-        export_action = QAction("Export…", self)
-        export_action.setToolTip("Save the current state to a JSON snapshot file")
+        export_action = QAction("Export Game Profile…", self)
+        export_action.setToolTip(
+            "Save this profile without the device-global Shared Shift layer"
+        )
         export_action.triggered.connect(self._on_export)
         import_export_menu.addAction(export_action)
+
+        import_export_menu.addSeparator()
+
+        shared_import_action = QAction("Import Shared Profile…", self)
+        shared_import_action.setToolTip("Load only the device-global Shared Shift layer")
+        shared_import_action.triggered.connect(self._on_import_shared_profile)
+        import_export_menu.addAction(shared_import_action)
+        shared_export_action = QAction("Export Shared Profile…", self)
+        shared_export_action.setToolTip("Save only the device-global Shared Shift layer")
+        shared_export_action.triggered.connect(self._on_export_shared_profile)
+        import_export_menu.addAction(shared_export_action)
         self.import_export_btn.setMenu(import_export_menu)
         button_bar.addWidget(self.import_export_btn)
         button_bar.addStretch(1)
@@ -990,20 +1007,22 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self, "Export unavailable",
                 "The current settings haven't been confirmed against the controller "
-                "(or an import) yet -- read from the device or import a snapshot first.",
+                "(or an import) yet -- read from the device or import a game profile first.",
             )
             return
         path, _filter = QFileDialog.getSaveFileName(
-            self, "Export State", self._default_snapshot_dir(), "JSON files (*.json)",
+            self, "Export Game Profile", self._default_snapshot_dir(), "JSON files (*.json)",
         )
         if not path:
             return
         try:
-            state_mod.save_state(path, self._state)
+            game_state = copy.deepcopy(self._state)
+            game_state.setdefault("buttons", {})["shift"] = {}
+            state_mod.save_state(path, game_state)
         except (state_mod.StateError, OSError) as exc:
-            QMessageBox.critical(self, "Export failed", str(exc))
+            QMessageBox.critical(self, "Game profile export failed", str(exc))
             return
-        self.status_label.setText(f"Exported to {Path(path).name}")
+        self.status_label.setText(f"Exported game profile to {Path(path).name}")
 
     def _on_import(self) -> None:
         # Same guard as _on_export(): replacing self._state mid-sync would
@@ -1014,14 +1033,17 @@ class MainWindow(QMainWindow):
         if self._syncing:
             return
         path, _filter = QFileDialog.getOpenFileName(
-            self, "Import State", self._default_snapshot_dir(), "JSON files (*.json)",
+            self, "Import Game Profile", self._default_snapshot_dir(), "JSON files (*.json)",
         )
         if not path:
             return
         try:
             imported = state_mod.load_state(path)
-        except (state_mod.StateError, OSError, ValueError) as exc:
-            QMessageBox.critical(self, "Import failed", str(exc))
+            shared = copy.deepcopy(self._state.get("buttons", {}).get("shift", {}))
+            imported.setdefault("buttons", {})["shift"] = shared
+            state_mod.validate_state(imported)
+        except (state_mod.StateError, OSError, ValueError, TypeError) as exc:
+            QMessageBox.critical(self, "Game profile import failed", str(exc))
             return
         self._state = imported
         self._state_confirmed = True
@@ -1029,7 +1051,76 @@ class MainWindow(QMainWindow):
         self._refresh_sync_btn()
         self._refresh_confirmed_display()
         self._set_dirty(True)
-        self.status_label.setText(f"Imported {Path(path).name} -- not yet synced")
+        self.status_label.setText(f"Imported game profile {Path(path).name} -- not yet synced")
+
+    def _on_export_shared_profile(self) -> None:
+        if self._syncing:
+            return
+        if not self._state_confirmed:
+            QMessageBox.warning(
+                self,
+                "Export unavailable",
+                "The current settings haven't been confirmed against the controller "
+                "(or an import) yet -- read from the device or import a game profile first.",
+            )
+            return
+        path, _filter = QFileDialog.getSaveFileName(
+            self, "Export Shared Profile", self._default_snapshot_dir(), "JSON files (*.json)",
+        )
+        if not path:
+            return
+        shared_profile = {
+            "format": "g7ctlc-shared-profile",
+            "version": 1,
+            "shift": copy.deepcopy(self._state.get("buttons", {}).get("shift", {})),
+        }
+        try:
+            with open(path, "w") as f:
+                json.dump(shared_profile, f, indent=2)
+                print(file=f)
+        except OSError as exc:
+            QMessageBox.critical(self, "Shared profile export failed", str(exc))
+            return
+        self.status_label.setText(f"Exported Shared profile to {Path(path).name}")
+
+    def _on_import_shared_profile(self) -> None:
+        if self._syncing:
+            return
+        path, _filter = QFileDialog.getOpenFileName(
+            self, "Import Shared Profile", self._default_snapshot_dir(), "JSON files (*.json)",
+        )
+        if not path:
+            return
+        try:
+            with open(path) as f:
+                shared_profile = json.load(f)
+            if not isinstance(shared_profile, dict):
+                raise state_mod.StateError("Shared profile must be a JSON object")
+            if shared_profile.get("format") != "g7ctlc-shared-profile":
+                raise state_mod.StateError("not a g7ctlc Shared Profile")
+            if shared_profile.get("version") != 1:
+                raise state_mod.StateError(
+                    f"unsupported Shared Profile version {shared_profile.get('version')!r}"
+                )
+            shift = shared_profile.get("shift")
+            if not isinstance(shift, dict):
+                raise state_mod.StateError("Shared Profile shift section must be an object")
+
+            candidate = copy.deepcopy(self._state)
+            candidate.setdefault("buttons", {})["shift"] = copy.deepcopy(shift)
+            state_mod.validate_state(candidate)
+        except (state_mod.StateError, OSError, ValueError, TypeError) as exc:
+            QMessageBox.critical(self, "Shared profile import failed", str(exc))
+            return
+
+        self._state["buttons"]["shift"] = copy.deepcopy(shift)
+        self._load_views_from_state()
+        self._refresh_sync_btn()
+        self._refresh_confirmed_display()
+        self._set_dirty(True)
+        self.status_label.setText(
+            f"Imported Shared profile {Path(path).name} -- not yet synced"
+        )
 
     # --- Help menu -----------------------------------------------------
 

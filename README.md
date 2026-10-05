@@ -173,8 +173,11 @@ the window.
   unchanged sync is effectively a no-op instead of rewriting ~30 settings.
 - **"Read from Device"** does the same read on demand — useful for catching
   drift from the on-device remap shortcuts below.
-- **"Export…" / "Import…"** save or load the entire current state as a JSON
-  snapshot at a path you choose.
+- **Game Profile Import/Export** saves or loads the selected profile without
+  changing the device-global Shared Shift layer.
+- **Shared Profile Import/Export** saves or loads only that device-global Shared
+  Shift layer. Full-state snapshots remain available through `g7ctl read-state
+  --save` and `g7ctl write-state`.
 - **Automatic release on unfocus** — the controller goes back to being a gamepad
   whenever the window isn't focused, and reconnects when it is. A sync or read
   in flight defers the release until it finishes, so tabbing away mid-write

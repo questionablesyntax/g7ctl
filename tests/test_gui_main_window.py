@@ -13,6 +13,7 @@ as the other g7ctlc test modules.
 """
 import os
 import unittest
+from pathlib import Path
 from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -920,3 +921,214 @@ class ImportExportSyncingGuardTest(unittest.TestCase):
             w._on_export()
 
         save_state.assert_not_called()
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class SeparateGameSharedProfileTest(unittest.TestCase):
+    # Game profiles must preserve Shared, and Shared profiles must preserve
+    # every game-specific setting.
+
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+
+        w = MainWindow()
+        w.set_connection_state("connected")
+        w.set_read_finished(True, "read ok", state_mod.default_state_dict("read"))
+        return w
+
+    def test_game_export_omits_shared_without_mutating_live_state(self):
+        w = self._window()
+        w._state["buttons"]["shift"]["a"] = "f12"
+        original_shift = dict(w._state["buttons"]["shift"])
+
+        with mock.patch.object(state_mod, "save_state") as save_state, mock.patch(
+            "g7ctlc.main_window.QFileDialog.getSaveFileName",
+            return_value=("/tmp/game-profile.json", ""),
+        ):
+            w._on_export()
+
+        save_state.assert_called_once()
+        exported = save_state.call_args.args[1]
+        self.assertEqual(exported["buttons"]["shift"], {})
+        self.assertEqual(w._state["buttons"]["shift"], original_shift)
+        self.assertIsNot(exported, w._state)
+
+    def test_game_import_preserves_current_shared_from_full_snapshot(self):
+        w = self._window()
+        w._state["buttons"]["shift"]["a"] = "f12"
+        current_shift = dict(w._state["buttons"]["shift"])
+
+        imported = state_mod.default_state_dict("imported")
+        imported["buttons"]["default"]["b"] = "f11"
+        imported["buttons"]["shift"]["a"] = "f1"
+
+        with mock.patch.object(
+            state_mod, "load_state", return_value=imported
+        ), mock.patch(
+            "g7ctlc.main_window.QFileDialog.getOpenFileName",
+            return_value=("/tmp/old-full-snapshot.json", ""),
+        ):
+            w._on_import()
+
+        self.assertEqual(w._state["buttons"]["default"]["b"], "f11")
+        self.assertEqual(w._state["buttons"]["shift"], current_shift)
+
+    def test_shared_export_contains_only_shared_payload(self):
+        import json
+        import tempfile
+
+        w = self._window()
+        w._state["buttons"]["shift"]["a"] = "f12"
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as fh:
+            path = fh.name
+
+        try:
+            with mock.patch(
+                "g7ctlc.main_window.QFileDialog.getSaveFileName",
+                return_value=(path, ""),
+            ):
+                w._on_export_shared_profile()
+
+            with open(path) as f:
+                exported = json.load(f)
+
+            self.assertEqual(set(exported), {"format", "version", "shift"})
+            self.assertEqual(exported["format"], "g7ctlc-shared-profile")
+            self.assertEqual(exported["version"], 1)
+            self.assertEqual(exported["shift"]["a"], "f12")
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+    def test_shared_import_changes_only_shift(self):
+        import copy
+        import json
+        import tempfile
+
+        w = self._window()
+        w._state["buttons"]["default"]["b"] = "f11"
+        before = copy.deepcopy(w._state)
+
+        payload = {
+            "format": "g7ctlc-shared-profile",
+            "version": 1,
+            "shift": {"a": "f12", "l4": "shift"},
+        }
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            json.dump(payload, fh)
+            path = fh.name
+
+        try:
+            with mock.patch(
+                "g7ctlc.main_window.QFileDialog.getOpenFileName",
+                return_value=(path, ""),
+            ):
+                w._on_import_shared_profile()
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+        expected = copy.deepcopy(before)
+        expected["buttons"]["shift"] = payload["shift"]
+        self.assertEqual(w._state, expected)
+
+    def test_invalid_shared_binding_is_rejected_without_state_change(self):
+        import copy
+        import json
+        import tempfile
+
+        w = self._window()
+        before = copy.deepcopy(w._state)
+        payload = {
+            "format": "g7ctlc-shared-profile",
+            "version": 1,
+            "shift": {"a": "definitely_not_a_keycode"},
+        }
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            json.dump(payload, fh)
+            path = fh.name
+
+        try:
+            with mock.patch(
+                "g7ctlc.main_window.QFileDialog.getOpenFileName",
+                return_value=(path, ""),
+            ), mock.patch("g7ctlc.main_window.QMessageBox.critical") as critical:
+                w._on_import_shared_profile()
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+        critical.assert_called_once()
+        self.assertEqual(w._state, before)
+
+    def test_wrong_shared_format_and_version_are_rejected(self):
+        import copy
+        import json
+        import tempfile
+
+        payloads = (
+            {"format": "not-shared", "version": 1, "shift": {}},
+            {"format": "g7ctlc-shared-profile", "version": 999, "shift": {}},
+        )
+
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                w = self._window()
+                before = copy.deepcopy(w._state)
+
+                with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+                    json.dump(payload, fh)
+                    path = fh.name
+
+                try:
+                    with mock.patch(
+                        "g7ctlc.main_window.QFileDialog.getOpenFileName",
+                        return_value=(path, ""),
+                    ), mock.patch(
+                        "g7ctlc.main_window.QMessageBox.critical"
+                    ) as critical:
+                        w._on_import_shared_profile()
+                finally:
+                    Path(path).unlink(missing_ok=True)
+
+                critical.assert_called_once()
+                self.assertEqual(w._state, before)
+
+    def test_shared_actions_do_nothing_mid_sync(self):
+        w = self._window()
+        original = w._state
+
+        with mock.patch.object(w, "_confirm", return_value=True):
+            w.request_sync_now()
+
+        with mock.patch(
+            "g7ctlc.main_window.QFileDialog.getOpenFileName"
+        ) as open_dialog, mock.patch(
+            "g7ctlc.main_window.QFileDialog.getSaveFileName"
+        ) as save_dialog:
+            w._on_import_shared_profile()
+            w._on_export_shared_profile()
+
+        open_dialog.assert_not_called()
+        save_dialog.assert_not_called()
+        self.assertIs(w._state, original)
+
+    def test_shared_export_is_blocked_for_unconfirmed_state(self):
+        w = self._window()
+        w._state_confirmed = False
+
+        with mock.patch(
+            "g7ctlc.main_window.QFileDialog.getSaveFileName"
+        ) as save_dialog, mock.patch(
+            "g7ctlc.main_window.QMessageBox.warning"
+        ) as warning:
+            w._on_export_shared_profile()
+
+        warning.assert_called_once()
+        save_dialog.assert_not_called()
