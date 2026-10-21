@@ -479,7 +479,7 @@ class ShiftViewSelectorTest(unittest.TestCase):
                          "a completed read pulled the user back to a profile screen")
         self.assertEqual(window.rail.current_page(), "shift")
         # ...and the Shift bindings that read brought back are on screen.
-        self.assertEqual(window.buttons_view._combos[("a", "shift")].currentData(), "f11")
+        self.assertEqual(window.buttons_view._combos[("a", "shift")].value(), "f11")
 
     def test_shift_entries_are_hidden_on_a_freshly_launched_window(self):
         """Regression: the Shift column was visible on Profile 1 until the
@@ -498,7 +498,7 @@ class ShiftViewSelectorTest(unittest.TestCase):
         window = self._window()
         view = window.buttons_view
         self.assertEqual(window.rail.profile_switch.value(), "1")
-        self.assertEqual(view.column_header.text(), "Default Layer")
+        self.assertEqual(view.column_header.text(), "Base Layer")
         self.assertFalse(view._combos[("a", "shift")].isVisibleTo(view),
                          "Shift column visible on Profile 1 before any "
                          "profile change")

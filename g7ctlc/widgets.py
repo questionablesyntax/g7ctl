@@ -189,6 +189,40 @@ def _assert_keycode_coverage() -> None:
 
 _assert_keycode_coverage()
 
+# Reverse lookup built once from the same KEYCODE_GROUPS data
+# make_keycode_combo()/KeycodePicker use, so the two display routes (old
+# combo, A4's BindingField) can never drift into showing different text
+# for the same stored value.
+_KEYCODE_DISPLAY_TEXT: dict[str, str] = {
+    name: f"{group_label}: {short_label}"
+    for group_label, entries in KEYCODE_GROUPS
+    for name, short_label in entries
+}
+
+
+def is_known_keycode(value: Optional[str]) -> bool:
+    """True for None (not remapped -- a real, nameable state, not an
+    unknown one) or a name KEYCODE_GROUPS actually lists. False for a raw
+    hex string decode_button_table() falls back to -- see
+    select_by_data()'s own docstring for why that case has to round-trip
+    untouched rather than being coerced into "(Default)"/None."""
+    return value is None or value in _KEYCODE_DISPLAY_TEXT
+
+
+def keycode_display_text(value: Optional[str]) -> str:
+    """"Not remapped" (DESIGN-SPEC.md section 3: replaces "(Default)",
+    which collided with "Default layer" sitting right beside it on the
+    same row) for None, the grouped name for a known keycode, or the
+    "kept as read" wording for a raw value the picker doesn't offer --
+    same round-trip guarantee as select_by_data(), just worded for a
+    read-only/trigger label instead of a combo item."""
+    if value is None:
+        return "Not remapped"
+    known = _KEYCODE_DISPLAY_TEXT.get(value)
+    if known is not None:
+        return known
+    return f"Unrecognised code {value} (kept as read)"
+
 
 def make_keycode_combo() -> QComboBox:
     """QComboBox listing every KNOWN_KEYCODES name, grouped for readability.

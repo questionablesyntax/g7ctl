@@ -19,6 +19,7 @@ from __future__ import annotations
 from g7ctlc.palette import Palette
 from g7ctlc.tokens import (
     ATKINSON,
+    ATKINSON_MONO,
     RADIUS_CONTROL,
     RADIUS_PANEL,
     RADIUS_SMALL,
@@ -175,6 +176,27 @@ QPushButton[role="segment"]:checked {{
 QPushButton[role="segment"][filled="true"] {{
     background: {p.surface_raised};
     border-color: {p.border_control};
+}}
+
+/* BindingField (A4): the keycode-picker trigger. Styled like an input
+   field (left-aligned text, the same border/radius as QComboBox/
+   QSpinBox/QLineEdit), not like a button -- clicking it opens a picker,
+   it doesn't perform an action by itself. `unrecognised="true"` is an
+   unnamed raw code kept as read (DIRECTION-A.md section 5's BindingRow:
+   "unrecognised code (mono)"). */
+QPushButton[role="binding-field"] {{
+    background: {p.surface_raised};
+    border: 1px solid {p.border_control};
+    border-radius: {RADIUS_CONTROL - 2}px;
+    padding: 4px 8px;
+    text-align: left;
+}}
+QPushButton[role="binding-field"]:hover,
+QPushButton[role="binding-field"]:focus {{
+    border-color: {p.focus_ring};
+}}
+QPushButton[role="binding-field"][unrecognised="true"] {{
+    font-family: "{ATKINSON_MONO}";
 }}
 
 QPushButton[role="link"] {{

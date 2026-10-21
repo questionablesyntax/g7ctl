@@ -63,8 +63,9 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         bindings = {"l4": "mouse_button4", "r4": "numpad_enter",
                     "share": "native_share_capture", "a": "f11"}
         view, state = self._view_with(bindings)
-        combo = view._combos[("a", "default")]
-        combo.setCurrentIndex(combo.findData("f12"))
+        field = view._combos[("a", "default")]
+        field.set_value("f12")
+        view._on_edit()
         for button, expected in bindings.items():
             if button == "a":
                 continue
@@ -79,8 +80,9 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         # this code path.
         bindings = {"l4": "0xab", "r4": "0xac", "l5": "0xad", "r5": "0xae", "a": "f11"}
         view, state = self._view_with(bindings)
-        combo = view._combos[("a", "default")]
-        combo.setCurrentIndex(combo.findData("f12"))
+        field = view._combos[("a", "default")]
+        field.set_value("f12")
+        view._on_edit()
         for button, expected in bindings.items():
             if button == "a":
                 continue
@@ -101,8 +103,9 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         # assert key presence, which the old buggy code fails and the fix
         # passes.
         view, state = self._view_with({"a": "f11"})
-        combo = view._combos[("a", "default")]
-        combo.setCurrentIndex(combo.findData(None))
+        field = view._combos[("a", "default")]
+        field.set_value(None)
+        view._on_edit()
         self.assertIn("a", state["buttons"]["default"],
                        "Default must store an explicit reset, not remove the key")
         self.assertIsNone(state["buttons"]["default"]["a"])
@@ -115,8 +118,9 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         # though Sync reported success.
         from pyg7 import state as state_mod
         view, state = self._view_with({"a": "f11"})
-        combo = view._combos[("a", "default")]
-        combo.setCurrentIndex(combo.findData(None))
+        field = view._combos[("a", "default")]
+        field.set_value(None)
+        view._on_edit()
         # A real device baseline where "a" was previously bound to f11 --
         # decode_button_table()'s real shape, not a synthetic shortcut.
         baseline = state_mod.default_state_dict("baseline")
@@ -136,8 +140,9 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         # skips) actually protects against this once "a" is edited.
         from pyg7 import state as state_mod
         view, state = self._view_with({"a": "f11"})
-        combo = view._combos[("a", "default")]
-        combo.setCurrentIndex(combo.findData("f12"))  # edit a DIFFERENT value on "a"
+        field = view._combos[("a", "default")]
+        field.set_value("f12")  # edit a DIFFERENT value on "a"
+        view._on_edit()
         # "b" was never configured on this device either side -- both state
         # and baseline should agree it's None, matching decode_button_table()'s
         # real shape (an unconfigured slot decodes to None, not a missing key).
@@ -177,14 +182,16 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         is the thing actually worth asserting here.
         """
         view, _state = self._view_for_profile(1)
-        self.assertEqual(view.column_header.text(), "Default Layer")
+        self.assertEqual(view.column_header.text(), "Base Layer")
         self.assertTrue(view._combos[("a", "default")].isVisibleTo(view))
         self.assertFalse(view._combos[("a", "shift")].isVisibleTo(view),
                          "the shared Shift column is showing inside the "
                          "per-profile screen before any profile change")
 
     def test_set_layer_switches_which_column_is_shown(self):
-        """One column, and which layer it edits follows the profile selector.
+        """One editable column, and which layer it edits follows the
+        profile selector (plus the always-visible read-only Shift
+        reference, which only the Shift screen itself hides).
 
         The Shift layer is device-global, so it lives behind its own entry in
         the selector rather than beside a per-profile column -- a global
@@ -196,7 +203,7 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         self.assertIn("shared", view.column_header.text())
         self.assertFalse(view._combos[("a", "default")].isVisible())
         view.set_layer("default")
-        self.assertEqual(view.column_header.text(), "Default Layer")
+        self.assertEqual(view.column_header.text(), "Base Layer")
         self.assertFalse(view._combos[("a", "shift")].isVisible())
 
     def test_dpad_options_hide_on_the_shift_screen(self):
@@ -217,8 +224,9 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         state["buttons"]["default"]["a"] = "f11"
         view.load_state(state)
         view.set_layer("shift")
-        combo = view._combos[("y", "shift")]
-        combo.setCurrentIndex(combo.findData("numpad3"))
+        field = view._combos[("y", "shift")]
+        field.set_value("numpad3")
+        view._on_edit()
         self.assertEqual(state["buttons"]["shift"]["y"], "numpad3")
         self.assertEqual(state["buttons"]["default"]["a"], "f11",
                          "the hidden Default layer was swept out of the state")
@@ -230,7 +238,7 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         view, state = self._view_for_profile(3, {"a": "f11"})
         self.assertEqual(state["buttons"]["shift"].get("a"), "f11")
         view.set_layer("shift")
-        self.assertEqual(view._combos[("a", "shift")].currentData(), "f11")
+        self.assertEqual(view._combos[("a", "shift")].value(), "f11")
 
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
