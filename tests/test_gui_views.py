@@ -695,6 +695,72 @@ class CurveEditorTest(unittest.TestCase):
 
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class CurveEditorPaletteTest(unittest.TestCase):
+    """A4 of the redesign: CurveEditor paints with the Palette interface
+    instead of theme.py's hardcoded hex (DESIGN-SPEC.md 10.2 item 5 named
+    this file specifically as the concrete example behind "theme is more
+    than QSS"). Coordinate/constraint behaviour is unaffected -- covered
+    above in CurveEditorTest -- this class is only about the colour
+    source and the theme-change repaint path.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_defaults_to_the_dark_palette_when_none_is_given(self):
+        from g7ctlc.curve_editor import CurveEditor
+        from g7ctlc.palette import DARK_PALETTE
+        ed = CurveEditor()
+        self.assertIs(ed._palette, DARK_PALETTE)
+
+    def test_constructor_accepts_an_explicit_palette(self):
+        from g7ctlc.curve_editor import CurveEditor
+        from g7ctlc.palette import LIGHT_PALETTE
+        ed = CurveEditor(LIGHT_PALETTE)
+        self.assertIs(ed._palette, LIGHT_PALETTE)
+
+    def test_set_palette_swaps_the_painted_colours(self):
+        from g7ctlc.curve_editor import CurveEditor
+        from g7ctlc.palette import DARK_PALETTE, LIGHT_PALETTE
+        ed = CurveEditor(DARK_PALETTE)
+        ed.set_palette(LIGHT_PALETTE)
+        self.assertIs(ed._palette, LIGHT_PALETTE)
+
+    def test_sticks_view_forwards_a_theme_change_to_both_sides(self):
+        from g7ctlc.palette import DARK_PALETTE, LIGHT_PALETTE
+        from g7ctlc.views.sticks_view import SticksView
+        view = SticksView(DARK_PALETTE)
+        view.set_palette(LIGHT_PALETTE)
+        for side in view.sides.values():
+            self.assertIs(side.curve_editor._palette, LIGHT_PALETTE)
+
+    def test_triggers_view_forwards_a_theme_change_to_both_sides(self):
+        from g7ctlc.palette import DARK_PALETTE, LIGHT_PALETTE
+        from g7ctlc.views.triggers_view import TriggersView
+        view = TriggersView(DARK_PALETTE)
+        view.set_palette(LIGHT_PALETTE)
+        for side in view.sides.values():
+            self.assertIs(side.curve_editor._palette, LIGHT_PALETTE)
+
+    def test_the_curve_line_does_not_use_the_signal_hue(self):
+        # CRITIC.md #1's closed list: a plotted response curve is plain
+        # data, not the held state, a live input mark or the write button.
+        # Checked against the source, same approach test_theme_qss.py uses
+        # for generated QSS -- curve_editor.py paints directly with
+        # QPainter, so there is no stylesheet string for that test to see.
+        import inspect
+
+        from g7ctlc import curve_editor
+        source = inspect.getsource(curve_editor)
+        for role in ("surface_signal_tint", "signal_fill", "signal_fill_hover",
+                     "signal_fill_pressed", "signal_mark"):
+            self.assertNotIn(f".{role}", source,
+                             f"curve_editor.py references palette.{role}")
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
 class UnconfiguredCurveTest(unittest.TestCase):
     """A profile whose curve block was never written.
 

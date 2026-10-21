@@ -92,7 +92,7 @@ class MainWindow(QMainWindow):
 
         self._theme = ThemeController(self)
         self._apply_stylesheet()
-        self._theme.paletteChanged.connect(lambda _palette: self._apply_stylesheet())
+        self._theme.paletteChanged.connect(self._on_palette_changed)
 
         self._state = state_mod.default_state_dict("Current State")
         self._dirty = False
@@ -175,6 +175,14 @@ class MainWindow(QMainWindow):
         if stylesheet != app.styleSheet():
             app.setStyleSheet(stylesheet)
 
+    def _on_palette_changed(self, palette) -> None:
+        self._apply_stylesheet()
+        # CurveEditor paints directly with QPainter, not QSS (DESIGN-SPEC.md
+        # 10.2 item 5) -- it needs this explicit repaint call on a theme
+        # change, a regenerated stylesheet alone doesn't reach it.
+        self.sticks_view.set_palette(palette)
+        self.triggers_view.set_palette(palette)
+
     # --- Construction helpers ----------------------------------------------
 
     def _build_ownership_bar(self) -> QWidget:
@@ -241,8 +249,8 @@ class MainWindow(QMainWindow):
         """
         self.pages = QStackedWidget()
         self.buttons_view = ButtonsView()
-        self.sticks_view = SticksView()
-        self.triggers_view = TriggersView()
+        self.sticks_view = SticksView(self._theme.palette)
+        self.triggers_view = TriggersView(self._theme.palette)
         self.motion_view = MotionView()
         self.vibration_view = VibrationView()
         self.settings_view = SettingsView()  # Dock, device-wide

@@ -1,5 +1,18 @@
 """Graphical curve editor: the five draggable handles of a response curve.
 
+Re-skinned onto the Palette interface in A4 of the redesign
+(DESIGN-SPEC.md 10.2 item 5 named this file specifically: "the curve
+editor paints colours directly today" was the concrete example behind
+"theme is more than QSS" -- a theme change has to repaint this widget
+too, not just regenerate a stylesheet string). Endpoints draw as squares
+now, interior points stay round (DIRECTION-A.md section 3: "Endpoints are
+drawn larger and square, the interior points round. That shows they are
+different kinds of value"). The curve line and handle fill use
+border.selected, not a signal/accent colour -- a plotted response curve
+is plain data visualisation, not one of CRITIC.md #1's three signal-hue
+roles (the held state, live input marks, the one write button), and
+there is no live trace at all yet in this phase (Track L is wave 2).
+
 Geometry, because it is not obvious from the widget alone (see PROTOCOL.md
 "A curve is five handles"):
 
@@ -34,7 +47,7 @@ from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import QSizePolicy, QWidget
 
-from .theme import ACCENT, BORDER, SURFACE, TEXT_MUTED
+from .palette import DARK_PALETTE, Palette
 
 # Interior points are stored 0-255; endpoints are 0-100.
 POINT_MAX = 255
@@ -54,8 +67,9 @@ class CurveEditor(QWidget):
     points_changed = pyqtSignal(list)                 # [[x, y], ...] 0-255
     endpoints_changed = pyqtSignal(int, int, int, int)  # dz_i, dz_max, adz_i, adz_max
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, palette: Palette = DARK_PALETTE, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        self._palette = palette
         self.setMinimumSize(240, 200)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
@@ -97,6 +111,16 @@ class CurveEditor(QWidget):
         """Interior points only apply to a Custom curve; the endpoints are
         the deadzone sliders and stay live regardless."""
         self._enabled_points = editable
+        self.update()
+
+    def set_palette(self, palette: Palette) -> None:
+        """Called once at construction and again on every theme change
+        (MainWindow wires ThemeController.paletteChanged through to this,
+        via the owning SticksView/TriggersView) -- this widget paints
+        directly with QPainter rather than through QSS, so it needs its
+        own explicit repaint on a theme change, not just a stylesheet
+        regenerate."""
+        self._palette = palette
         self.update()
 
     # --- coordinate mapping --------------------------------------------
@@ -163,15 +187,16 @@ class CurveEditor(QWidget):
     # --- painting -------------------------------------------------------
 
     def paintEvent(self, _event) -> None:
+        pal = self._palette
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         r = self._plot_rect()
 
-        p.fillRect(r, QColor(SURFACE))
-        p.setPen(QPen(QColor(BORDER), 1))
+        p.fillRect(r, QColor(pal.surface_panel))
+        p.setPen(QPen(QColor(pal.border_control), 1))
         p.drawRect(r)
         # quarter gridlines, so a handle's position is readable at a glance
-        p.setPen(QPen(QColor(BORDER), 1, Qt.PenStyle.DotLine))
+        p.setPen(QPen(QColor(pal.border_subtle), 1, Qt.PenStyle.DotLine))
         for f in (0.25, 0.5, 0.75):
             p.drawLine(QPointF(r.left() + r.width() * f, r.top()),
                        QPointF(r.left() + r.width() * f, r.bottom()))
@@ -181,7 +206,7 @@ class CurveEditor(QWidget):
         font = QFont(self.font())
         font.setPointSizeF(max(7.0, font.pointSizeF() - 1))
         p.setFont(font)
-        p.setPen(QColor(TEXT_MUTED))
+        p.setPen(QColor(pal.text_secondary))
         p.drawText(QRectF(r.left(), r.bottom() + 4, r.width(), _MARGIN_B - 4),
                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, "Input")
         p.save()
@@ -191,29 +216,34 @@ class CurveEditor(QWidget):
         p.restore()
 
         if not self._configured:
-            p.setPen(QColor(TEXT_MUTED))
+            p.setPen(QColor(pal.text_secondary))
             p.drawText(r, Qt.AlignmentFlag.AlignCenter,
-                       "no custom curve stored\nfor this profile")
+                       "No custom curve stored\nfor this profile")
 
         handles = self._handle_positions()
         # Straight segments through every handle -- what Nexus draws for a
         # Custom curve. See the module docstring: this is Nexus's rendering,
-        # not a claim about how the firmware interpolates.
-        p.setPen(QPen(QColor(ACCENT), 2))
+        # not a claim about how the firmware interpolates. border.selected,
+        # not a signal hue: plain data, not live input or the write button.
+        p.setPen(QPen(QColor(pal.border_selected), 2))
         for a, b in zip(handles, handles[1:]):
             p.drawLine(a[2], b[2])
 
         for kind, i, pt in handles:
             live = kind == "end" or self._enabled_points
-            fill = QColor(ACCENT) if live else QColor(BORDER)
+            fill = QColor(pal.border_selected) if live else QColor(pal.border_subtle)
             if self._hover == (kind, i) and live:
                 fill = fill.lighter(130)
             p.setBrush(QBrush(fill))
-            p.setPen(QPen(QColor(SURFACE), 2))
-            # endpoints drawn slightly larger: they are a different kind of
-            # thing (the deadzone registers), not a fourth and fifth point
-            radius = _HANDLE_R + (1.5 if kind == "end" else 0)
-            p.drawEllipse(pt, radius, radius)
+            p.setPen(QPen(QColor(pal.surface_panel), 2))
+            if kind == "end":
+                # Endpoints are the deadzone registers, a different kind of
+                # thing from the three interior points -- square, and drawn
+                # slightly larger, rather than a fourth and fifth round dot.
+                side = (_HANDLE_R + 1.5) * 2
+                p.drawRect(QRectF(pt.x() - side / 2, pt.y() - side / 2, side, side))
+            else:
+                p.drawEllipse(pt, _HANDLE_R, _HANDLE_R)
         p.end()
 
     # --- interaction -----------------------------------------------------

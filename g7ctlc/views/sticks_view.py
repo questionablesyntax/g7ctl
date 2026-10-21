@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 from pyg7.curves import preset_points
 
 from ..curve_editor import CurveEditor
+from ..palette import DARK_PALETTE, Palette
 from ..widgets import (
     CURVE_OPTIONS,
     CategorySideWidget,
@@ -41,7 +42,9 @@ OUTPUT_MODE_OPTIONS = [
 
 
 class _StickSideWidget(CategorySideWidget):
-    def __init__(self, side: str, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self, side: str, palette: Palette = DARK_PALETTE, parent: Optional[QWidget] = None,
+    ) -> None:
         # REAL BUG, found 2026-09-17 (Astra's bug-sweep): this widget used
         # to have no idea which side it represented at all, and
         # _load_fields()'s output_mode fallback was hardcoded to
@@ -111,7 +114,7 @@ class _StickSideWidget(CategorySideWidget):
         _pts_layout = QVBoxLayout(self.curve_points_box)
         _pts_layout.setContentsMargins(10, 8, 10, 8)
         self._last_preset = "standard"
-        self.curve_editor = CurveEditor()
+        self.curve_editor = CurveEditor(palette)
         self.curve_editor.setToolTip(
             "Drag the five handles. The outer two are the Deadzone and "
             "Anti-Deadzone values (0-100%); the inner three are the curve's "
@@ -359,12 +362,14 @@ class _StickSideWidget(CategorySideWidget):
 class SticksView(QWidget):
     changed = pyqtSignal()
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, palette: Palette = DARK_PALETTE, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._state = None
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
-        self.sides = {"left": _StickSideWidget("left"), "right": _StickSideWidget("right")}
+        self.sides = {
+            "left": _StickSideWidget("left", palette), "right": _StickSideWidget("right", palette),
+        }
         for side, widget in self.sides.items():
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
@@ -372,6 +377,13 @@ class SticksView(QWidget):
             widget.changed.connect(self._on_edit)
             self.tabs.addTab(scroll, f"{side.capitalize()} Stick")
         layout.addWidget(self.tabs)
+
+    def set_palette(self, palette: Palette) -> None:
+        """Repaints both sides' CurveEditor on a theme change -- it paints
+        with QPainter, not QSS, so it needs this explicit call rather than
+        picking up a regenerated stylesheet on its own."""
+        for widget in self.sides.values():
+            widget.curve_editor.set_palette(palette)
 
     def load_state(self, state: dict) -> None:
         self._state = state

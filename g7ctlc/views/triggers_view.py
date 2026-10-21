@@ -19,13 +19,14 @@ from PyQt6.QtWidgets import (
 from pyg7.curves import preset_points
 
 from ..curve_editor import CurveEditor
+from ..palette import DARK_PALETTE, Palette
 from ..widgets import CURVE_OPTIONS, CategorySideWidget, CurvePointsEditor, percent_spin
 
 HAIR_TRIGGER_OPTIONS = [("off", "Off"), ("adaptive", "Adaptive"), ("fixed", "Fixed")]
 
 
 class _TriggerSideWidget(CategorySideWidget):
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, palette: Palette = DARK_PALETTE, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(14, 12, 14, 12)
@@ -72,7 +73,7 @@ class _TriggerSideWidget(CategorySideWidget):
         _pts_layout = QVBoxLayout(self.curve_points_box)
         _pts_layout.setContentsMargins(10, 8, 10, 8)
         self._last_preset = "standard"
-        self.curve_editor = CurveEditor()
+        self.curve_editor = CurveEditor(palette)
         self.curve_editor.setToolTip(
             "Drag the five handles. The outer two are the Deadzone and "
             "Anti-Deadzone values (0-100%); the inner three are the curve's "
@@ -183,12 +184,12 @@ class _TriggerSideWidget(CategorySideWidget):
 class TriggersView(QWidget):
     changed = pyqtSignal()
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, palette: Palette = DARK_PALETTE, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._state = None
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
-        self.sides = {"left": _TriggerSideWidget(), "right": _TriggerSideWidget()}
+        self.sides = {"left": _TriggerSideWidget(palette), "right": _TriggerSideWidget(palette)}
         for side, widget in self.sides.items():
             # Unlike SticksView (which this otherwise mirrors), this was
             # missing the QScrollArea wrap -- each side holds a CurveEditor
@@ -203,6 +204,12 @@ class TriggersView(QWidget):
             widget.changed.connect(self._on_edit)
             self.tabs.addTab(scroll, f"{side.capitalize()} Trigger")
         layout.addWidget(self.tabs)
+
+    def set_palette(self, palette: Palette) -> None:
+        """Repaints both sides' CurveEditor on a theme change -- see
+        SticksView.set_palette()'s identical reasoning."""
+        for widget in self.sides.values():
+            widget.curve_editor.set_palette(palette)
 
     def load_state(self, state: dict) -> None:
         self._state = state
