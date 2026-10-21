@@ -37,7 +37,11 @@ classifiers = [
 dependencies = ["pyusb>=1.2"]
 
 [project.optional-dependencies]
-gui = ["PyQt6>=6.4"]
+# Raised from >=6.4 for the redesign (decision D5, 2026-10-21):
+# QStyleHints.colorScheme() needs 6.5, QFont.setFeature (tabular figures)
+# needs 6.7. Confirmed against the installed binding in A0 before this
+# floor was raised, not assumed.
+gui = ["PyQt6>=6.7"]
 dev = ["ruff>=0.4"]
 
 [project.scripts]
@@ -53,7 +57,15 @@ Homepage = "https://github.com/questionablesyntax/g7ctl"
 packages = ["pyg7", "g7ctl", "g7ctlc", "g7ctlc.views", "g7ctlc.assets"]
 
 [tool.setuptools.package-data]
-"g7ctlc.assets" = ["*.png"]
+"g7ctlc.assets" = [
+    "*.png",
+    "fonts/*.ttf",
+    "fonts/*.txt",
+    "fonts/*.md",
+    "icons/*.svg",
+    "icons/LICENSE",
+    "icons/*.md",
+]
 
 [tool.ruff]
 line-length = 110  # the protocol tables and their citations run wide on purpose
