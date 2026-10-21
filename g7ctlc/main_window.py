@@ -1,4 +1,16 @@
-"""Main window: category tabs, Import/Export, Sync Now, Read from Device."""
+"""Main window: ownership bar, rail navigation, Import/Export, Sync Now,
+Read from Device.
+
+A3 of the redesign (`IMPLEMENTATION-PLAN.md` track A): the shell is new
+(`OwnershipBar`, `Rail`, a `QStackedWidget` replacing the old
+`QTabWidget`), but the confirmation/gating/race-fix logic below is
+"re-wired to the new widgets, not redesigned" -- every method that used
+to poke `self.tabs`/`self.profile_combo`/`self.import_export_btn` etc.
+still exists with the same name and the same bug-fix history in its
+comments; only which widget it reaches has changed. Pages themselves
+(Buttons/Sticks/Triggers/Motion/Vibration/Dock) are still today's
+un-reskinned views -- that's A4's job.
+"""
 import os
 from pathlib import Path
 from typing import Optional
@@ -7,17 +19,15 @@ from PyQt6.QtCore import QByteArray, QEvent, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QCloseEvent, QDesktopServices, QHideEvent, QShowEvent
 from PyQt6.QtWidgets import (
     QApplication,
-    QComboBox,
     QFileDialog,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
-    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QTabWidget,
-    QToolButton,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -25,7 +35,11 @@ from PyQt6.QtWidgets import (
 from pyg7 import state as state_mod
 
 from . import help_content
-from .tray import _state_icon
+from .modal_overlay import ModalOverlayBase
+from .ownership_bar import OwnershipBar
+from .qss import generate_stylesheet
+from .rail import PROFILE_PAGE_KEYS, SHARED_PAGE_KEYS, Rail
+from .theme_runtime import ThemeController
 from .views.buttons_view import ButtonsView
 from .views.motion_view import MotionView
 from .views.settings_view import SettingsView
@@ -33,26 +47,14 @@ from .views.sticks_view import SticksView
 from .views.triggers_view import TriggersView
 from .views.vibration_view import VibrationView
 
-# The window/taskbar icon is static regardless of connection state -- only
-# the tray icon (see tray.py's TrayIcon) reflects state with color. A
-# per-state window icon was tried and reverted (2026-07-29): distracting in
-# the title bar/taskbar, which users expect to stay constant for an app.
-# Reuses the "disconnected" icon (icon_black.png) rather than a dedicated
-# static asset, so the launcher/taskbar entry stays state-neutral.
-_APP_ICON_FILE = "icon_black.png"
-
 _GEOMETRY_PATH = (
     Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     / "g7ctl" / "window_geometry.dat"
 )
 
-# Old ProfileStore-managed profiles lived here -- kept only as a friendly
-# default starting directory for the Export/Import file dialogs, so existing
-# users land somewhere with their old profile JSONs still importable (same
-# schema, no migration needed).
-# Sentinel for the profile combo's Shift entry. Deliberately not 5: the
-# Shift layer is not a fifth profile, and anything that mistakes it for one
-# would send profile=5 somewhere that expects 1-4.
+# Sentinel for the Shift layer's rail entry. Deliberately not 5: the
+# Shift layer is not a fifth profile, and anything that mistakes it for
+# one would send profile=5 somewhere that expects 1-4.
 SHIFT_VIEW = "shift"
 
 _LEGACY_PROFILES_DIR = (
@@ -79,19 +81,18 @@ class MainWindow(QMainWindow):
     read_requested = pyqtSignal(int, bool)
     # Emitted every time self._syncing changes -- so anything outside this
     # class (the tray icon's own Release Device action, currently) can stay
-    # in step without reaching into a private attribute. Added 2026-09-01:
-    # the tray had no way to know a sync/read was in flight at all, so its
-    # own Release Device action -- the one release-trigger every OTHER
-    # entry point in this file is deliberately guarded against firing
-    # mid-sync -- bypassed that protection entirely.
+    # in step without reaching into a private attribute.
     syncing_changed = pyqtSignal(bool)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("G7 Control Center")
-        self.setWindowIcon(_state_icon(_APP_ICON_FILE))
-        self.resize(760, 640)
+        self.resize(1120, 760)  # DIRECTION-A.md section 3's default shell size
         self._restore_geometry()
+
+        self._theme = ThemeController(self)
+        self._apply_stylesheet()
+        self._theme.paletteChanged.connect(lambda _palette: self._apply_stylesheet())
 
         self._state = state_mod.default_state_dict("Current State")
         self._dirty = False
@@ -119,81 +120,91 @@ class MainWindow(QMainWindow):
         # previously-synced real profile" guarantee was removed with nothing
         # in its place.
         self._state_confirmed = False
-        self._loading_profile_combo = False
+        self._loading_profile_switch = False
         self._loading_report_rate_combo = False
+        self.setWindowIcon(self._app_icon())
 
         central = QWidget()
         self.setCentralWidget(central)
         outer = QVBoxLayout(central)
-        outer.setContentsMargins(14, 12, 14, 10)
-        outer.setSpacing(10)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        # Four horizontal bands, top to bottom: what you're editing, the
-        # editor itself, what you can do with it, and what the device is
-        # currently doing. Each is built by its own method below so this
-        # constructor reads as that layout rather than as 110 lines of
-        # widget plumbing.
-        outer.addLayout(self._build_selector_bar())
-        outer.addWidget(self._build_tabs(), 1)
-        outer.addLayout(self._build_action_bar())
+        outer.addWidget(self._build_ownership_bar())
+        content_row = QHBoxLayout()
+        content_row.setContentsMargins(14, 10, 14, 10)
+        content_row.setSpacing(14)
+        content_row.addWidget(self._build_rail())
+        content_column = QVBoxLayout()
+        content_column.setSpacing(8)
+        content_column.addWidget(self._build_unconfirmed_banner())
+        content_column.addWidget(self._build_pages(), 1)
+        content_column.addLayout(self._build_write_action_row())
+        content_row.addLayout(content_column, 1)
+        outer.addLayout(content_row, 1)
         outer.addLayout(self._build_status_bar())
 
         self._load_views_from_state()
         self._refresh_confirmed_display()
 
-    # --- Construction helpers ----------------------------------------------
-    #
-    # Each returns the layout/widget it built and assigns any widget the rest
-    # of the class needs to reach later to self.
+    def _app_icon(self):
+        from .tray import _state_icon
+        # Static regardless of connection state -- only the tray icon
+        # reflects state with colour. Reuses the "disconnected" icon
+        # rather than a dedicated static asset, so the taskbar entry
+        # stays state-neutral (see tray.py's own TrayIcon).
+        return _state_icon("icon_black.png")
 
-    def _build_selector_bar(self) -> QHBoxLayout:
-        """Profile slot + report rate: what the tabs below are editing."""
-        top = QHBoxLayout()
-        top.setSpacing(8)
-        top.addWidget(QLabel("Profile:"))
-        self.profile_combo = QComboBox()
-        for slot in (1, 2, 3, 4):
-            self.profile_combo.addItem(f"Profile {slot}", slot)
-        # The Shift layer sits here as a peer of the four profiles because
-        # that is what it is on the device: five config blobs, 0x01-0x05,
-        # which GameSir Nexus also reads as peers. It is NOT a fifth profile
-        # -- it is one layer shared by all four, so it gets its own entry
-        # rather than a column inside a per-profile screen, where it used to
-        # imply a per-profile scope it does not have.
-        self.profile_combo.addItem("Shift Layer (shared)", SHIFT_VIEW)
-        self.profile_combo.setToolTip(
-            "Which of the controller's 4 onboard profile slots to read from / "
-            "sync to. Buttons, Sticks, Triggers, Vibration and Report Rate are "
-            "each independently profile-scoped.\n\n"
-            "\"Shift Layer (shared)\" is not a fifth profile: the controller "
-            "has ONE Shift layer, used by all four profiles. Editing it there "
-            "changes it everywhere.\n\n"
-            "\"(in use)\" marks the profile the controller is physically on. "
-            "You can read and write any of them regardless -- the two are "
-            "independent."
-        )
-        self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
-        top.addWidget(self.profile_combo)
-        self.report_rate_label = QLabel("Report Rate:")
-        top.addWidget(self.report_rate_label)
-        self.report_rate_combo = QComboBox()
-        for hz in (250, 500, 1000):
-            self.report_rate_combo.addItem(f"{hz} Hz", hz)
-        self.report_rate_combo.setToolTip(
-            "Per-profile polling rate. Note: GameSir Nexus disables native "
-            "trigger vibration when this is set to 1000 Hz -- likely a real "
-            "bandwidth constraint, not a bug."
-        )
-        self.report_rate_combo.currentIndexChanged.connect(self._on_report_rate_changed)
-        top.addWidget(self.report_rate_combo)
-        top.addStretch(1)
-        self.help_btn = QToolButton()
-        self.help_btn.setText("Help")
-        self.help_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        help_menu = QMenu(self.help_btn)
+    def _apply_stylesheet(self) -> None:
+        # `QApplication.setStyleSheet()` re-polishes every existing
+        # top-level widget on every call, regardless of whether the text
+        # actually changed -- a real cost in the live app only once (there
+        # is only ever one MainWindow), but a construction-count-squared
+        # one in a test suite that builds a fresh MainWindow per test
+        # without closing the last (every one of them reaching this same
+        # code, same palette, same generated string). Found by timing
+        # MainWindow() construction directly: 0.8s/1.7s/2.8s/4.2s... for
+        # the 1st/2nd/3rd/4th instance in one process, climbing without
+        # bound. Guarding on the generated text actually changing fixes
+        # both: the hot path here is a no-op, and a real theme change
+        # (different palette) still re-polishes exactly once.
+        app = QApplication.instance()
+        if app is None:
+            return
+        stylesheet = generate_stylesheet(self._theme.palette)
+        if stylesheet != app.styleSheet():
+            app.setStyleSheet(stylesheet)
+
+    # --- Construction helpers ----------------------------------------------
+
+    def _build_ownership_bar(self) -> QWidget:
+        self.ownership_bar = OwnershipBar(self._theme.palette, self._theme.icons, self)
+        self.ownership_bar.releaseRequested.connect(self._on_release_clicked)
+        # Aliases: tests and the rest of this class reach these by the name
+        # they've always had -- only where they physically live has moved.
+        self.playability_label = self.ownership_bar.playability_label
+        self.battery_label = self.ownership_bar.battery_label
+        return self.ownership_bar
+
+    def _build_rail(self) -> QWidget:
+        self.rail = Rail(self._theme.palette, self._theme.icons, self)
+        self.rail.profileChanged.connect(self._on_profile_changed)
+        self.rail.pageRequested.connect(self._on_page_requested)
+        self.rail.readRequested.connect(lambda: self.request_read_from_device(force_dock_read=True))
+        self.rail.importRequested.connect(self._on_import)
+        self.rail.exportRequested.connect(self._on_export)
+        self.rail.appPreferencesRequested.connect(self._on_app_preferences)
+        self.rail.wire_help_menu(self._build_help_menu)
+        # Aliases, same reasoning as the ownership bar above.
+        self.read_btn = self.rail.read_button
+        self.import_export_btn = self.rail.snapshots_button
+        self.help_btn = self.rail.help_button
+        return self.rail
+
+    def _build_help_menu(self, menu) -> None:
         about_action = QAction("About", self)
         about_action.triggered.connect(self._on_about)
-        help_menu.addAction(about_action)
+        menu.addAction(about_action)
         ondevice_action = QAction("On-Device Features", self)
         ondevice_action.setToolTip(
             "The controller's own button combos (profile switch, on-the-fly "
@@ -201,27 +212,13 @@ class MainWindow(QMainWindow):
             "with no software at all."
         )
         ondevice_action.triggered.connect(self._on_ondevice_features)
-        help_menu.addAction(ondevice_action)
-        help_menu.addSeparator()
+        menu.addAction(ondevice_action)
+        menu.addSeparator()
         report_issue_action = QAction("Report an Issue…", self)
         report_issue_action.triggered.connect(self._on_report_issue)
-        help_menu.addAction(report_issue_action)
-        self.help_btn.setMenu(help_menu)
-        top.addWidget(self.help_btn)
-        return top
+        menu.addAction(report_issue_action)
 
-    def _build_tabs(self) -> QWidget:
-        """One tab per settings category, mirroring pyg7's modules, plus the
-        banner that marks them unconfirmed (see _refresh_confirmed_display).
-
-        Settings is last and deliberately apart from the rest: everything
-        before it is per-profile, while the dock settings it holds are
-        device-wide.
-        """
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+    def _build_unconfirmed_banner(self) -> QLabel:
         # Roadmap: "the GUI displays unread state as if it were real" -- a
         # freshly-launched window, or one where a read just failed, painted
         # default_state_dict()'s scaffold or the previous profile's real
@@ -234,76 +231,85 @@ class MainWindow(QMainWindow):
             "Not yet confirmed against the device -- these are placeholder "
             "values. Read from Device once connected."
         )
-        self.unconfirmed_banner.setStyleSheet("color: #d99a3f;")
-        layout.addWidget(self.unconfirmed_banner)
-        self.tabs = QTabWidget()
+        self.unconfirmed_banner.setProperty("role", "caution")
+        return self.unconfirmed_banner
+
+    def _build_pages(self) -> QStackedWidget:
+        """One stacked page per rail nav entry. Settings is last and
+        deliberately apart from the rest: everything before it is
+        per-profile, while the dock settings it holds are device-wide.
+        """
+        self.pages = QStackedWidget()
         self.buttons_view = ButtonsView()
         self.sticks_view = SticksView()
         self.triggers_view = TriggersView()
         self.motion_view = MotionView()
         self.vibration_view = VibrationView()
-        self.settings_view = SettingsView()
-        for view, label in (
-            (self.buttons_view, "Buttons"),
-            (self.sticks_view, "Sticks"),
-            (self.triggers_view, "Triggers"),
-            (self.motion_view, "Motion"),
-            (self.vibration_view, "Vibration"),
-            (self.settings_view, "Settings"),
-        ):
-            self.tabs.addTab(view, label)
-            # Any edit in any tab marks the state dirty, which is what
-            # suppresses the automatic read-on-connect from discarding it.
-            view.changed.connect(self._on_dirty)
-        layout.addWidget(self.tabs, 1)
-        return container
+        self.settings_view = SettingsView()  # Dock, device-wide
+        self._profile_settings_page = self._build_profile_settings_page()
+        self._page_widgets = {
+            "buttons": self.buttons_view,
+            "sticks": self.sticks_view,
+            "triggers": self.triggers_view,
+            "motion": self.motion_view,
+            "vibration": self.vibration_view,
+            "profile_settings": self._profile_settings_page,
+            "shift": self.buttons_view,  # same widget, set_layer("shift") below
+            "dock": self.settings_view,
+        }
+        for key in (*PROFILE_PAGE_KEYS, *SHARED_PAGE_KEYS):
+            widget = self._page_widgets[key]
+            if self.pages.indexOf(widget) < 0:
+                self.pages.addWidget(widget)
+            # buttons_view/_profile_settings_page wire their own dirty
+            # signal elsewhere (buttons_view.changed below; report rate's
+            # combo is a plain QComboBox with no `changed` signal of its
+            # own, wired straight to _on_report_rate_changed instead).
+            if widget in (self.buttons_view, self._profile_settings_page):
+                continue
+            widget.changed.connect(self._on_dirty)
+        self.buttons_view.changed.connect(self._on_dirty)
+        return self.pages
 
-    def _build_action_bar(self) -> QHBoxLayout:
-        """File actions on the left, device actions on the right.
-
-        The split is intentional: Import/Export only touch local JSON, while
-        Release/Read/Sync all talk to hardware. Sync Now is the only
-        destructive one and is styled and gated accordingly.
+    def _build_profile_settings_page(self) -> QWidget:
+        """Report rate, CRITIC.md #9's fix: it had no rail home at all
+        before (built into the old top selector bar, outside self.tabs
+        entirely -- the exact structural gap that let it slip through
+        _refresh_confirmed_display()'s QScrollArea sweep, a code review
+        2026-09-17). Wrapped in a QScrollArea like every other page, so it
+        is now reached by that same generic sweep instead of needing its
+        own special-cased line.
         """
-        button_bar = QHBoxLayout()
-        button_bar.setSpacing(8)
-        self.import_export_btn = QToolButton()
-        self.import_export_btn.setText("Import / Export")
-        self.import_export_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        import_export_menu = QMenu(self.import_export_btn)
-        import_action = QAction("Import…", self)
-        import_action.setToolTip("Load a previously exported JSON snapshot file")
-        import_action.triggered.connect(self._on_import)
-        import_export_menu.addAction(import_action)
-        export_action = QAction("Export…", self)
-        export_action.setToolTip("Save the current state to a JSON snapshot file")
-        export_action.triggered.connect(self._on_export)
-        import_export_menu.addAction(export_action)
-        self.import_export_btn.setMenu(import_export_menu)
-        button_bar.addWidget(self.import_export_btn)
-        button_bar.addStretch(1)
-        self.release_btn = QPushButton("Release Device")
-        self.release_btn.setEnabled(False)
-        self.release_btn.setToolTip(
-            "Hand the controller back so it works as a gamepad again "
-            "(stops heartbeating), without quitting the app"
+        from PyQt6.QtWidgets import QComboBox
+        content = QWidget()
+        form = QFormLayout(content)
+        self.report_rate_combo = QComboBox()
+        for hz in (250, 500, 1000):
+            self.report_rate_combo.addItem(f"{hz} Hz", hz)
+        self.report_rate_combo.setToolTip(
+            "Per-profile polling rate. Note: GameSir Nexus disables native "
+            "trigger vibration when this is set to 1000 Hz -- likely a real "
+            "bandwidth constraint, not a bug."
         )
-        self.release_btn.clicked.connect(self._on_release_clicked)
-        button_bar.addWidget(self.release_btn)
-        self.read_btn = QPushButton("Read from Device")
-        self.read_btn.setEnabled(False)
-        self.read_btn.setToolTip(
-            "Read the controller's actual current settings back from it, "
-            "overwriting every tab here."
-        )
-        # Explicit lambda, not a direct connect: QPushButton.clicked emits a
-        # `checked: bool` that Qt would otherwise pass straight through as
-        # force_dock_read -- always False for a plain (non-checkable)
-        # button, silently defeating the whole point of this connection.
-        self.read_btn.clicked.connect(lambda: self.request_read_from_device(force_dock_read=True))
-        button_bar.addWidget(self.read_btn)
+        self.report_rate_combo.currentIndexChanged.connect(self._on_report_rate_changed)
+        form.addRow("Report Rate:", self.report_rate_combo)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(content)
+        return scroll
+
+    def _build_write_action_row(self) -> QHBoxLayout:
+        """Sync Now: the one control in wave 1 that actually writes to the
+        controller, so -- per CRITIC.md #1's closed list -- it is the one
+        non-rail, non-live use of the signal colour. Occupies the same row
+        wave 2's DraftBar lands in later; this phase keeps today's direct
+        confirm-then-write contract (DESIGN-SPEC.md 10.2 item 1), just
+        restyled.
+        """
+        row = QHBoxLayout()
+        row.addStretch(1)
         self.sync_btn = QPushButton("Sync Now")
-        self.sync_btn.setProperty("role", "primary")
+        self.sync_btn.setProperty("role", "write")
         self.sync_btn.setEnabled(False)
         self.sync_btn.setToolTip(
             "Push the current state to the connected controller. Disabled "
@@ -311,53 +317,21 @@ class MainWindow(QMainWindow):
             "a successful Read from Device or an explicit Import."
         )
         self.sync_btn.clicked.connect(self.request_sync_now)
-        button_bar.addWidget(self.sync_btn)
-        return button_bar
+        row.addWidget(self.sync_btn)
+        return row
 
     def _build_status_bar(self) -> QHBoxLayout:
-        """Connection state and errors on the left, job progress on the right.
+        """Job progress and local errors -- connection state, battery and
+        release now live in the ownership bar instead.
 
-        Five separate labels rather than one shared message area, so a sync
-        progress update can't wipe out a connection error the user hasn't
-        read yet.
+        Three separate labels rather than one shared message area, so a
+        sync progress update can't wipe out an error the user hasn't read.
         """
         bottom = QHBoxLayout()
+        bottom.setContentsMargins(14, 4, 14, 8)
         bottom.setSpacing(12)
-        self.connection_label = QLabel("Device: disconnected")
-        self.connection_label.setProperty("role", "muted")
-        bottom.addWidget(self.connection_label)
-        # Shown only while a session is actually held -- see
-        # set_connection_state(). Not an error (nothing is wrong), so it gets
-        # its own amber label rather than sharing error_label's red one or
-        # hiding in the muted grey of connection_label.
-        self.playability_label = QLabel("")
-        self.playability_label.setStyleSheet("color: #d99a3f;")
-        self.playability_label.setToolTip(
-            "Reading or writing configuration claims the gamepad interface "
-            "directly, which detaches the kernel's controller driver for as "
-            "long as the session is held -- not because configuration needs "
-            "a special identity (it doesn't; both identities the controller "
-            "can present answer it equally). This is just as true over the "
-            "2.4GHz dongle as it is wired -- the dongle bridges the same "
-            "session through. Click \"Release Device\" to hand the "
-            "controller back without quitting."
-        )
-        bottom.addWidget(self.playability_label)
-        # Charge, sampled off the input stream by DeviceWatcher. Hidden
-        # entirely when there is no reading rather than showing "Battery: ?" --
-        # an unknown charge is not information, and a permanent placeholder in
-        # a status bar reads as something being wrong.
-        self.battery_label = QLabel("")
-        self.battery_label.setProperty("role", "muted")
-        self.battery_label.setToolTip(
-            "Charge as reported by the controller itself.\n\n"
-            "Read from the input stream it broadcasts while connected, so it "
-            "costs no extra USB traffic and issues no config read."
-        )
-        self.battery_label.setVisible(False)
-        bottom.addWidget(self.battery_label)
         self.error_label = QLabel("")
-        self.error_label.setStyleSheet("color: #e0524f;")
+        self.error_label.setProperty("role", "alarm")
         bottom.addWidget(self.error_label)
         bottom.addStretch(1)
         self.sync_status_label = QLabel("")
@@ -371,50 +345,30 @@ class MainWindow(QMainWindow):
     def set_battery(self, percent: int, charging: bool) -> None:
         """Show a charge reading. Called on the GUI thread via a queued
         connection from DeviceWatcher.battery_changed."""
-        self.battery_label.setText(
-            f"Battery: {percent}%" + ("  (charging)" if charging else ""))
-        # Amber below 20%, and only then -- a status bar that is permanently
-        # coloured teaches the user to ignore the colour.
-        self.battery_label.setStyleSheet("" if percent > 20 else "color: #d99a3f;")
-        self.battery_label.setVisible(True)
+        self.ownership_bar.set_battery(percent, charging)
 
     def set_active_profile(self, slot: int) -> None:
         """Mark which profile the controller is physically using.
 
-        The selector chooses what you *edit*; this shows what you are
-        *playing*. They are independent -- every category targets a profile
-        explicitly, so editing Profile 2 while playing Profile 1 works
-        correctly -- but until now nothing on screen said so, and a user
-        editing "their" profile had no way to tell they were looking at a
-        different one.
-
-        Rendered by relabelling the combo entries rather than adding another
-        status widget, so the fact lands where the choice is made. Uses
-        setItemText, which does not change the current index and so cannot
-        fire _on_profile_changed.
+        The rail's switch chooses what you *edit*; this shows what you are
+        *playing*. They are independent -- every category targets a
+        profile explicitly, so editing Profile 2 while playing Profile 1
+        works correctly.
         """
         self._active_profile = slot
-        for i in range(self.profile_combo.count()):
-            data = self.profile_combo.itemData(i)
-            if not isinstance(data, int) or data == SHIFT_VIEW:
-                continue
-            self.profile_combo.setItemText(
-                i, f"Profile {data} (in use)" if data == slot else f"Profile {data}")
+        self.rail.set_active_profile(slot)
 
     def set_firmware(self, version: str) -> None:
-        """Record the controller's firmware version, read once per connection.
-
-        It goes in the connection label's tooltip rather than its text: the
-        version is reference information someone looks up when filing a bug,
-        not something worth spending status-bar width on every session.
-        """
+        """Record the controller's firmware version, read once per
+        connection -- goes in the ownership bar's tooltip, reference
+        information someone looks up when filing a bug, not something
+        worth spending bar width on every session."""
         self._firmware = version
-        self.connection_label.setToolTip(f"Controller firmware v{version}")
+        self.ownership_bar.set_firmware_tooltip(f"Controller firmware v{version}")
 
     def clear_battery(self) -> None:
         """No reading available -- hide rather than show a stale number."""
-        self.battery_label.clear()
-        self.battery_label.setVisible(False)
+        self.ownership_bar.clear_battery()
 
     # --- Window geometry ----------------------------------------------------
 
@@ -496,20 +450,8 @@ class MainWindow(QMainWindow):
     def _reconnect_after_auto_release(self) -> None:
         """Only undoes this class's own release -- an explicit Release Device
         leaves _auto_released false, so refocusing won't silently reconnect.
-
-        Real bug, found 2026-09-01: this used to clear _auto_released
-        unconditionally, even when _connection_state wasn't actually
-        "paused" yet -- refocusing faster than the watcher thread's own
-        poll granularity (HEARTBEAT_INTERVAL) lands here while pause()
-        has been called but not yet acted on, so _connection_state still
-        reads "connected". That cleared the flag with no reconnect ever
-        emitted, permanently forgetting the release happened: the watcher
-        would go on to settle into "paused" moments later with nothing
-        left to trigger a reconnect on any future focus change. Now the
-        flag stays set until this method actually gets to act on it --
-        either a later focus/show event re-calling this once
-        _connection_state has caught up, or set_connection_state() calling
-        it directly the moment "paused" actually lands (see there).
+        See set_connection_state() for the other half of this fix (self-
+        correcting a too-fast refocus).
         """
         if not self._auto_released or self._connection_state != "paused":
             return
@@ -517,43 +459,20 @@ class MainWindow(QMainWindow):
         self.release_toggled.emit(False)
 
     def set_connection_state(self, state: str) -> None:
-        labels = {
-            "disconnected": "disconnected", "connecting": "connecting…",
-            "connected": "connected", "paused": "released (click Reconnect to resume)",
-            # Not dongle-specific since the 2026-08-29 detection redesign
-            # made the underlying liveness probe run unconditionally -- a
-            # wired connection can land here too now (confirmed live
-            # 2026-08-30). This label predated that change and didn't get
-            # updated for it, matching tray.py's own copy of the same bug.
-            "no_controller": "no controller responding",
-        }
-        self.connection_label.setText(f"Device: {labels.get(state, state)}")
-        # The controller is not usable for playing while this app holds it,
-        # on the dongle as much as wired (see PROTOCOL.md "Device
-        # identities"). Until 2026-08-01 that was documented only in the
-        # README -- and documented there as a wired-only caveat -- so a
-        # wireless user met a dead gamepad with nothing on screen connecting
-        # it to this app or pointing at the button that fixes it.
-        self.playability_label.setText(
-            "not usable as a gamepad until released" if state == "connected" else ""
-        )
+        self.ownership_bar.set_state(state)
         was_connected = self._connection_state == "connected"
         self._connection_state = state
         if state == "connected":
-            self.release_btn.setText("Release Device")
-            self.release_btn.setEnabled(not self._syncing)
-            self._set_role(self.release_btn, "danger")
+            self.ownership_bar.set_release_enabled(not self._syncing)
             self._refresh_sync_btn()
-            self.read_btn.setEnabled(not self._syncing)
+            self.rail.read_button.setEnabled(not self._syncing)
             self.error_label.setText("")  # a successful (re)connect supersedes any earlier error
             if not was_connected:
                 self._auto_read_on_connect()
         elif state == "paused":
-            self.release_btn.setText("Reconnect")
-            self.release_btn.setEnabled(True)
-            self._set_role(self.release_btn, None)
+            self.ownership_bar.set_release_enabled(True)
             self.sync_btn.setEnabled(False)
-            self.read_btn.setEnabled(False)
+            self.rail.read_button.setEnabled(False)
             # If a focus event already tried to undo an auto-release before
             # this "paused" confirmation arrived (see
             # _reconnect_after_auto_release()'s own comment), don't wait
@@ -561,20 +480,9 @@ class MainWindow(QMainWindow):
             # _connection_state has actually caught up.
             self._reconnect_after_auto_release()
         else:
-            self.release_btn.setEnabled(False)
-            self._set_role(self.release_btn, None)
+            self.ownership_bar.set_release_enabled(False)
             self.sync_btn.setEnabled(False)
-            self.read_btn.setEnabled(False)
-
-    @staticmethod
-    def _set_role(widget: QWidget, role: Optional[str]) -> None:
-        """Update a widget's `role` dynamic property and force Qt's style
-        engine to re-evaluate the QSS selectors keyed on it -- a plain
-        setProperty() after the widget is already shown doesn't repaint on
-        its own."""
-        widget.setProperty("role", role)
-        widget.style().unpolish(widget)
-        widget.style().polish(widget)
+            self.rail.read_button.setEnabled(False)
 
     def set_error(self, message: str) -> None:
         self.error_label.setText(message)
@@ -601,58 +509,33 @@ class MainWindow(QMainWindow):
     def _refresh_confirmed_display(self) -> None:
         """Make an unconfirmed self._state look inert, not just un-syncable.
 
-        Disables every QScrollArea's *contained widget*, not self.tabs and
+        Disables every QScrollArea's *contained widget*, not self.pages and
         not the QScrollAreas themselves -- Qt's disabled state cascades
         downward with no way for a child to opt back out (confirmed: a
         QScrollArea explicitly re-enabled still reports its own scrollbar
-        as disabled if any ancestor is disabled), so disabling self.tabs
-        directly, as this used to do, took the scrollbars down with every
-        actual control. Scrolling and switching tabs are navigation, not an
-        edit -- a user should be able to look at an unconfirmed tab's full
-        content without that being mistaken for permission to change it.
-        Every category view wraps its real content in a QScrollArea now
-        (see TriggersView/VibrationView/SettingsView's own comments), so
-        this still reaches every control with one flag, not a per-view "is
-        this real" plumbing job -- just aimed one level deeper than before.
-        The banner above the tabs (built in _build_tabs()) covers the case
-        a user never hovers or tries to interact, which "just disabled"
-        would miss.
+        as disabled if any ancestor is disabled), so disabling self.pages
+        directly would take the scrollbars down with every actual control.
+        Scrolling and switching pages are navigation, not an edit -- a user
+        should be able to look at an unconfirmed page's full content
+        without that being mistaken for permission to change it. Every
+        category view wraps its real content in a QScrollArea (see
+        TriggersView/VibrationView/SettingsView's own comments, and
+        _build_profile_settings_page() above for report rate's), so this
+        still reaches every control with one flag, not a per-view "is this
+        real" plumbing job.
 
         Must be called every time self._state_confirmed OR self._syncing
         changes: on construction, after every read attempt (success or
         failure), on Import, on a profile switch (whose value it turns
         False again -- see _on_profile_changed for why that has to happen
         even before the resulting read comes back), and around every
-        sync-to/read-from-device job (request_sync_now()/
-        request_read_from_device() at the start, set_sync_finished()/
-        set_read_finished() at the end).
-
-        The `_syncing` half of this is a real fix, not just symmetry: a
-        control left editable while a job is in flight let an edit made
-        mid-read get silently overwritten the moment the read landed (the
-        merge in set_read_finished() has no idea an edit happened after it
-        started), and separately meant the GUI thread could keep mutating
-        self._state by reference while the watcher thread was iterating
-        that same dict object mid-sync -- found 2026-09-01. The banner
-        stays keyed on _state_confirmed alone, deliberately: a sync in
-        progress is not the "go read the device, this is stale" state the
-        banner exists to flag.
+        sync-to/read-from-device job.
         """
         editable = self._state_confirmed and not self._syncing
-        for scroll in self.tabs.findChildren(QScrollArea):
+        for scroll in self.pages.findChildren(QScrollArea):
             content = scroll.widget()
             if content is not None:
                 content.setEnabled(editable)
-        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): report_rate_combo
-        # lives in the top selector bar (_build_selector_bar()), built
-        # before self.tabs even exists -- so the sweep above, keyed on
-        # self.tabs' own QScrollArea children, structurally can never reach
-        # it. It stayed live and editable during an unconfirmed state or an
-        # in-flight sync/read, the exact same hazard this whole gate exists
-        # to close for every other control: an edit made mid-read could be
-        # silently overwritten the moment the read landed, or (mid-sync)
-        # raced the watcher thread iterating self._state concurrently.
-        self.report_rate_combo.setEnabled(editable)
         self.unconfirmed_banner.setVisible(not self._state_confirmed)
 
     def _on_release_clicked(self) -> None:
@@ -677,7 +560,7 @@ class MainWindow(QMainWindow):
         if not self._sync_allowed():
             return
         slot = self._state.get("controller_slot") or 1
-        if self.profile_combo.currentData() == SHIFT_VIEW:
+        if self.rail.profile_switch.value() == SHIFT_VIEW:
             message = ("Push the current settings to the connected controller? The Shift "
                        f"layer is shared by all four profiles, so this changes it for every "
                        f"profile — and anything else edited since the last sync still goes to "
@@ -690,20 +573,10 @@ class MainWindow(QMainWindow):
         self._syncing = True
         self.syncing_changed.emit(True)
         self.sync_btn.setEnabled(False)
-        # Real gap, found 2026-09-01: this used to leave read_btn enabled,
-        # unlike request_read_from_device() right below (which disables
-        # both sync_btn and read_btn). Clicking it mid-sync was silently
-        # swallowed by that method's own `or self._syncing: return` guard
-        # -- no message, no queued job -- a dead, unexplained click on an
-        # otherwise-live-looking button while a sync was visibly running.
-        self.read_btn.setEnabled(False)
-        self.profile_combo.setEnabled(False)
-        # Not the only thing preventing a dropped job anymore (the watcher
-        # now drains a queued job before actually pausing -- see
-        # watcher.py's own fix), but there's no reason to let a click
-        # through mid-sync in the first place, same as sync_btn/read_btn.
-        self.release_btn.setEnabled(False)
-        # Real race, found 2026-09-01: Import/Export were never gated on
+        self.rail.read_button.setEnabled(False)
+        self.rail.set_nav_enabled(False)
+        self.ownership_bar.set_release_enabled(False)
+        # Real gap, found 2026-09-01: Import/Export were never gated on
         # _syncing at all, unlike every other state-affecting control here.
         # Export reads self._state while the watcher thread is iterating
         # that same dict object mid-sync (see _refresh_confirmed_display()'s
@@ -713,7 +586,7 @@ class MainWindow(QMainWindow):
         # when the device actually still holds whatever was pushed before
         # the import.
         self.import_export_btn.setEnabled(False)
-        self._refresh_confirmed_display()  # locks every tab for the duration
+        self._refresh_confirmed_display()  # locks every page for the duration
         self.sync_status_label.setText("Syncing…")
         self.sync_requested.emit(self._state)
 
@@ -728,59 +601,42 @@ class MainWindow(QMainWindow):
         self.syncing_changed.emit(False)
         self.sync_status_label.setText(message)
         self._refresh_sync_btn()
-        self._refresh_confirmed_display()  # unlocks the tabs request_sync_now() locked
-        self.read_btn.setEnabled(self._connection_state == "connected")
-        self.release_btn.setEnabled(self._connection_state == "connected")
-        self.profile_combo.setEnabled(True)
+        self._refresh_confirmed_display()  # unlocks the pages request_sync_now() locked
+        self.rail.read_button.setEnabled(self._connection_state == "connected")
+        self.ownership_bar.set_release_enabled(self._connection_state == "connected")
+        self.rail.set_nav_enabled(True)
         self.import_export_btn.setEnabled(True)
         if success:
             self._set_dirty(False)  # the device now matches what we just pushed
         else:
-            # Previously this only updated the small muted status label --
-            # easy to miss for the riskier of the two hardware operations
-            # (this pushes to persistent device config), while a local
-            # Export/Import failure got a blocking dialog. Now both do.
             QMessageBox.warning(self, "Sync failed", message)
 
     def request_read_from_device(self, force_dock_read: bool = False) -> None:
-        """`force_dock_read`, added 2026-09-17 (real bug, found by Astra and
-        Sol's bug-sweeps independently): DeviceWatcher skips the dock-
-        settings blob after the first read per connection (a real,
-        deliberate optimization -- dock settings don't change mid-
-        connection). That's fine for the automatic callers below (profile
-        switch, auto-read-on-connect), but the explicit "Read from Device"
-        BUTTON's whole promised contract is "discard my edits, show me the
-        controller's actual truth" -- and set_read_finished() clears the
-        dirty flag unconditionally at the end regardless of whether dock
-        settings were actually re-confirmed. An unsynced dock edit
-        therefore survived an explicit "discard my edits" read and got
-        marked clean, so a later Sync could push the overlooked edit
-        without ever being flagged as dirty again. Only the button's own
-        connection passes True; both automatic callers keep the
-        optimization exactly as before.
+        """`force_dock_read`: DeviceWatcher skips the dock-settings blob
+        after the first read per connection (a real, deliberate
+        optimization -- dock settings don't change mid-connection). That's
+        fine for the automatic callers below (profile switch, auto-read-
+        on-connect), but the explicit "Read from controller" BUTTON's
+        whole promised contract is "discard my edits, show me the
+        controller's actual truth". Only the button's own connection
+        passes True; both automatic callers keep the optimization.
         """
         if self._connection_state != "connected" or self._syncing:
             return
-        # Covers both callers that can reach here with unsynced edits still
-        # pending: the "Read from Device" button itself, and picking a
-        # different profile in the combo (_on_profile_changed() calls this
-        # too, previously with no guard at all). _auto_read_on_connect()
-        # already checks self._dirty before ever calling in here, so the
-        # automatic path never reaches this prompt -- no double-confirm.
         if self._dirty and not self._confirm(
             "Discard unsynced changes?",
             "Reading from the device will overwrite unsaved edits in every "
-            "tab with the controller's actual current settings. Continue?",
+            "page with the controller's actual current settings. Continue?",
         ):
             return
         self._syncing = True
         self.syncing_changed.emit(True)
         self.sync_btn.setEnabled(False)
-        self.read_btn.setEnabled(False)
-        self.profile_combo.setEnabled(False)
-        self.release_btn.setEnabled(False)  # same reasoning as request_sync_now()
+        self.rail.read_button.setEnabled(False)
+        self.rail.set_nav_enabled(False)
+        self.ownership_bar.set_release_enabled(False)  # same reasoning as request_sync_now()
         self.import_export_btn.setEnabled(False)  # same reasoning as request_sync_now()
-        self._refresh_confirmed_display()  # locks every tab for the duration
+        self._refresh_confirmed_display()  # locks every page for the duration
         self.sync_status_label.setText("Reading from device…")
         slot = self._state.get("controller_slot") or 1
         self.read_requested.emit(slot, force_dock_read)
@@ -793,69 +649,37 @@ class MainWindow(QMainWindow):
             self._state_confirmed = True
         self._refresh_sync_btn()
         self._refresh_confirmed_display()
-        self.read_btn.setEnabled(self._connection_state == "connected")
-        self.release_btn.setEnabled(self._connection_state == "connected")
-        self.profile_combo.setEnabled(True)
+        self.rail.read_button.setEnabled(self._connection_state == "connected")
+        self.ownership_bar.set_release_enabled(self._connection_state == "connected")
+        self.rail.set_nav_enabled(True)
         self.import_export_btn.setEnabled(True)
         if not success or device_state is None:
             if not success:
-                # Same reasoning as set_sync_finished()'s warning -- a
-                # failed read is at least as consequential as a failed
-                # Export/Import (which already gets a blocking dialog).
                 QMessageBox.warning(self, "Read from device failed", message)
             return
-        # Merge key-by-key rather than replacing the layer dict wholesale.
-        #
-        # read_state() does now cover all 21 buttons (it didn't when this
-        # merge was written -- RT, LT and the D-pad directions were missing,
-        # and a blind `self._state["buttons"] = device_state["buttons"]`
-        # silently deleted real bindings on them during ordinary "Read from
-        # Device" use, confirmed the hard way on 2026-07-28). The merge stays
-        # regardless: it costs nothing, and it means the next button the
-        # decoder doesn't yet know about degrades to "left alone" instead of
-        # "silently unbound". Replace-the-whole-dict is only safe while
-        # coverage is exhaustive, which is not a property worth betting user
-        # data on.
+        # Merge key-by-key rather than replacing the layer dict wholesale --
+        # read_state() coverage isn't exhaustive, so replace-the-whole-dict
+        # isn't safe to bet user data on.
         for layer in ("default", "shift"):
             self._state["buttons"].setdefault(layer, {}).update(device_state["buttons"].get(layer, {}))
         self._state["dpad_diagonal_lock"] = device_state["dpad_diagonal_lock"]
         self._state["swap_stick_dpad"] = device_state["swap_stick_dpad"]
-        # Continuous Trigger. Must land BEFORE the Buttons view
-        # repaints on the next line, or the checkboxes are painted from the
-        # previous state and the device's values arrive too late to show.
-        #
-        # Replaced wholesale rather than merged: decode_continuous_triggers()
-        # returns every button-table slot on every read, so there is no
-        # partial-coverage case for a merge to protect.
-        #
-        # Omitting this entirely was a real bug, reported from a game on
-        # 2026-08-14: the GUI read the device's Continuous Trigger state, dropped it
-        # here, and painted default_state_dict()'s all-unchecked scaffold, so
-        # buttons that were genuinely repeating showed as off. Worse, the
-        # Buttons view writes every checkbox back into the state on any edit,
-        # so a later Sync would have pushed those false values to the device
-        # and silently cleared Continuous Trigger set from Nexus or the CLI.
+        # Continuous Trigger. Must land BEFORE the Buttons view repaints on
+        # the next line, or the checkboxes are painted from the previous
+        # state and the device's values arrive too late to show. Replaced
+        # wholesale, not merged: decode_continuous_triggers() returns every
+        # button-table slot on every read.
         self._state["continuous_trigger"] = device_state.get("continuous_trigger", {})
         self.buttons_view.load_state(self._state)
 
-        # Sticks/Triggers/Vibration/report rate are read in full (every
-        # setting mapped, no partial-coverage gaps like Buttons had) -- a
-        # plain replace is safe here, unlike the merge-not-replace fix
-        # Buttons needed above.
         self._state["sticks"] = device_state["sticks"]
         self._state["triggers"] = device_state["triggers"]
-        # Additive section (see pyg7/state.py's validate_state()) -- always
-        # present in a fresh read_state(), unlike dock settings below, so no
-        # None-guard needed here.
         self._state["motion"] = device_state["motion"]
         self._state["vibration"] = device_state["vibration"]
         self._state["report_rate_hz"] = device_state["report_rate_hz"]
         # None means "not read this call" (the watcher skips this
-        # device-global, unconfirmed-to-ever-change-mid-connection blob
-        # after the first read per connection -- see DeviceWatcher's
-        # `_dock_known` and read_state()'s `include_dock`), not "read back
-        # empty" -- keep whatever value is already showing instead of
-        # blanking the Settings tab on every profile switch.
+        # device-global blob after the first read per connection), not
+        # "read back empty" -- keep whatever value is already showing.
         if device_state["dock_led_brightness"] is not None:
             self._state["dock_led_brightness"] = device_state["dock_led_brightness"]
         if device_state["dock_auto_on_off"] is not None:
@@ -870,7 +694,7 @@ class MainWindow(QMainWindow):
         self._set_dirty(False)  # local state now matches the device, not a pending change
 
     def _load_views_from_state(self) -> None:
-        self._sync_profile_combo()
+        self._sync_profile_switch()
         self._sync_report_rate_combo()
         self.buttons_view.load_state(self._state)
         self.sticks_view.load_state(self._state)
@@ -880,75 +704,84 @@ class MainWindow(QMainWindow):
         self.settings_view.load_state(self._state)
         self._set_dirty(False)
 
-    def _sync_profile_combo(self) -> None:
-        """Reflect self._state["controller_slot"] in the combo without
+    def _sync_profile_switch(self) -> None:
+        """Reflect self._state["controller_slot"] in the rail switch without
         re-triggering _on_profile_changed (which would otherwise fire a
         redundant read/no-op write for a value that just came FROM state,
         not from the user picking a new one)."""
-        if self.profile_combo.currentData() == SHIFT_VIEW:
+        if self.rail.profile_switch.value() == SHIFT_VIEW:
             # A read finishing must not yank the user out of the Shift view
             # back to whichever profile it happened to target. The Shift
             # layer came back with that read anyway -- it is global.
             return
-        self._loading_profile_combo = True
+        self._loading_profile_switch = True
         try:
-            idx = self.profile_combo.findData(self._state.get("controller_slot") or 1)
-            self.profile_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            self.rail.set_profile(self._state.get("controller_slot") or 1)
         finally:
-            self._loading_profile_combo = False
+            self._loading_profile_switch = False
 
-    def _on_profile_changed(self, _index: int) -> None:
-        if self._loading_profile_combo:
+    def _on_profile_changed(self, slot: object) -> None:
+        if self._loading_profile_switch:
             return
-        selected = self.profile_combo.currentData()
-        self._apply_view(selected)
-        if selected == SHIFT_VIEW:
-            # The Shift layer is device-global and came back with whichever
-            # profile was last read, so there is nothing new to fetch and no
-            # profile to re-target. Switching to it must NOT touch
-            # controller_slot: the other categories still belong to a real
-            # profile, and a sync from this screen still targets that one.
-            return
-        self._state["controller_slot"] = selected
+        self._apply_view(slot)
+        self._state["controller_slot"] = slot
         # The values on screen right now were confirmed (if ever) against
         # whichever profile was selected before, not this one -- they say
         # nothing about this profile until a read of it succeeds. Clearing
         # here, not only on read failure, is what stops a failed OR declined
         # read from leaving the previous profile's real values on screen
         # looking exactly like a confirmed reading of the new selection.
-        # (Roadmap: "GUI displays unread state as if it were real" -- this
-        # was the specific case that made a real bug look believable rather
-        # than obviously broken.)
         self._state_confirmed = False
         self._refresh_confirmed_display()
         self._refresh_sync_btn()
         if self._connection_state == "connected" and not self._syncing:
             self.request_read_from_device()
 
-    def _apply_view(self, selected) -> None:
-        """Show the Shift layer's single screen, or the full per-profile set.
+    def _on_page_requested(self, key: str) -> None:
+        if key == "shift":
+            self._select_shift_view()
+            return
+        self.pages.setCurrentWidget(self._page_widgets[key])
 
-        The Shift blob carries stick/trigger/vibration bytes only because
-        every one of the five blobs shares a 480-byte layout -- their values
-        are plain factory defaults and Nexus never exposes them. More to the
-        point, nothing can write them: the Sticks/Triggers/Vibration/Report
-        Rate prefixes carry a plain profile number, and there is no profile
-        number that addresses the Shift blob. So those tabs are hidden here
-        rather than shown and quietly ignored.
+    def _select_shift_view(self) -> None:
+        """Choosing Shift never changes `controller_slot` -- it is one
+        layer shared by all four profiles, not addressed by a profile
+        number at all (see `_apply_view`'s own comment)."""
+        self._apply_view(SHIFT_VIEW)
+        self.rail.profile_switch.set_value(None)  # off-scale: Shift isn't one of the 4 slots
+
+    def _apply_view(self, selected) -> None:
+        """Show the Shift layer's single screen, or the full per-profile
+        set. The Shift blob carries stick/trigger/vibration bytes only
+        because every one of the five blobs shares a 480-byte layout --
+        their values are plain factory defaults and Nexus never exposes
+        them, and nothing can write them (the Sticks/Triggers/Vibration/
+        Report Rate prefixes carry a plain profile number, and there is no
+        profile number that addresses the Shift blob). So those rail
+        entries are hidden here rather than shown and quietly ignored --
+        same behaviour as the old per-tab hiding this replaces, including
+        hiding Dock, which is also shared/device-wide: not fixed here,
+        A3 is layout only.
         """
         shift_view = selected == SHIFT_VIEW
         self.buttons_view.set_layer("shift" if shift_view else "default")
-        for index in range(self.tabs.count()):
-            if self.tabs.widget(index) is not self.buttons_view:
-                self.tabs.setTabVisible(index, not shift_view)
+        for key in PROFILE_PAGE_KEYS:
+            if key == "buttons":
+                continue  # Buttons stays reachable -- it's the Shift screen itself
+            self.rail.set_page_visible(key, not shift_view)
+        self.rail.set_page_visible("dock", not shift_view)
         if shift_view:
-            self.tabs.setCurrentWidget(self.buttons_view)
-        self.report_rate_label.setVisible(not shift_view)
-        self.report_rate_combo.setVisible(not shift_view)
+            self.rail.set_current_page("shift")
+            self.pages.setCurrentWidget(self.buttons_view)
+        else:
+            self.rail.set_page_visible("shift", True)
+            if self.rail.current_page() in ("shift",):
+                self.rail.set_current_page("buttons")
+                self.pages.setCurrentWidget(self.buttons_view)
 
     def _sync_report_rate_combo(self) -> None:
         """Reflect self._state["report_rate_hz"] in the combo -- same
-        loading-guard reasoning as _sync_profile_combo()."""
+        loading-guard reasoning as _sync_profile_switch()."""
         self._loading_report_rate_combo = True
         try:
             idx = self.report_rate_combo.findData(self._state.get("report_rate_hz") or 1000)
@@ -969,23 +802,17 @@ class MainWindow(QMainWindow):
 
     def _on_export(self) -> None:
         # Also guarded by import_export_btn being disabled during a sync/read
-        # (see request_sync_now()/request_read_from_device()) -- checked here
-        # too, same belt-and-suspenders reasoning as request_read_from_device()'s
-        # own self._syncing check. self._state is the exact dict object the
-        # watcher thread may be iterating mid-sync; reading it concurrently
-        # here would be a data race.
+        # -- checked here too, same belt-and-suspenders reasoning as
+        # request_read_from_device()'s own self._syncing check. self._state
+        # is the exact dict object the watcher thread may be iterating
+        # mid-sync; reading it concurrently here would be a data race.
         if self._syncing:
             return
-        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): declining "Discard
-        # unsynced changes?" after picking a different profile in the combo
-        # leaves self._state["controller_slot"] pointing at the NEWLY
-        # selected profile (set unconditionally in _on_profile_changed(),
-        # before the confirm prompt) while self._state itself still holds
-        # the PREVIOUS profile's real, dirty values -- exactly the case
-        # _state_confirmed=False exists to flag (see _on_profile_changed()'s
-        # own comment). Export previously only checked self._syncing, so it
-        # would write that stale, now-mislabeled data out under the new
-        # profile's slot number with no warning at all.
+        # Declining "Discard unsynced changes?" after picking a different
+        # profile leaves self._state["controller_slot"] pointing at the
+        # NEWLY selected profile while self._state itself still holds the
+        # PREVIOUS profile's real, dirty values -- exactly the case
+        # _state_confirmed=False exists to flag (see _on_profile_changed).
         if not self._state_confirmed:
             QMessageBox.warning(
                 self, "Export unavailable",
@@ -1008,9 +835,9 @@ class MainWindow(QMainWindow):
     def _on_import(self) -> None:
         # Same guard as _on_export(): replacing self._state mid-sync would
         # leave the in-flight job's set_sync_finished()/set_read_finished()
-        # clearing the dirty flag against the *imported* state once it lands,
-        # as if the imported state -- not what was actually pushed -- had
-        # just been synced.
+        # clearing the dirty flag against the *imported* state once it
+        # lands, as if the imported state -- not what was actually pushed
+        # -- had just been synced.
         if self._syncing:
             return
         path, _filter = QFileDialog.getOpenFileName(
@@ -1041,6 +868,23 @@ class MainWindow(QMainWindow):
 
     def _on_report_issue(self) -> None:
         QDesktopServices.openUrl(QUrl(help_content.ISSUES_URL))
+
+    def _on_app_preferences(self) -> None:
+        # Content is A4's job (DESIGN-SPEC.md section 3's decision table:
+        # its own rail-footer entry, not under Help). This phase gives it
+        # the entry and a real, honest placeholder rather than a dead
+        # click or an invented "Reduce motion" checkbox that does nothing.
+        dialog = ModalOverlayBase(self._theme.palette, self)
+        dialog.setWindowTitle("App preferences")
+        label = QLabel(
+            "No preferences yet -- Reduce motion and other app-level "
+            "settings land in a later phase.", dialog)
+        label.setWordWrap(True)
+        dialog.content_layout.addWidget(label)
+        close_button = QPushButton("Close", dialog)
+        close_button.clicked.connect(dialog.accept)
+        dialog.content_layout.addWidget(close_button)
+        dialog.exec()
 
     def _on_dirty(self) -> None:
         self._set_dirty(True)

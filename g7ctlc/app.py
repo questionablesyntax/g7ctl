@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
 
 from . import __version__
 from .main_window import MainWindow
-from .theme import STYLESHEET
 from .tray import TrayIcon
 from .watcher import DeviceWatcher
 
@@ -166,7 +165,9 @@ def main() -> int:
     app.setOrganizationName("questionablesyntax")
     app.setDesktopFileName(DESKTOP_FILE_NAME)
     app.setQuitOnLastWindowClosed(False)
-    app.setStyleSheet(STYLESHEET)
+    # MainWindow applies the app-wide stylesheet itself now (A3 of the
+    # redesign: g7ctlc/qss.py's generator, driven by its own
+    # ThemeController, replacing this file's old static theme.STYLESHEET).
 
     window = MainWindow()
     window.show()

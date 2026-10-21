@@ -38,7 +38,7 @@ class ConfirmationGateTest(unittest.TestCase):
         window = MainWindow()
         window._state_confirmed = True
         window._connection_state = "connected"
-        window.profile_combo.setEnabled(True)
+        window.rail.profile_switch.setEnabled(True)
         window.sync_btn.setEnabled(True)
         window.read_btn.setEnabled(True)
         return window
@@ -78,9 +78,9 @@ class ConfirmationGateTest(unittest.TestCase):
         # same method, this is the same fix, exercised via the other caller.
         window = self._window()
         window._dirty = True
-        window._loading_profile_combo = False
+        window._loading_profile_switch = False
         with mock.patch.object(window, "_confirm", return_value=False) as confirm:
-            window._on_profile_changed(0)
+            window._on_profile_changed(1)
         confirm.assert_called_once()
         self.assertFalse(window._syncing)
 
@@ -97,9 +97,9 @@ class ConfirmationGateTest(unittest.TestCase):
         # gate Export the same way it already gates Sync.
         window = self._window()
         window._dirty = True
-        window._loading_profile_combo = False
+        window._loading_profile_switch = False
         with mock.patch.object(window, "_confirm", return_value=False):
-            window._on_profile_changed(0)
+            window._on_profile_changed(1)
         self.assertFalse(window._state_confirmed)
 
         with mock.patch.object(state_mod, "save_state") as save_state, mock.patch(
@@ -129,10 +129,10 @@ class ConfirmationGateTest(unittest.TestCase):
     def test_automatic_profile_switch_read_does_not_force_dock(self):
         window = self._window()
         window._dirty = False
-        window._loading_profile_combo = False
+        window._loading_profile_switch = False
         received = []
         window.read_requested.connect(lambda slot, force_dock: received.append((slot, force_dock)))
-        window._on_profile_changed(0)
+        window._on_profile_changed(1)
         self.assertEqual(received, [(1, False)])
 
 
@@ -417,34 +417,44 @@ class ShiftViewSelectorTest(unittest.TestCase):
         from g7ctlc.main_window import MainWindow
         return MainWindow()
 
-    def _select(self, window, data):
-        window.profile_combo.setCurrentIndex(window.profile_combo.findData(data))
-
-    def test_selector_offers_shift_after_the_four_profiles(self):
+    def _select(self, window, slot):
+        """`slot` is 1-4, or `g7ctlc.main_window.SHIFT_VIEW`. Goes through
+        the rail's own selection methods, same as a real click/Enter would,
+        rather than poking private state -- `Rail.pageRequested`/
+        `profileChanged` are what MainWindow actually listens to."""
         from g7ctlc.main_window import SHIFT_VIEW
+        if slot == SHIFT_VIEW:
+            window.rail.pageRequested.emit("shift")
+        else:
+            window.rail.profile_switch.set_value(str(slot))
+
+    def test_rail_offers_the_four_profile_slots(self):
         window = self._window()
-        data = [window.profile_combo.itemData(i) for i in range(window.profile_combo.count())]
-        self.assertEqual(data, [1, 2, 3, 4, SHIFT_VIEW])
+        self.assertEqual(
+            [window.rail.profile_switch._values[i] for i in range(4)],
+            ["1", "2", "3", "4"],
+        )
 
-    def test_selecting_shift_hides_the_profile_scoped_tabs(self):
+    def test_selecting_shift_hides_the_profile_scoped_nav_entries(self):
         from g7ctlc.main_window import SHIFT_VIEW
+        from g7ctlc.rail import PROFILE_PAGE_KEYS
         window = self._window()
         self._select(window, SHIFT_VIEW)
-        for index in range(window.tabs.count()):
-            widget = window.tabs.widget(index)
-            expected = widget is window.buttons_view
-            self.assertEqual(window.tabs.isTabVisible(index), expected,
-                             f"tab {window.tabs.tabText(index)!r} visibility wrong on the Shift screen")
-        self.assertFalse(window.report_rate_combo.isVisibleTo(window))
+        for key in PROFILE_PAGE_KEYS:
+            expected = key == "buttons"
+            self.assertEqual(window.rail.is_page_visible(key), expected,
+                             f"rail entry {key!r} visibility wrong on the Shift screen")
+        self.assertFalse(window.rail.is_page_visible("dock"))  # same as today's exact behaviour
+        self.assertTrue(window.rail.is_page_visible("shift"))
 
-    def test_returning_to_a_profile_restores_every_tab(self):
+    def test_returning_to_a_profile_restores_every_nav_entry(self):
         from g7ctlc.main_window import SHIFT_VIEW
+        from g7ctlc.rail import PROFILE_PAGE_KEYS, SHARED_PAGE_KEYS
         window = self._window()
         self._select(window, SHIFT_VIEW)
         self._select(window, 2)
-        for index in range(window.tabs.count()):
-            self.assertTrue(window.tabs.isTabVisible(index))
-        self.assertTrue(window.report_rate_combo.isVisibleTo(window))
+        for key in (*PROFILE_PAGE_KEYS, *SHARED_PAGE_KEYS):
+            self.assertTrue(window.rail.is_page_visible(key))
 
     def test_selecting_shift_does_not_retarget_the_profile(self):
         """Sticks/Triggers/Vibration/Report Rate still belong to a real
@@ -465,13 +475,13 @@ class ShiftViewSelectorTest(unittest.TestCase):
         state["controller_slot"] = 2
         state["buttons"]["shift"] = {"a": "f11"}
         window.set_read_finished(True, "read ok", state)
-        self.assertEqual(window.profile_combo.currentData(), SHIFT_VIEW,
+        self.assertIsNone(window.rail.profile_switch.value(),
                          "a completed read pulled the user back to a profile screen")
+        self.assertEqual(window.rail.current_page(), "shift")
         # ...and the Shift bindings that read brought back are on screen.
         self.assertEqual(window.buttons_view._combos[("a", "shift")].currentData(), "f11")
 
-
-    def test_shift_column_is_hidden_on_a_freshly_launched_window(self):
+    def test_shift_entries_are_hidden_on_a_freshly_launched_window(self):
         """Regression: the Shift column was visible on Profile 1 until the
         user changed profile.
 
@@ -487,7 +497,7 @@ class ShiftViewSelectorTest(unittest.TestCase):
         """
         window = self._window()
         view = window.buttons_view
-        self.assertEqual(window.profile_combo.currentData(), 1)
+        self.assertEqual(window.rail.profile_switch.value(), "1")
         self.assertEqual(view.column_header.text(), "Default Layer")
         self.assertFalse(view._combos[("a", "shift")].isVisibleTo(view),
                          "Shift column visible on Profile 1 before any "
@@ -526,11 +536,16 @@ class BatteryLabelTest(unittest.TestCase):
         self.assertIn("charging", w.battery_label.text())
 
     def test_low_charge_is_highlighted_and_normal_charge_is_not(self):
+        # Checks the `role` dynamic property the redesign's QSS keys off
+        # of (A3: the whole app's styling moved off theme.py's inline
+        # setStyleSheet() hex literals onto g7ctlc/qss.py's generator --
+        # see OwnershipBar.set_battery()), not a literal inline stylesheet
+        # string the old main_window.py used to set directly.
         w = self._window()
         w.set_battery(46, False)
-        self.assertEqual(w.battery_label.styleSheet(), "")
+        self.assertEqual(w.battery_label.property("role"), "muted")
         w.set_battery(12, False)
-        self.assertNotEqual(w.battery_label.styleSheet(), "")
+        self.assertEqual(w.battery_label.property("role"), "caution")
 
     def test_clearing_hides_it_rather_than_showing_a_stale_number(self):
         w = self._window()
@@ -556,39 +571,34 @@ class ActiveProfileMarkerTest(unittest.TestCase):
         from g7ctlc.main_window import MainWindow
         return MainWindow()
 
-    def _texts(self, w):
-        return [w.profile_combo.itemText(i) for i in range(w.profile_combo.count())]
-
-    def test_marks_only_the_active_profile(self):
+    def test_marks_the_active_profile(self):
         w = self._window()
         w.set_active_profile(3)
-        texts = self._texts(w)
-        self.assertIn("Profile 3 (in use)", texts)
-        self.assertIn("Profile 1", texts)
-        self.assertEqual(sum("(in use)" in t for t in texts), 1)
+        self.assertFalse(w.rail.on_controller_marker.isHidden())
+        self.assertIn("3", w.rail._marker_label.text())
 
     def test_switching_moves_the_marker_rather_than_adding_one(self):
+        # The marker is one label, not a per-segment relabelling -- there
+        # is structurally only ever one "on controller" fact on screen.
         w = self._window()
         w.set_active_profile(3)
         w.set_active_profile(2)
-        texts = self._texts(w)
-        self.assertIn("Profile 2 (in use)", texts)
-        self.assertIn("Profile 3", texts)
-        self.assertEqual(sum("(in use)" in t for t in texts), 1)
+        self.assertIn("2", w.rail._marker_label.text())
+        self.assertNotIn("3", w.rail._marker_label.text())
 
-    def test_the_shift_entry_is_never_marked(self):
-        # The Shift layer is not a profile and cannot be "in use".
+    def test_no_active_profile_hides_the_marker(self):
         w = self._window()
-        w.set_active_profile(1)
-        self.assertTrue(any("Shift Layer" in t and "(in use)" not in t for t in self._texts(w)))
+        w.set_active_profile(None)
+        self.assertTrue(w.rail.on_controller_marker.isHidden())
 
     def test_marking_does_not_change_the_selection(self):
-        # setItemText must not fire _on_profile_changed -- that would kick
-        # off a device read every time the poll noticed the same profile.
+        # set_active_profile() must not fire profileChanged -- that would
+        # kick off a device read every time the poll noticed the same
+        # profile.
         w = self._window()
-        before = w.profile_combo.currentIndex()
+        before = w.rail.profile_switch.value()
         w.set_active_profile(4)
-        self.assertEqual(w.profile_combo.currentIndex(), before)
+        self.assertEqual(w.rail.profile_switch.value(), before)
 
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
@@ -698,8 +708,8 @@ class UnconfirmedStateDisplayTest(unittest.TestCase):
         itself is never a casualty, every time this is checked, so no
         test needs to remember to check that part separately."""
         from PyQt6.QtWidgets import QScrollArea
-        scrolls = w.tabs.findChildren(QScrollArea)
-        self.assertTrue(scrolls, "expected at least one QScrollArea under the tabs")
+        scrolls = w.pages.findChildren(QScrollArea)
+        self.assertTrue(scrolls, "expected at least one QScrollArea under the pages")
         for scroll in scrolls:
             self.assertTrue(scroll.isEnabled(), "a QScrollArea itself must never be disabled")
         return all(not s.widget().isEnabled() for s in scrolls if s.widget() is not None)
@@ -747,7 +757,7 @@ class UnconfirmedStateDisplayTest(unittest.TestCase):
         w.set_read_finished(True, "read ok", state_mod.default_state_dict("read"))
         self.assertFalse(self._content_locked(w))  # sanity: confirmed for Profile 1
 
-        w.profile_combo.setCurrentIndex(w.profile_combo.findData(2))
+        w.rail.profile_switch.set_value("2")
 
         self.assertFalse(w._state_confirmed)
         self.assertTrue(self._content_locked(w))
@@ -764,7 +774,7 @@ class UnconfirmedStateDisplayTest(unittest.TestCase):
         w._dirty = True
 
         with mock.patch.object(w, "_confirm", return_value=False):
-            w.profile_combo.setCurrentIndex(w.profile_combo.findData(2))
+            w.rail.profile_switch.set_value("2")
 
         self.assertFalse(w._state_confirmed)
         self.assertTrue(self._content_locked(w))
@@ -790,13 +800,18 @@ class UnconfirmedStateDisplayTest(unittest.TestCase):
 
     def test_report_rate_combo_is_gated_too(self):
         # REAL BUG, found 2026-09-17 (Astra's bug-sweep): report_rate_combo
-        # lives in the top selector bar, built before self.tabs exists --
-        # _content_locked()'s own sweep (and _refresh_confirmed_display()'s
-        # real one) is keyed on self.tabs' QScrollArea children, so this
-        # control structurally could never be reached by it. It stayed
-        # live and editable through every state _content_locked() checks
-        # here, the exact same hazard already closed for every other
-        # control.
+        # used to live in the top selector bar, built before self.tabs
+        # even existed -- _content_locked()'s own sweep (and
+        # _refresh_confirmed_display()'s real one), keyed on self.tabs'
+        # QScrollArea children, structurally could never reach it. A3 of
+        # the redesign gave report rate a real rail home of its own
+        # ("Profile settings", CRITIC.md #9) wrapped in a QScrollArea like
+        # every other page -- closing the structural gap itself, not just
+        # special-casing around it (the old main_window.py's
+        # _refresh_confirmed_display() had a second, hand-written
+        # `self.report_rate_combo.setEnabled(editable)` line specifically
+        # for this; A3 deleted it because the generic sweep now reaches it
+        # on its own).
         w = self._window()
         self.assertFalse(w.report_rate_combo.isEnabled())  # freshly launched, unconfirmed
 
@@ -845,22 +860,30 @@ class UnconfirmedStateDisplayTest(unittest.TestCase):
         from PyQt6.QtWidgets import QScrollArea
         w = self._window()
         self.assertFalse(w._state_confirmed)  # freshly launched -- the reported state
-        scrolls = w.tabs.findChildren(QScrollArea)
-        self.assertGreaterEqual(len(scrolls), 6)  # at least one per tab, several tabs have two
+        scrolls = w.pages.findChildren(QScrollArea)
+        self.assertGreaterEqual(len(scrolls), 6)  # at least one per page, several have two
         for scroll in scrolls:
             self.assertTrue(scroll.isEnabled())
             self.assertTrue(scroll.verticalScrollBar().isEnabled())
 
 
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
 class ImportExportSyncingGuardTest(unittest.TestCase):
     """Real race, found 2026-09-01: Import/Export were never gated on
     _syncing at all, unlike every other state-affecting control
-    (sync_btn/read_btn/release_btn/profile_combo). Export reads self._state
+    (sync_btn/read_btn/release_btn/the profile switch). Export reads self._state
     while the watcher thread may be iterating that same dict object
     mid-sync; Import replaces self._state outright, so a sync that finishes
     after an Import lands calls set_sync_finished() -- which clears the
     dirty flag as if the *imported* state had just been synced, when the
-    device actually still holds whatever was pushed before the import."""
+    device actually still holds whatever was pushed before the import.
+
+    This class was itself missing the usual `@unittest.skipIf(QApplication
+    is None, ...)` guard every other class here carries -- found during
+    A3's port (constructing MainWindow in a PyQt6-less environment crashed
+    setUpClass with AttributeError instead of skipping cleanly). Fixed
+    alongside the port rather than filed separately, since the fix is this
+    one line."""
     app = None
 
     @classmethod

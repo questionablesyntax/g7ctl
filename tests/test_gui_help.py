@@ -1,5 +1,6 @@
-"""Help menu tests: the top-bar, right-justified Help button added in the
-pre-fork UX pass (About / On-Device Features / Report an Issue).
+"""Help menu tests: the Help button (About / On-Device Features / Report
+an Issue), added in the pre-fork UX pass and moved from the top selector
+bar into the rail's footer in A3 of the redesign.
 
 QMessageBox.about()/.information() and QDesktopServices.openUrl() are
 monkeypatched rather than actually invoked -- all three block on a real
@@ -33,13 +34,17 @@ class HelpMenuTest(unittest.TestCase):
         from g7ctlc.main_window import MainWindow
         return MainWindow()
 
-    def test_help_button_is_right_justified_last_in_the_selector_bar(self):
-        # "Right-justified" here means: last widget in the top bar's layout,
-        # after the stretch that pushes everything preceding it left.
+    def test_help_button_lives_in_the_rail_footer(self):
+        # A3 of the redesign moved Help from the top selector bar (gone --
+        # replaced by the ownership bar and rail) into the rail's own
+        # footer, alongside Snapshots and App preferences.
         window = self._window()
-        top = window.centralWidget().layout().itemAt(0).layout()
-        last_item = top.itemAt(top.count() - 1)
-        self.assertIs(last_item.widget(), window.help_btn)
+        self.assertIs(window.help_btn, window.rail.help_button)
+        self.assertIn(window.rail.help_button, window.rail.findChildren(type(window.rail.help_button)))
+        self.assertNotIn(
+            window.rail.help_button,
+            window.ownership_bar.findChildren(type(window.rail.help_button)),
+        )
 
     def test_help_menu_has_the_three_expected_actions(self):
         window = self._window()

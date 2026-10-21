@@ -41,7 +41,7 @@ QMainWindow {{
 QLabel {{
     background: transparent;
 }}
-QLabel[role="secondary"] {{
+QLabel[role="secondary"], QLabel[role="muted"] {{
     color: {p.text_secondary};
 }}
 QLabel[role="signal"] {{
@@ -55,6 +55,39 @@ QLabel[role="caution"] {{
 }}
 QLabel:disabled {{
     color: {p.text_disabled};
+}}
+
+/* --- Tabs (the per-side sub-tabs inside Sticks/Triggers/Motion/
+   Vibration -- MainWindow's own top-level tabs are the Rail/pages this
+   redesign replaces in A3, not these) --- */
+QTabWidget::pane {{
+    border: 1px solid {p.border_subtle};
+    border-radius: {RADIUS_PANEL}px;
+    top: -1px;
+    background: {p.surface_panel};
+}}
+QTabBar::tab {{
+    background: transparent;
+    color: {p.text_secondary};
+    padding: 8px 18px;
+    margin-right: 2px;
+    border-bottom: 2px solid transparent;
+}}
+QTabBar::tab:selected {{
+    color: {p.text_primary};
+    /* border.selected, not signal_fill: which sub-tab is open is a plain
+       selection state, not one of CRITIC.md #1's three signal-colour
+       roles. */
+    border-bottom: 2px solid {p.border_selected};
+}}
+QTabBar::tab:hover:!selected {{
+    color: {p.text_primary};
+}}
+QTabWidget:disabled QTabBar::tab {{
+    color: {p.text_disabled};
+}}
+QTabWidget:disabled QTabBar::tab:selected {{
+    border-bottom: 2px solid {p.border_subtle};
 }}
 
 /* --- Panels (groups, the per-page content pane) --- */
@@ -172,6 +205,9 @@ QComboBox:disabled, QSpinBox:disabled, QLineEdit:disabled {{
     background: {p.surface_panel};
     border-color: {p.border_subtle};
 }}
+QComboBox:disabled:hover, QSpinBox:disabled:hover, QLineEdit:disabled:hover {{
+    border-color: {p.border_subtle};
+}}
 QSpinBox[error="true"], QLineEdit[error="true"] {{
     border-color: {p.alarm_fill};
 }}
@@ -208,6 +244,28 @@ QCheckBox:disabled {{
     color: {p.text_disabled};
 }}
 
+/* --- Slider (VibrationView's level sliders) --- */
+QSlider::groove:horizontal {{
+    height: 4px;
+    background: {p.border_subtle};
+    border-radius: 2px;
+}}
+QSlider::sub-page:horizontal {{
+    /* border.selected, not signal_fill: a slider's own filled portion is
+       a plain value readout, not one of CRITIC.md #1's three roles. */
+    background: {p.border_selected};
+    border-radius: 2px;
+}}
+QSlider::handle:horizontal {{
+    width: 14px;
+    margin: -6px 0;
+    border-radius: 7px;
+    background: {p.text_primary};
+}}
+QSlider::handle:horizontal:hover {{
+    border: 1px solid {p.focus_ring};
+}}
+
 /* --- Scrollbars --- */
 QScrollBar:vertical {{
     background: transparent;
@@ -224,6 +282,83 @@ QScrollBar::handle:vertical:hover {{
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0;
+}}
+
+/* OwnershipBar (A3, "the clamp bar"): full-width status region directly
+   under the titlebar. Held is the one surface allowed the signal tint
+   outside a live mark or the write button (CRITIC.md #1's closed list --
+   the held state IS one of its three members). Every other variant stays
+   neutral. */
+QWidget[role="status"] {{
+    border-radius: {RADIUS_PANEL}px;
+}}
+QWidget[role="status"][variant="held"] {{
+    background: {p.surface_signal_tint};
+    border: 1px solid {p.signal_fill};
+}}
+QWidget[role="status"][variant="connecting"],
+QWidget[role="status"][variant="no_controller"] {{
+    background: {p.surface_panel};
+    border: 1px solid {p.border_subtle};
+}}
+QWidget[role="status"][variant="released"] {{
+    background: {p.surface_panel};
+    border: 1px solid {p.border_control};
+}}
+QWidget[role="status"][variant="alarm"] {{
+    background: {p.surface_alarm_tint};
+    border: 1px solid {p.alarm_fill};
+}}
+/* The word itself always sits directly on the bar's own tint at a
+   readable, constant colour (CRITIC.md #2: "a bold 'Holding' word on the
+   tint" -- one treatment, not a second filled shape recoloured per
+   variant). The dot below is where variant colour actually lives. */
+QLabel[role="capsule"] {{
+    color: {p.text_primary};
+    font-weight: 600;
+    padding: 2px 0;
+}}
+/* The ownership dot: filled for the two states CRITIC.md #1's closed
+   list actually allows signal/alarm colour in here (held, alarm), a
+   hollow ring otherwise -- shape carries the state, not colour alone. */
+QLabel[role="ownership-dot"] {{
+    border-radius: 5px;
+    background: transparent;
+    border: 2px solid {p.border_control};
+}}
+QLabel[role="ownership-dot"][variant="held"] {{
+    background: {p.signal_mark};
+    border-color: {p.signal_mark};
+}}
+QLabel[role="ownership-dot"][variant="alarm"] {{
+    background: {p.alarm_fill};
+    border-color: {p.alarm_fill};
+}}
+
+/* Rail (A3): the left navigation column -- profile switch, per-scope nav
+   groups, footer actions. */
+QWidget[role="rail"] {{
+    background: {p.surface_panel};
+    border-right: 1px solid {p.border_subtle};
+}}
+QLabel[role="rail-heading"] {{
+    color: {p.text_secondary};
+    font-weight: 600;
+    padding-top: 6px;
+}}
+QPushButton[role="rail-item"] {{
+    text-align: left;
+    border: none;
+    background: transparent;
+    padding: 6px 10px;
+}}
+QPushButton[role="rail-item"]:checked {{
+    background: {p.surface_raised};
+    border-left: 2px solid {p.border_selected};
+    font-weight: 600;
+}}
+QPushButton[role="rail-item"]:hover {{
+    background: {p.surface_raised};
 }}
 
 /* InlineNotice (A2): a full hairline border on all sides, never a side

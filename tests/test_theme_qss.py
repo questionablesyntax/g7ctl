@@ -10,8 +10,8 @@ signal hex, on both palettes) and textually (the generated QSS only uses
 those hex values inside the `role="write"` block).
 
 Icon/painter use isn't covered here -- that's exercised against the
-running widgets as those phases (A2 ownership bar, A1's own icon loader)
-land, not as string-matching.
+running widgets as those phases (A1's own icon loader, Track L's live
+marks) land, not as string-matching.
 """
 
 import re
@@ -79,7 +79,12 @@ class _SignalHexOnlyInWriteButtonBlockAssertions:
 
     palette: Palette
 
-    def test_signal_fill_family_only_in_write_button_rules(self):
+    def test_signal_fill_family_only_in_write_button_or_held_state_rules(self):
+        # Two of CRITIC.md #1's three roles show up in generated QSS: the
+        # write button (role="write", A1) and the held state (A3's
+        # OwnershipBar, variant="held"). The third (live input marks) is
+        # drawn by a QPainter widget, not a stylesheet rule -- nothing to
+        # check here until Track L lands.
         qss = generate_stylesheet(self.palette)
         signal_hexes = {
             self.palette.signal_fill.lower(),
@@ -88,11 +93,10 @@ class _SignalHexOnlyInWriteButtonBlockAssertions:
         }
         for selector, body in _blocks(qss):
             if any(h in body.lower() for h in signal_hexes):
-                self.assertIn(
-                    'role="write"',
-                    selector,
+                self.assertTrue(
+                    'role="write"' in selector or 'variant="held"' in selector,
                     f"selector {selector.strip()!r} uses a signal fill hex "
-                    "but isn't a role=\"write\" rule",
+                    "but is neither a role=\"write\" nor a variant=\"held\" rule",
                 )
 
     def test_write_button_block_exists_and_uses_signal_fill(self):
