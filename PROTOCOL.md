@@ -1108,8 +1108,8 @@ read-only over one held session):
 | Offset | Contents |
 |---|---|
 | 5-8 | stick axes, **processed** -- rest at exactly `0x80`, full range 0-255 |
-| 9, 10 | button bitfields |
-| 12, 13 | triggers, 0 at rest, `0xFF` at full |
+| 9, 10 | button bitfields -- mapped 2026-10-22, see below |
+| 12, 13 | triggers, 0 at rest, `0xFF` at full -- **this claim does not hold up, see below** |
 | **17-22** | **gyroscope** x, y, z -- int16 little-endian signed |
 | **23-28** | **accelerometer** x, y, z -- int16 little-endian signed |
 | 32 | flag, 0 or 1 -- see "Battery level" below |
@@ -1128,6 +1128,99 @@ first rests at a perfect `0x80` on all four axes, the second at 134/126/133/
 
 Which bit of `0x09`/`0x0A` belongs to which button is not mapped -- the
 sweep did not record button order reliably.
+
+**UPDATE, 2026-10-22.** Mapped from a real, guided capture -- one button at
+a time, a fresh "nothing pressed" baseline diffed against a held sample
+(`button-bitfield-capture.py`, written specifically to avoid the
+2026-08-08 sweep's own failure mode; see its own module docstring). 21 of
+22 buttons came back with a clean, single-bit (or single full-byte)
+signal. `A` registered no signal anywhere in its own frame diff at all --
+every other changed byte in that one capture was gyro/accel/stick noise
+from hand movement, nothing bitfield-shaped -- so that's a miss worth a
+quick recapture, not a new mystery byte to go hunting for.
+
+This capture is also the first real test of the "control the app with the
+controller" direction: it ran the whole time inside a claimed
+`VendorSession` (this project's own "config mode") reading report `0x10`
+continuously -- the same path this document already said Nexus relies on
+for its own in-UI navigation ("Direction Control / A Confirm / B Back",
+above). Live, button-responsive bits came through the entire session.
+That confirms the mechanism actually works; nothing about it had been
+exercised before this capture.
+
+**Byte 9, upper nibble (bits 4-7) -- confirmed, active-low (`1` = released,
+`0` = pressed):**
+
+| Bit | Button |
+|---|---|
+| 4 | Y |
+| 5 | B |
+| 6 | X |
+| 7 | R3 (right stick click) |
+
+`A` is the obvious missing fifth member of this group and the one button
+this capture didn't catch -- see above.
+
+**Byte 9, lower nibble (bits 0-3) -- still not button data.** Rests at
+`0b1111` for every button captured except a run of four
+(`dpad_down`/`dpad_left`/`dpad_right`/`view`), where it rests lower
+(`0b0000`/`0b0100`/`0b0110`/`0b0010` respectively) but converges to the
+same `0b1111` while held regardless of which of those four unrelated
+buttons was pressed. A real per-button bitfield would not land on the
+identical value for four different buttons -- this looks like a shared
+saturating counter (frames since the last edge, or similar) still
+climbing back from an earlier dip during that stretch of the session, not
+a D-Pad/View encoding. Unresolved: would need either repeated same-button
+trials or a raw per-frame trace (not just a rest/held majority-vote
+summary) to pin down what it actually counts.
+
+**Byte 10 (full byte) -- confirmed, active-low, all 8 bits accounted for:**
+
+| Bit | Button |
+|---|---|
+| 0 | R5 |
+| 1 | LB |
+| 2 | L4 |
+| 3 | LT |
+| 4 | Menu |
+| 5 | Share |
+| 6 | RB |
+| 7 | L3 (left stick click) |
+
+**Byte 11 -- not in the table above at all, one bit confirmed:** bit 1
+(`0x02`) is Guide/Xbox (not remappable, diagram-only --
+`button-bitfield-capture.py`'s `_EXTRA_BUTTONS`). The other 7 bits never
+went high in this capture -- unconfirmed, not necessarily unused.
+
+**Bytes 12/13 -- the "triggers, 0 at rest, 0xFF at full" claim above does
+not hold up.** This capture found byte 12 swinging `0xFF -> 0x00` only for
+`L4` (neither trigger), and byte 13 swinging `0xFF -> 0x00` only for `LT`
+(not `RT` at all) -- the opposite rest/held polarity from the old claim,
+and not the LT/RT pairing it implied. Reads more like a full-byte
+active-low digital flag, the same convention byte 10's bits use, than a
+smooth analog ramp -- but this was a full press-and-hold capture, so a
+partial-pull analog value, if either byte carries one at all, would not
+have shown up either way. `RT` has no equivalent anywhere in this
+processed region in this capture at all -- see byte 58 below. Worth a
+dedicated partial-pull test before trusting either the old reading or
+this one as the complete picture.
+
+**Bytes 55-60, "raw group" -- duplicates 9-13, but isn't limited to them.**
+Bytes 55/56 cleanly mirror 9/10 bit-for-bit, confirming the "raw group"
+label. But byte 57 carries three bits with no equivalent anywhere in
+9-13: `R4` (`0x08`), `D-Pad Up` (`0x10`), and `Guide` (`0x02` -- which
+also happens to be byte 11 bit 1; probably the one real overlap here, not
+a mirror relationship). Byte 58 carries two more: `RT` (`0x01`) and `L5`
+(`0x02`). Byte 59 mirrors byte 12 (`L4`) and byte 60 mirrors byte 13
+(`LT`), both one offset further out than the uniform `+46` spacing bytes
+9/10/55/56 and 11/57 otherwise follow -- there's a real extra byte's
+worth of room in the raw group (58) that the processed region has no
+matching slot for. `R4`, `D-Pad Up`, `RT`, and `L5` are only visible in
+the raw group in this capture; whether a processed-region equivalent
+exists somewhere unexamined, or genuinely doesn't, is open.
+
+Full capture transcript/JSON kept outside version control:
+`button-bitfield-capture-20261022T130113Z.json`.
 
 ### The gamepad and this stream do coexist -- a real claim here was flatly wrong
 
