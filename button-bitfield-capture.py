@@ -124,6 +124,37 @@ def _sample_frames(sess: VendorSession, lock: threading.Lock, count: int,
     return frames
 
 
+def _drain(sess: VendorSession, lock: threading.Lock, timeout: float = 0.05,
+           max_drain: float = 5.0) -> None:
+    """Discard any backlog of already-queued input frames so the next real
+    sample reflects current state, not stale pre-press state.
+
+    REAL BUG, found capturing 'A' twice in a row with no signal at all
+    (2026-10-22): report 0x10 streams continuously, but nothing reads it
+    while this script is blocked in input() -- the user reading a prompt
+    and getting a finger onto the button. Most visibly after the initial
+    connect handshake (several seconds of heartbeats/settling before the
+    very first prompt), a real backlog can queue up; reading only a
+    handful of frames afterward just dequeues more backlog, never
+    reaching "now", so the held sample silently reports the same stale
+    state as the baseline. A one-shot fixed-count discard right after
+    connecting (the first attempt at this fix) didn't help, because the
+    backlog that actually matters builds *during* each prompt's own idle
+    wait, not before the loop starts.
+
+    Reads with a short timeout in a tight loop until one actually times
+    out -- that's the signal the queue is empty and we're caught up to
+    real time -- bounded by max_drain so a genuinely dead connection
+    doesn't hang here forever."""
+    deadline = time.monotonic() + max_drain
+    while time.monotonic() < deadline:
+        try:
+            with lock:
+                sess.read_input_frame(timeout=timeout)
+        except TimeoutError:
+            return
+
+
 def _stable_bytes(frames: list[bytes]) -> bytes:
     """The byte-wise mode across a batch of frames -- a single dropped or
     torn frame (always possible over USB) must not look like a changed
@@ -235,6 +266,7 @@ def _connect(min_interval: float = HANDSHAKE_MIN_INTERVAL):
 def _capture_one(sess: VendorSession, lock: threading.Lock, name: str, label: str) -> dict:
     print(f"\n=== {label} ({name}) ===")
     input("  Make sure it is NOT pressed right now, then press Enter... ")
+    _drain(sess, lock)
     rest_frames = _sample_frames(sess, lock, BASELINE_FRAMES, SAMPLE_TIMEOUT)
     if len(rest_frames) < BASELINE_FRAMES // 2:
         print(f"  Only got {len(rest_frames)}/{BASELINE_FRAMES} baseline frames -- "
@@ -242,7 +274,11 @@ def _capture_one(sess: VendorSession, lock: threading.Lock, name: str, label: st
     rest = _stable_bytes(rest_frames)
 
     input(f"  Now PRESS AND HOLD {label}, then press Enter... ")
+    _drain(sess, lock)
     held_frames = _sample_frames(sess, lock, HOLD_FRAMES, SAMPLE_TIMEOUT)
+    if len(held_frames) < HOLD_FRAMES // 2:
+        print(f"  Only got {len(held_frames)}/{HOLD_FRAMES} held frames -- "
+              "connection may be unstable. Recording what we have and continuing.")
     print("  You can release it now.")
     held = _stable_bytes(held_frames)
 
@@ -273,6 +309,12 @@ def main() -> None:
                          help="Save the full capture as JSON to this path "
                               "(default: button-bitfield-capture-<timestamp>.json "
                               "in the current directory).")
+    parser.add_argument("--only", type=str, default=None,
+                         help="Comma-separated button names to (re)capture instead of "
+                              "the full 22 -- e.g. --only a to redo just one that came "
+                              "back with no signal the first time. Still runs in the "
+                              "usual physical-layout order; names not in that order "
+                              "(or not recognized at all) are an error, not a silent skip.")
     args = parser.parse_args()
     out_path = args.out or Path(
         f"button-bitfield-capture-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.json")
@@ -292,7 +334,17 @@ def main() -> None:
               "above before continuing.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Will capture {len(order)} buttons, one at a time, in physical "
+    if args.only:
+        wanted = [n.strip() for n in args.only.split(",") if n.strip()]
+        known = {name for name, _ in order}
+        unknown = [n for n in wanted if n not in known]
+        if unknown:
+            print(f"Unknown button name(s): {unknown}. Valid names: "
+                  f"{sorted(known)}", file=sys.stderr)
+            sys.exit(1)
+        order = [(name, label) for name, label in order if name in wanted]
+
+    print(f"Will capture {len(order)} button(s), one at a time, in physical "
           "layout order (same grouping the Buttons page uses).")
     print("Each one: confirm it's released, a brief baseline is sampled, then "
           "you press and hold it while frames are sampled.\n")

@@ -1109,7 +1109,7 @@ read-only over one held session):
 |---|---|
 | 5-8 | stick axes, **processed** -- rest at exactly `0x80`, full range 0-255 |
 | 9, 10 | button bitfields -- mapped 2026-10-22, see below |
-| 12, 13 | triggers, 0 at rest, `0xFF` at full -- **this claim does not hold up, see below** |
+| 12, 13 | triggers, 0 at rest, `0xFF` at full -- confirmed 2026-10-22, see below |
 | **17-22** | **gyroscope** x, y, z -- int16 little-endian signed |
 | **23-28** | **accelerometer** x, y, z -- int16 little-endian signed |
 | 32 | flag, 0 or 1 -- see "Battery level" below |
@@ -1132,12 +1132,35 @@ sweep did not record button order reliably.
 **UPDATE, 2026-10-22.** Mapped from a real, guided capture -- one button at
 a time, a fresh "nothing pressed" baseline diffed against a held sample
 (`button-bitfield-capture.py`, written specifically to avoid the
-2026-08-08 sweep's own failure mode; see its own module docstring). 21 of
-22 buttons came back with a clean, single-bit (or single full-byte)
-signal. `A` registered no signal anywhere in its own frame diff at all --
-every other changed byte in that one capture was gyro/accel/stick noise
-from hand movement, nothing bitfield-shaped -- so that's a miss worth a
-quick recapture, not a new mystery byte to go hunting for.
+2026-08-08 sweep's own failure mode; see its own module docstring).
+
+**The first attempt this same day was itself wrong, caught and corrected
+before anything downstream relied on it.** Report `0x10` streams
+continuously, but nothing drains it while the script sits blocked in
+`input()` -- the user reading a prompt, getting a finger onto the button.
+After the initial connect handshake specifically (several seconds of
+heartbeats/settling with zero reads happening), a real backlog of queued,
+stale frames built up. Sampling only ~20 frames afterward wasn't enough to
+work through that backlog and reach "now", so each button's *held* sample
+quietly reported the *previous* button's delayed, still-draining press --
+a one-slot delay, confirmed by recapturing the first five buttons in
+isolation and finding every single original attribution shifted by
+exactly one slot (`B`'s original result was really `A`'s signal, `X`'s was
+really `B`'s, and so on). Because a uniform shift still produces
+internally clean, non-colliding bit assignments, this was **not**
+detectable from the first capture's own data looking "too clean to be
+wrong" -- it had to be caught by isolating buttons and comparing. Fixed in
+the script with an explicit drain-to-caught-up step before every baseline
+and every held sample, not a fixed discard count (see `_drain()`). The
+table below is from a full recapture with that fix in place; everything
+above this paragraph that cites "2026-10-22" as a source for a *specific*
+bit assignment should be read as superseded by this table, not trusted on
+its own.
+
+21 of 22 buttons came back clean on the recapture; `Guide` is still
+outstanding (missed by an unrelated disconnect right at the end of the
+run, not a repeat of the delay bug) and needs one more quick
+`--only guide` capture before its row below can be trusted.
 
 This capture is also the first real test of the "control the app with the
 controller" direction: it ran the whole time inside a claimed
@@ -1148,79 +1171,77 @@ above). Live, button-responsive bits came through the entire session.
 That confirms the mechanism actually works; nothing about it had been
 exercised before this capture.
 
-**Byte 9, upper nibble (bits 4-7) -- confirmed, active-low (`1` = released,
-`0` = pressed):**
+**Byte 9, upper nibble (bits 4-7) -- confirmed, active-high (`0` =
+released, `1` = pressed):**
 
 | Bit | Button |
 |---|---|
-| 4 | Y |
-| 5 | B |
-| 6 | X |
+| 4 | X |
+| 5 | A |
+| 6 | B |
+| 7 | Y |
+
+**Byte 9, lower nibble (bits 0-3) -- a D-Pad direction code, not a
+bitfield.** Not button-specific bits at all: a single 4-bit value, `0xF`
+(neutral/no direction, the rest state for every other button) or one of
+four direction codes, matching the even ("cardinal") slots of a standard
+0-7 clockwise hat-switch angle encoding -- this D-Pad has no diagonals, so
+the odd slots never appear:
+
+| Value | Direction |
+|---|---|
+| `0x0` | Up |
+| `0x2` | Right |
+| `0x4` | Down |
+| `0x6` | Left |
+| `0xF` | Neutral |
+
+(The first attempt above misread this as an unrelated saturating counter
+-- an artifact of the delay bug corrupting exactly the four D-Pad/View
+captures it happened to land on that day, not a real property of this
+nibble.)
+
+**Byte 10 (full byte) -- confirmed, active-high, all 8 bits accounted
+for:**
+
+| Bit | Button |
+|---|---|
+| 0 | LB |
+| 1 | RB |
+| 2 | LT (digital, see bytes 12/13 below for the analog value) |
+| 3 | RT (digital, see bytes 12/13 below for the analog value) |
+| 4 | View |
+| 5 | Menu |
+| 6 | L3 (left stick click) |
 | 7 | R3 (right stick click) |
 
-`A` is the obvious missing fifth member of this group and the one button
-this capture didn't catch -- see above.
-
-**Byte 9, lower nibble (bits 0-3) -- still not button data.** Rests at
-`0b1111` for every button captured except a run of four
-(`dpad_down`/`dpad_left`/`dpad_right`/`view`), where it rests lower
-(`0b0000`/`0b0100`/`0b0110`/`0b0010` respectively) but converges to the
-same `0b1111` while held regardless of which of those four unrelated
-buttons was pressed. A real per-button bitfield would not land on the
-identical value for four different buttons -- this looks like a shared
-saturating counter (frames since the last edge, or similar) still
-climbing back from an earlier dip during that stretch of the session, not
-a D-Pad/View encoding. Unresolved: would need either repeated same-button
-trials or a raw per-frame trace (not just a rest/held majority-vote
-summary) to pin down what it actually counts.
-
-**Byte 10 (full byte) -- confirmed, active-low, all 8 bits accounted for:**
-
-| Bit | Button |
-|---|---|
-| 0 | R5 |
-| 1 | LB |
-| 2 | L4 |
-| 3 | LT |
-| 4 | Menu |
-| 5 | Share |
-| 6 | RB |
-| 7 | L3 (left stick click) |
-
-**Byte 11 -- not in the table above at all, one bit confirmed:** bit 1
-(`0x02`) is Guide/Xbox (not remappable, diagram-only --
-`button-bitfield-capture.py`'s `_EXTRA_BUTTONS`). The other 7 bits never
+**Byte 11, bit 1 (`0x02`) -- confirmed: Share.** The other 7 bits never
 went high in this capture -- unconfirmed, not necessarily unused.
 
-**Bytes 12/13 -- the "triggers, 0 at rest, 0xFF at full" claim above does
-not hold up.** This capture found byte 12 swinging `0xFF -> 0x00` only for
-`L4` (neither trigger), and byte 13 swinging `0xFF -> 0x00` only for `LT`
-(not `RT` at all) -- the opposite rest/held polarity from the old claim,
-and not the LT/RT pairing it implied. Reads more like a full-byte
-active-low digital flag, the same convention byte 10's bits use, than a
-smooth analog ramp -- but this was a full press-and-hold capture, so a
-partial-pull analog value, if either byte carries one at all, would not
-have shown up either way. `RT` has no equivalent anywhere in this
-processed region in this capture at all -- see byte 58 below. Worth a
-dedicated partial-pull test before trusting either the old reading or
-this one as the complete picture.
+**Bytes 12/13 -- the original "triggers, 0 at rest, 0xFF at full" claim
+holds up after all.** Byte 12 is `LT`'s own analog value (`0x00` rest,
+`0xFF` on a full pull), byte 13 is `RT`'s (same range) -- confirmed
+independent of the digital bits 2/3 in byte 10 above, which fire well
+before the trigger bottoms out. (This directly reverses this document's
+own same-day correction further up, which blamed the trigger bytes on
+`L4`/`LT` with the opposite polarity -- that reading came from the
+delay-contaminated capture and should be disregarded.)
 
-**Bytes 55-60, "raw group" -- duplicates 9-13, but isn't limited to them.**
-Bytes 55/56 cleanly mirror 9/10 bit-for-bit, confirming the "raw group"
-label. But byte 57 carries three bits with no equivalent anywhere in
-9-13: `R4` (`0x08`), `D-Pad Up` (`0x10`), and `Guide` (`0x02` -- which
-also happens to be byte 11 bit 1; probably the one real overlap here, not
-a mirror relationship). Byte 58 carries two more: `RT` (`0x01`) and `L5`
-(`0x02`). Byte 59 mirrors byte 12 (`L4`) and byte 60 mirrors byte 13
-(`LT`), both one offset further out than the uniform `+46` spacing bytes
-9/10/55/56 and 11/57 otherwise follow -- there's a real extra byte's
-worth of room in the raw group (58) that the processed region has no
-matching slot for. `R4`, `D-Pad Up`, `RT`, and `L5` are only visible in
-the raw group in this capture; whether a processed-region equivalent
-exists somewhere unexamined, or genuinely doesn't, is open.
+**Bytes 55-60, "raw group" -- mostly mirrors 9-13, with one real
+exception.** Bytes 55/56 mirror 9/10 bit-for-bit, and bytes 59/60 mirror
+12/13, confirming the "raw group" label for all of those. Byte 57 mirrors
+byte 11's one known bit (`Share`, `0x02`) but also carries two bits with
+no processed-region equivalent at all: `L4` (`0x08`) and `R4` (`0x10`) --
+simple digital paddles, unlike `LT`/`RT`, so there's no analog value for
+them to need a separate byte 12/13-style slot. Byte 58 carries two more
+raw-only bits: `L5` (`0x01`) and `R5` (`0x02`). Whether `L4`/`R4`/`L5`/`R5`
+have a processed-region bit somewhere genuinely unexamined, or simply
+don't, is still open.
 
-Full capture transcript/JSON kept outside version control:
-`button-bitfield-capture-20261022T130113Z.json`.
+Full capture transcripts/JSON kept outside version control (see
+`.gitignore`): `button-bitfield-capture-20261022T132730Z.json` (the clean
+21-button recapture) and `button-bitfield-capture-byte9-recheck.json` (the
+isolated A/B/X/Y/R3 recheck that caught the delay bug).
 
 ### The gamepad and this stream do coexist -- a real claim here was flatly wrong
 
