@@ -6,6 +6,15 @@ icons."
 
 Confirmed present on this project's floor in A0: `QStyleHints.colorScheme`
 needs Qt 6.5, `pyproject.toml` now requires PyQt6>=6.7.
+
+Also registers the vendored fonts (A1's fonts.py), found genuinely
+unwired while building A5's EmptyState: qss.py's QWidget rule has
+requested `font-family: "Atkinson Hyperlegible Next"` since A1, but
+nothing ever called load_fonts() anywhere in the running app --
+QFontDatabase never knew the family existed, so every build through A4
+silently fell back to fonts.py's own FALLBACK_CHAIN (Noto Sans/DejaVu
+Sans) instead of the chosen typefaces. Not visibly broken (the fallback
+chain is real, readable type), just not what A1 actually specified.
 """
 
 from __future__ import annotations
@@ -13,6 +22,7 @@ from __future__ import annotations
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QGuiApplication
 
+from g7ctlc.fonts import load_fonts
 from g7ctlc.icon_loader import LucideIconLoader
 from g7ctlc.palette import Palette, PaletteProvider, ThemeVariant
 
@@ -41,6 +51,7 @@ class ThemeController(QObject):
         initial = _variant_from_qt(style_hints.colorScheme())
         self.provider = PaletteProvider(initial)
         self.icons = LucideIconLoader()
+        self.fonts = load_fonts()
         style_hints.colorSchemeChanged.connect(self._on_system_scheme_changed)
 
     def _on_system_scheme_changed(self, scheme: Qt.ColorScheme) -> None:

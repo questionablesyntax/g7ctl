@@ -715,9 +715,16 @@ class UnconfirmedStateDisplayTest(unittest.TestCase):
         return all(not s.widget().isEnabled() for s in scrolls if s.widget() is not None)
 
     def test_freshly_launched_window_is_unconfirmed(self):
+        # A5 of the redesign: a freshly launched window has no controller
+        # at all, so the EmptyState covers the page content instead of
+        # the banner+disabled-controls combination this test used to
+        # check -- the banner would just repeat what the EmptyState
+        # already says ("no controller"). The content underneath stays
+        # genuinely locked either way; see EmptyStateAndHatchOverlayTest
+        # for the EmptyState/banner-suppression behaviour itself.
         w = self._window()
         self.assertTrue(self._content_locked(w))
-        self.assertTrue(w.unconfirmed_banner.isVisibleTo(w))
+        self.assertFalse(w.unconfirmed_banner.isVisibleTo(w))
 
     def test_successful_read_confirms_the_display(self):
         w = self._window()
@@ -943,3 +950,71 @@ class ImportExportSyncingGuardTest(unittest.TestCase):
             w._on_export()
 
         save_state.assert_not_called()
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class EmptyStateAndHatchOverlayTest(unittest.TestCase):
+    """A5 of the redesign: the "no controller" EmptyState and the unread
+    HatchOverlay. Offscreen Qt paints nothing, so these check the actual
+    state (which widget is current, whether the overlay is shown), not
+    how either looks -- DirectionA.md's visual intent was confirmed by
+    rendering a real PNG and looking at it, not by this file.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+        return MainWindow()
+
+    def test_a_freshly_launched_window_shows_the_empty_state(self):
+        w = self._window()
+        self.assertIs(w._content_area.currentWidget(), w._empty_state)
+
+    def test_connecting_keeps_the_page_content_not_the_empty_state(self):
+        # A controller IS present once connected, even before a read
+        # confirms anything -- only "no controller at all" shows the
+        # empty state (see _refresh_content_area()'s own comment).
+        w = self._window()
+        w.set_connection_state("connected")
+        self.assertIs(w._content_area.currentWidget(), w._pages_with_hatch)
+
+    def test_a_confirmed_read_shows_the_page_content(self):
+        w = self._window()
+        w.set_connection_state("connected")
+        w.set_read_finished(True, "ok", state_mod.default_state_dict("t"))
+        self.assertIs(w._content_area.currentWidget(), w._pages_with_hatch)
+
+    def test_disconnecting_again_without_ever_confirming_restores_the_empty_state(self):
+        w = self._window()
+        w.set_connection_state("connected")
+        w.set_connection_state("disconnected")
+        self.assertIs(w._content_area.currentWidget(), w._empty_state)
+
+    def test_hatch_is_visible_on_a_freshly_launched_window(self):
+        w = self._window()
+        self.assertFalse(w._hatch_overlay.isHidden())
+
+    def test_hatch_reappears_instantly_on_a_profile_switch(self):
+        w = self._window()
+        w.set_connection_state("connected")
+        w.set_read_finished(True, "ok", state_mod.default_state_dict("t"))
+        w.rail.profile_switch.set_value("2")
+        self.assertFalse(w._hatch_overlay.isHidden())
+        self.assertEqual(w._hatch_overlay._effect.opacity(), 1.0)
+
+    def test_hatch_fades_out_on_a_confirmed_read(self):
+        import time
+        w = self._window()
+        self.assertFalse(w._hatch_overlay.isHidden())
+        w.set_connection_state("connected")
+        w.set_read_finished(True, "ok", state_mod.default_state_dict("t"))
+        self.assertFalse(w._hatch_overlay.isHidden(), "still fading immediately after")
+        deadline = time.time() + 0.6
+        while time.time() < deadline:
+            self.app.processEvents()
+            time.sleep(0.02)
+        self.assertTrue(w._hatch_overlay.isHidden(), "must be hidden once the reveal finishes")

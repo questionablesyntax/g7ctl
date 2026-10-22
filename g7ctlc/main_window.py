@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QStackedLayout,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -35,6 +36,8 @@ from PyQt6.QtWidgets import (
 from pyg7 import state as state_mod
 
 from . import help_content
+from .empty_state import EmptyState
+from .hatch_overlay import HatchOverlay
 from .modal_overlay import ModalOverlayBase
 from .ownership_bar import OwnershipBar
 from .qss import generate_stylesheet
@@ -139,7 +142,7 @@ class MainWindow(QMainWindow):
         content_column = QVBoxLayout()
         content_column.setSpacing(8)
         content_column.addWidget(self._build_unconfirmed_banner())
-        content_column.addWidget(self._build_pages(), 1)
+        content_column.addWidget(self._build_content_area(), 1)
         content_column.addLayout(self._build_write_action_row())
         content_row.addLayout(content_column, 1)
         outer.addLayout(content_row, 1)
@@ -183,6 +186,15 @@ class MainWindow(QMainWindow):
         # change, a regenerated stylesheet alone doesn't reach it.
         self.sticks_view.set_palette(palette)
         self.triggers_view.set_palette(palette)
+        self._hatch_overlay.set_palette(palette)
+
+    @property
+    def theme(self) -> ThemeController:
+        """Public read path for app.py, which owns the tray icon -- a
+        sibling of this window, not a child, so it needs this window's
+        ThemeController from the outside rather than reaching into a
+        private attribute."""
+        return self._theme
 
     # --- Construction helpers ----------------------------------------------
 
@@ -279,6 +291,55 @@ class MainWindow(QMainWindow):
             widget.changed.connect(self._on_dirty)
         self.buttons_view.changed.connect(self._on_dirty)
         return self.pages
+
+    def _build_content_area(self) -> QStackedWidget:
+        """Wraps self.pages with the "no controller" EmptyState
+        (DIRECTION-A.md section 5's component inventory) and the unread
+        HatchOverlay (section 6's "unread to read reveal"), A5 of the
+        redesign. self.pages itself is unchanged by this -- still built,
+        still addressable, still what every page-navigation method and
+        test reaches into; only what MainWindow shows on top of it is new.
+
+        The hatch sits over self.pages only, not the EmptyState -- unread
+        placeholder data and "there is no data, nothing is connected" are
+        different facts, and hatching the empty state would muddy an
+        already-honest "nothing here" screen.
+        """
+        self._content_area = QStackedWidget()
+
+        # setCurrentWidget() below needs this wrapper, not self.pages --
+        # self.pages is only an indirect child now (nested inside its own
+        # QStackedLayout alongside the hatch), not a direct child of
+        # self._content_area the way addWidget() would need to find it.
+        self._pages_with_hatch = QWidget()
+        pages_stack = QStackedLayout(self._pages_with_hatch)
+        pages_stack.setStackingMode(QStackedLayout.StackingMode.StackAll)
+        pages_stack.addWidget(self._build_pages())
+        self._hatch_overlay = HatchOverlay(self._theme.palette)
+        pages_stack.addWidget(self._hatch_overlay)
+        self._content_area.addWidget(self._pages_with_hatch)
+
+        self._empty_state = EmptyState(
+            "No controller connected",
+            "Connect a GameSir G7 Pro to configure it. "
+            "Already connected? It may still be enumerating.",
+            self._theme.fonts,
+        )
+        self._content_area.addWidget(self._empty_state)
+        return self._content_area
+
+    def _refresh_content_area(self) -> None:
+        """Shows the EmptyState in place of the page content only when
+        there is genuinely nothing to show yet -- no controller at all,
+        and nothing ever confirmed. Connecting (a controller IS present,
+        a read is imminent) and an already-confirmed reading both keep
+        showing today's page content, just as before this phase."""
+        show_empty = self._connection_state in ("disconnected", "no_controller") and not self._state_confirmed
+        self._content_area.setCurrentWidget(self._empty_state if show_empty else self._pages_with_hatch)
+        # The empty state already says "no controller" on its own --
+        # the unconfirmed banner on top of it would just repeat that.
+        if show_empty:
+            self.unconfirmed_banner.setVisible(False)
 
     def _build_profile_settings_page(self) -> QWidget:
         """Report rate, CRITIC.md #9's fix: it had no rail home at all
@@ -498,6 +559,7 @@ class MainWindow(QMainWindow):
             self.ownership_bar.set_release_enabled(False)
             self.sync_btn.setEnabled(False)
             self.rail.read_button.setEnabled(False)
+        self._refresh_content_area()
 
     def set_error(self, message: str) -> None:
         self.error_label.setText(message)
@@ -552,6 +614,8 @@ class MainWindow(QMainWindow):
             if content is not None:
                 content.setEnabled(editable)
         self.unconfirmed_banner.setVisible(not self._state_confirmed)
+        self._hatch_overlay.set_unread(not self._state_confirmed)
+        self._refresh_content_area()
 
     def _on_release_clicked(self) -> None:
         self.release_toggled.emit(self._connection_state != "paused")

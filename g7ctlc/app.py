@@ -176,7 +176,11 @@ def main() -> int:
     if not QSystemTrayIcon.isSystemTrayAvailable():
         logging.warning("no system tray available on this session -- "
                         "connection state is still visible in the main window.")
-    tray = TrayIcon(window)
+    tray = TrayIcon(window, window.theme.palette)
+    # Tray icons are painted pixmaps, not QSS (A5, D4's shape-coded
+    # states) -- they need this explicit call on a theme change, same
+    # reasoning as CurveEditor's set_palette() (A4).
+    window.theme.paletteChanged.connect(tray.set_palette)
     tray.show()
 
     thread = QThread()
@@ -187,6 +191,7 @@ def main() -> int:
     watcher.state_changed.connect(window.set_connection_state)
     window.syncing_changed.connect(tray.set_syncing)
     watcher.error.connect(window.set_error)
+    watcher.error.connect(tray.set_error)
     watcher.sync_progress.connect(window.set_sync_progress)
     watcher.sync_finished.connect(window.set_sync_finished)
     watcher.read_finished.connect(window.set_read_finished)

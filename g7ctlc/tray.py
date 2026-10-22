@@ -1,33 +1,49 @@
 """System tray icon: reflects DeviceWatcher connection state.
 
-Icons live in g7ctlc/assets/. As of 2026-08-02 the four states are
-icon_black/yellow/green/red.png: a rendered controller whose centre
-indicator carries the state colour. The indicator is enlarged ~2.2x from
-the source artwork, with a contrasting rim -- at the 16-22px a panel
-actually renders a tray icon at, the original dot was ~3px and the states
-were not tellable apart. This replaces the abstract gamepad-outline glyph
-set used from 2026-07-29.
+A5 of the redesign, decision D4: shape-coded states replace the
+rendered-controller-with-a-coloured-dot icons used since 2026-08-02.
+DIRECTION-A.md section 7 item 6: "Today's tray colours (black/yellow/
+green/red) put red on released, which is the safe, playable state.
+Proposed tray instead: a filled signal dot = held; no dot = released; a
+hollow ring = connecting / no controller; a red dot with a cut = error.
+Shape carries the state, so the 16px icon passes without colour vision."
+
+Drawn with QPainter rather than new raster artwork: the real illustrated
+controller is Track D's job (its own gated phase, a quality bar, not
+this one), and these are small abstract status badges, not a redo of
+that asset. "No dot" is read as "no signal-coloured dot" rather than a
+literally blank icon (an icon with nothing on it stops being usable as
+a tray icon) -- a plain, muted filled circle for "released", distinct
+in both shape-weight and colour from the hollow ring "pending" states.
 """
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from PyQt6.QtCore import QObject, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QIcon, QPixmap
+from PyQt6.QtCore import QObject, QRectF, QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+
+from .palette import DARK_PALETTE, Palette
 
 if TYPE_CHECKING:
     # Only for type checking -- importing MainWindow at module load time
-    # would be circular (main_window.py imports _STATE_ICON_FILES/
-    # _state_icon from this module).
+    # would be circular (main_window.py imports _state_icon from this
+    # module for the window/taskbar icon).
     from .main_window import MainWindow
 
 _ASSETS_DIR = Path(__file__).parent / "assets"
-_STATE_ICON_FILES = {
-    "disconnected": "icon_black.png",
-    "connecting": "icon_yellow.png",
-    "connected": "icon_green.png",
-    "paused": "icon_red.png",
-    "no_controller": "icon_yellow.png",
+
+# Connection state -> shape variant. "connecting", "no_controller" and
+# "disconnected" all collapse onto the same hollow-ring "pending" shape --
+# DIRECTION-A.md's own wording groups "connecting / no controller", and
+# OwnershipBar (A3) already makes the identical call for "disconnected"
+# vs. "no_controller" (one ClampBar variant, two different sentences).
+_VARIANT_BY_STATE = {
+    "disconnected": "pending",
+    "connecting": "pending",
+    "connected": "held",
+    "paused": "released",
+    "no_controller": "pending",
 }
 _STATE_LABELS = {
     "disconnected": "Disconnected",
@@ -44,7 +60,6 @@ _STATE_LABELS = {
 }
 
 
-
 # Sizes KDE/KWin's window decoration, the Task Manager, and the tray itself
 # are known to request. QIcon(path) alone only registers the source PNG's
 # native 512x512 -- confirmed via QIcon.availableSizes() -- and left to
@@ -58,6 +73,10 @@ _ICON_SIZES = (16, 22, 24, 32, 48, 64, 128, 256, 512)
 
 
 def _state_icon(filename: str) -> QIcon:
+    """Still used for the static window/taskbar icon (always the
+    "disconnected"-era PNG regardless of connection state -- see
+    main_window.py's own comment on _app_icon()). The tray's own
+    per-state icons are _variant_icon() below now."""
     source = QPixmap(str(_ASSETS_DIR / filename))
     icon = QIcon()
     for size in _ICON_SIZES:
@@ -69,24 +88,70 @@ def _state_icon(filename: str) -> QIcon:
     return icon
 
 
+def _draw_variant(painter: QPainter, variant: str, size: int, palette: Palette) -> None:
+    margin = max(1.0, size * 0.12)
+    rect = QRectF(margin, margin, size - 2 * margin, size - 2 * margin)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    if variant == "held":
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(palette.signal_mark))
+        painter.drawEllipse(rect)
+    elif variant == "released":
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(palette.border_control))
+        painter.drawEllipse(rect)
+    elif variant == "pending":
+        pen = QPen(QColor(palette.border_control))
+        pen.setWidthF(max(1.5, size * 0.12))
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(rect.adjusted(pen.widthF() / 2, pen.widthF() / 2,
+                                          -pen.widthF() / 2, -pen.widthF() / 2))
+    elif variant == "alarm":
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(palette.alarm_fill))
+        painter.drawEllipse(rect)
+        # The cut: a single diagonal stroke through the filled dot, same
+        # "shape carries the state" principle -- a colourblind user still
+        # sees a circle-with-a-slash, not just a dot in some other red.
+        pen = QPen(QColor(palette.surface_ground))
+        pen.setWidthF(max(1.5, size * 0.14))
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawLine(rect.topLeft(), rect.bottomRight())
+    else:  # pragma: no cover - defensive; every real variant is listed above
+        raise ValueError(f"unknown tray icon variant: {variant!r}")
+
+
+def _variant_icon(variant: str, palette: Palette) -> QIcon:
+    icon = QIcon()
+    for size in _ICON_SIZES:
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        try:
+            _draw_variant(painter, variant, size, palette)
+        finally:
+            painter.end()
+        icon.addPixmap(pixmap)
+    return icon
+
+
 class TrayIcon(QSystemTrayIcon):
     release_toggled = pyqtSignal(bool)  # True = release to XInput, False = reconnect
 
-    def __init__(self, main_window: "MainWindow", parent: Optional[QObject] = None) -> None:
+    def __init__(
+        self, main_window: "MainWindow", palette: Palette = DARK_PALETTE,
+        parent: Optional[QObject] = None,
+    ) -> None:
         super().__init__(parent)
         self.main_window = main_window
         self._state = "disconnected"
         self._syncing = False
-        # Built per unique filename, not per state: "connecting" and
-        # "no_controller" share icon_yellow.png (_STATE_ICON_FILES above),
-        # and _state_icon() re-scales into all 9 _ICON_SIZES on every call --
-        # no reason to do that work twice for identical pixmap content.
-        by_file: dict = {}
-        self._icons = {}
-        for state, fname in _STATE_ICON_FILES.items():
-            if fname not in by_file:
-                by_file[fname] = _state_icon(fname)
-            self._icons[state] = by_file[fname]
+        self._has_error = False
+        self._palette = palette
+        self._build_icons()
 
         menu = QMenu()
         show_action = QAction("Show Window", menu)
@@ -113,10 +178,41 @@ class TrayIcon(QSystemTrayIcon):
         self.activated.connect(self._on_activated)
         self.set_state("disconnected")
 
+    def _build_icons(self) -> None:
+        # Built once per unique shape variant, not per connection state --
+        # "connecting"/"no_controller"/"disconnected" all share "pending"
+        # (see _VARIANT_BY_STATE), no reason to draw and register that
+        # shape into all nine _ICON_SIZES three separate times.
+        by_variant: dict = {}
+        self._icons = {}
+        for state, variant in _VARIANT_BY_STATE.items():
+            if variant not in by_variant:
+                by_variant[variant] = _variant_icon(variant, self._palette)
+            self._icons[state] = by_variant[variant]
+        self._alarm_icon = _variant_icon("alarm", self._palette)
+
+    def set_palette(self, palette: Palette) -> None:
+        """Called on a theme change (MainWindow's ThemeController.paletteChanged,
+        wired in app.py) -- these are painted pixmaps, not QSS, so a
+        regenerated stylesheet alone never reaches them."""
+        self._palette = palette
+        self._build_icons()
+        self._refresh_icon()
+
+    def _refresh_icon(self) -> None:
+        icon = self._alarm_icon if self._has_error else self._icons.get(self._state, self._icons["disconnected"])
+        self.setIcon(icon)
+
     def set_state(self, state: str) -> None:
         self._state = state
-        self.setIcon(self._icons.get(state, self._icons["disconnected"]))
-        self.setToolTip(f"G7 Control Center -- {_STATE_LABELS.get(state, state)}")
+        if state == "connected":
+            # A successful (re)connect supersedes any earlier error -- same
+            # rule main_window.py's set_connection_state() already applies
+            # to its own error_label.
+            self._has_error = False
+        self._refresh_icon()
+        tooltip = f"G7 Control Center -- {_STATE_LABELS.get(state, state)}"
+        self.setToolTip(tooltip)
         if state == "connected":
             self.release_action.setText("Release Device")
             # Real bug, found 2026-09-01: this used to be an unconditional
@@ -137,6 +233,19 @@ class TrayIcon(QSystemTrayIcon):
         else:
             self.release_action.setEnabled(False)
             self.sync_action.setEnabled(False)
+
+    def set_error(self, message: str) -> None:
+        """Connected to DeviceWatcher.error in app.py, same signal
+        main_window.py's own set_error() listens to. A non-empty message
+        switches the tray to the alarm shape (red dot, cut) regardless of
+        connection state; an empty one (or the next successful connect,
+        see set_state()) clears it."""
+        self._has_error = bool(message)
+        self._refresh_icon()
+        if self._has_error:
+            self.setToolTip(f"G7 Control Center -- {message}")
+        else:
+            self.setToolTip(f"G7 Control Center -- {_STATE_LABELS.get(self._state, self._state)}")
 
     def set_syncing(self, syncing: bool) -> None:
         """Connected to MainWindow.syncing_changed -- set_state() alone
