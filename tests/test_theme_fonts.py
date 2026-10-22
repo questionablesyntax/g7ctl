@@ -80,12 +80,42 @@ class FontForRoleTest(unittest.TestCase):
         # guarded call path doesn't blow up either way.
         font_for("readout", self.load_result)
 
-    def test_unloaded_family_falls_back_to_the_documented_chain(self):
+    def test_unloaded_family_falls_back_to_the_first_installed_chain_member(self):
+        """Real bug, found in A6's code review (2026-10-22): the fallback
+        loop used to `return fallback` on its first iteration, unconditionally
+        -- the documented second tier was dead code, and this test's own
+        unqualified FALLBACK_CHAIN[0] assertion passed regardless of
+        whether that font was actually installed anywhere. Mocks
+        QFontDatabase.families() so this is deterministic across
+        environments, not dependent on what happens to be installed here."""
+        from unittest import mock
+
         from g7ctlc.fonts import FALLBACK_CHAIN, FontLoadResult, font_for
 
         empty_result = FontLoadResult(loaded_families=(), failed_families=("Barlow Semi Condensed",))
-        font = font_for("display", empty_result)
+        with mock.patch("g7ctlc.fonts.QFontDatabase.families", return_value=list(FALLBACK_CHAIN)):
+            font = font_for("display", empty_result)
         self.assertEqual(font.family(), FALLBACK_CHAIN[0])
+
+    def test_falls_back_to_the_second_tier_when_the_first_is_not_installed(self):
+        from unittest import mock
+
+        from g7ctlc.fonts import FALLBACK_CHAIN, FontLoadResult, font_for
+
+        empty_result = FontLoadResult(loaded_families=(), failed_families=("Barlow Semi Condensed",))
+        with mock.patch("g7ctlc.fonts.QFontDatabase.families", return_value=[FALLBACK_CHAIN[1]]):
+            font = font_for("display", empty_result)
+        self.assertEqual(font.family(), FALLBACK_CHAIN[1])
+
+    def test_falls_back_to_the_original_face_when_nothing_in_the_chain_is_installed(self):
+        from unittest import mock
+
+        from g7ctlc.fonts import FontLoadResult, font_for
+
+        empty_result = FontLoadResult(loaded_families=(), failed_families=("Barlow Semi Condensed",))
+        with mock.patch("g7ctlc.fonts.QFontDatabase.families", return_value=[]):
+            font = font_for("display", empty_result)
+        self.assertEqual(font.family(), "Barlow Semi Condensed")
 
 
 if __name__ == "__main__":

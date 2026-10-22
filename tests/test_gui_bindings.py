@@ -240,6 +240,16 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         view.set_layer("shift")
         self.assertEqual(view._combos[("a", "shift")].value(), "f11")
 
+    def test_shift_reference_column_explains_it_is_shared(self):
+        """Real gap, found in A6's code review (2026-10-22): the
+        pre-redesign Shift combo boxes carried this explanation; the new
+        read-only reference column lost it with nothing in its place."""
+        from g7ctlc.views.buttons_view import _SHARED_SHIFT_TOOLTIP, ButtonsView
+        view = ButtonsView()
+        self.assertEqual(view.shift_reference_header.toolTip(), _SHARED_SHIFT_TOOLTIP)
+        row = next(iter(view._rows.values()))
+        self.assertEqual(row.shift_reference.toolTip(), _SHARED_SHIFT_TOOLTIP)
+
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
 class SticksDirectionBindingsTest(unittest.TestCase):

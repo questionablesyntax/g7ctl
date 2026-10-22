@@ -211,8 +211,17 @@ class TrayIcon(QSystemTrayIcon):
             # to its own error_label.
             self._has_error = False
         self._refresh_icon()
-        tooltip = f"G7 Control Center -- {_STATE_LABELS.get(state, state)}"
-        self.setToolTip(tooltip)
+        # Real bug, found in A6's code review (2026-10-22): this used to
+        # set the tooltip unconditionally, clobbering set_error()'s own
+        # error-message tooltip the moment the connection state changed
+        # while that error was still active -- the icon stayed alarm-
+        # shaped (see _refresh_icon() above) but the tooltip explaining
+        # why reverted to a generic state label. _has_error is only False
+        # here if state == "connected" already cleared it above, or no
+        # error was ever set, so this is never stale.
+        if not self._has_error:
+            tooltip = f"G7 Control Center -- {_STATE_LABELS.get(state, state)}"
+            self.setToolTip(tooltip)
         if state == "connected":
             self.release_action.setText("Release Device")
             # Real bug, found 2026-09-01: this used to be an unconditional

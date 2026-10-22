@@ -46,6 +46,7 @@ class InlineNotice(QWidget):
         super().__init__(parent)
         self.variant = variant
         self.setProperty("role", f"notice-{variant}")
+        self._icon_loader = icon_loader
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 10)
@@ -53,10 +54,10 @@ class InlineNotice(QWidget):
 
         icon_role = _TEXT_ROLE_BY_VARIANT[variant]
         icon = icon_loader.icon(_ICON_BY_VARIANT[variant], 20, icon_role, palette)
-        icon_label = QLabel(self)
-        icon_label.setPixmap(icon.pixmap(20, 20))
-        icon_label.setAccessibleName("")  # decorative; the notice's own accessible name carries the text
-        layout.addWidget(icon_label, 0, Qt.AlignmentFlag.AlignTop)
+        self._icon_label = QLabel(self)
+        self._icon_label.setPixmap(icon.pixmap(20, 20))
+        self._icon_label.setAccessibleName("")  # decorative; the notice's own accessible name carries the text
+        layout.addWidget(self._icon_label, 0, Qt.AlignmentFlag.AlignTop)
 
         self.text_label = QLabel(text, self)
         self.text_label.setWordWrap(True)
@@ -79,3 +80,14 @@ class InlineNotice(QWidget):
     def set_text(self, text: str) -> None:
         self.text_label.setText(text)
         self.setAccessibleName(text)
+
+    def set_palette(self, palette: Palette) -> None:
+        """Real bug, found in A6's code review (2026-10-22): this icon is a
+        baked palette-tinted pixmap, same as TrayIcon's own -- a
+        regenerated stylesheet alone never reaches it, and this had no
+        set_palette() at all, so the icon kept whichever palette's tint it
+        was constructed with through a live theme switch (MainWindow's
+        text_label does update, via QSS)."""
+        icon_role = _TEXT_ROLE_BY_VARIANT[self.variant]
+        icon = self._icon_loader.icon(_ICON_BY_VARIANT[self.variant], 20, icon_role, palette)
+        self._icon_label.setPixmap(icon.pixmap(20, 20))

@@ -219,5 +219,44 @@ class KeycodePickerKeyboardTest(unittest.TestCase):
         self.assertNotEqual(current.data(Qt.ItemDataRole.UserRole), "__header__")
 
 
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class KeycodePickerSizingTest(unittest.TestCase):
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_open_for_sizes_the_popover_to_its_own_content(self):
+        """Real bug, found in A6's code review (2026-10-22): open_for()
+        resized using self.width()/height() -- the widget's own pre-layout
+        size (Qt's default top-level 640x480) -- instead of sizeHint(),
+        which reflects the actual ~100-item list. Every popover opened
+        oversized instead of fitting its real content."""
+        from PyQt6.QtWidgets import QWidget
+
+        from g7ctlc.keycode_picker import KeycodePicker
+
+        picker = KeycodePicker()
+        anchor = QWidget()
+        anchor.resize(80, 24)  # narrower than the picker's own content
+        hint = picker.sizeHint()
+        picker.open_for(anchor, None, known=True)
+        self.assertEqual(picker.height(), hint.height())
+        self.assertEqual(picker.width(), hint.width())
+
+    def test_open_for_still_widens_to_match_a_wider_anchor(self):
+        from PyQt6.QtWidgets import QWidget
+
+        from g7ctlc.keycode_picker import KeycodePicker
+
+        picker = KeycodePicker()
+        hint = picker.sizeHint()
+        anchor = QWidget()
+        anchor.resize(hint.width() + 200, 24)
+        picker.open_for(anchor, None, known=True)
+        self.assertEqual(picker.width(), anchor.width())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -34,13 +34,12 @@ from PyQt6.QtWidgets import (
 from pyg7.buttons import BUTTON_TABLE_SLOTS, KNOWN_BUTTON_IDS, KNOWN_KEYCODES
 
 from ..binding_field import BindingField
+from ..binding_row import LATCH_COL_WIDTH as _LATCH_COL_WIDTH
 from ..binding_row import MAX_ROW_WIDTH as _MAX_ROW_WIDTH
 from ..binding_row import NAME_COL_WIDTH as _NAME_COL_WIDTH
 from ..binding_row import BindingRow
 from ..checkbox import Checkbox
 from ..keycode_picker import KeycodePicker
-
-_LATCH_COL_WIDTH = 90
 
 _BUTTON_LABELS = {
     "share": "Share", "a": "A", "b": "B", "x": "X", "y": "Y",
@@ -141,6 +140,7 @@ class ButtonsView(QWidget):
                     lambda _checked=False, b=button_id: self._open_picker(b, "default"))
                 row.shift_field.clicked.connect(
                     lambda _checked=False, b=button_id: self._open_picker(b, "shift"))
+                row.shift_reference.setToolTip(_SHARED_SHIFT_TOOLTIP)
                 if row.latch is not None:
                     row.latch.setToolTip(_LATCH_TOOLTIP)
                     row.latch.toggled.connect(self._on_edit)
@@ -223,6 +223,10 @@ class ButtonsView(QWidget):
 
         self.shift_reference_header = QLabel("Shift (shared)")
         self.shift_reference_header.setProperty("role", "secondary")
+        # Real gap, found in A6's code review (2026-10-22): the
+        # pre-redesign combo boxes carried this explanation; the new
+        # read-only reference column lost it with nothing in its place.
+        self.shift_reference_header.setToolTip(_SHARED_SHIFT_TOOLTIP)
         header.addWidget(self.shift_reference_header, 1)
 
         self.continuous_header = QLabel("Latch")

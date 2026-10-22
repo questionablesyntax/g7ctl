@@ -504,6 +504,54 @@ class ShiftViewSelectorTest(unittest.TestCase):
                          "profile change")
         self.assertTrue(view._combos[("a", "default")].isVisibleTo(view))
 
+    def test_sync_warning_mentions_shift_is_shared_while_viewing_it(self):
+        """Real bug, found in A6's code review (2026-10-22):
+        request_sync_now() compared rail.profile_switch.value() to
+        SHIFT_VIEW ("shift"), but _select_shift_view() actually sets that
+        control to None (off-scale) -- the comparison could never be true,
+        so this warning never showed while genuinely viewing Shift."""
+        from g7ctlc.main_window import SHIFT_VIEW
+        window = self._window()
+        window._connection_state = "connected"  # bypass set_connection_state()'s own auto-read
+        window._state_confirmed = True
+        self._select(window, SHIFT_VIEW)
+        with mock.patch.object(window, "_confirm", return_value=False) as confirm:
+            window.request_sync_now()
+        confirm.assert_called_once()
+        self.assertIn("shared by all four profiles", confirm.call_args.args[-1])
+
+    def test_importing_while_on_shift_does_not_light_up_a_profile_segment(self):
+        """Same root bug as above, different call site: _sync_profile_switch()
+        (reached from an Import, or MainWindow's own construction) used the
+        identical broken comparison, so its own "don't yank the user off
+        Shift" guard never fired either."""
+        from g7ctlc.main_window import SHIFT_VIEW
+        window = self._window()
+        self._select(window, 2)
+        self._select(window, SHIFT_VIEW)
+        window._sync_profile_switch()
+        self.assertIsNone(window.rail.profile_switch.value(),
+                         "a profile-switch sync pulled the user back to a "
+                         "numbered profile segment while still on Shift")
+        self.assertEqual(window.rail.current_page(), "shift")
+
+    def test_clicking_buttons_while_on_shift_actually_leaves_shift(self):
+        """Real bug, found in A6's code review (2026-10-22): "buttons" and
+        "shift" route to the same buttons_view widget, so clicking Buttons
+        while on Shift only called pages.setCurrentWidget() -- a no-op,
+        since that widget was already current -- never _apply_view(), so
+        the rail showed "Buttons" selected while the content stayed on the
+        Shift layer."""
+        window = self._window()
+        self._select(window, 3)
+        self._select(window, "shift")
+        self.assertTrue(window._viewing_shift)
+        window.rail.pageRequested.emit("buttons")
+        self.assertFalse(window._viewing_shift)
+        self.assertEqual(window.buttons_view.column_header.text(), "Base Layer")
+        self.assertEqual(window.rail.profile_switch.value(), "3")
+        self.assertTrue(window.rail.is_page_visible("sticks"))
+
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
 class BatteryLabelTest(unittest.TestCase):
@@ -1062,3 +1110,37 @@ class ConnectionAlarmTest(unittest.TestCase):
         w.set_error("something went wrong")
         w.set_error("")
         self.assertTrue(w._connection_alarm.isHidden())
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class PaletteWiringTest(unittest.TestCase):
+    """Real bug, found in A6's code review (2026-10-22): _on_palette_changed()
+    refreshed sticks_view/triggers_view/_hatch_overlay on a live theme
+    switch, but never rail or _connection_alarm -- both baked-pixmap-icon
+    widgets with their own set_palette() now, but nothing was calling
+    them.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+        return MainWindow()
+
+    def test_a_palette_change_reaches_the_rail_and_the_connection_alarm(self):
+        from g7ctlc.palette import LIGHT_PALETTE
+        w = self._window()
+        before = [
+            w.rail.read_button.icon().cacheKey(),
+            w._connection_alarm._icon_label.pixmap().cacheKey(),
+        ]
+        w._on_palette_changed(LIGHT_PALETTE)
+        after = [
+            w.rail.read_button.icon().cacheKey(),
+            w._connection_alarm._icon_label.pixmap().cacheKey(),
+        ]
+        for b, a in zip(before, after):
+            self.assertNotEqual(b, a, "an icon did not change for a different palette")

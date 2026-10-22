@@ -67,6 +67,22 @@ class InlineNoticeTest(unittest.TestCase):
         notice.action_button.click()
         self.assertEqual(calls, [1])
 
+    def test_set_palette_retints_the_icon(self):
+        """Real bug, found in A6's code review (2026-10-22): this icon is
+        a baked palette-tinted pixmap, same as TrayIcon's own, and there
+        was no set_palette() at all -- MainWindow's _on_palette_changed()
+        is wired to the ownership bar's alarm notice specifically, so a
+        live theme switch left it tinted for whichever palette the app
+        started in."""
+        from g7ctlc.inline_notice import InlineNotice
+        from g7ctlc.palette import LIGHT_PALETTE
+
+        notice = InlineNotice("alarm", "Lost connection", DARK_PALETTE, self.icons)
+        before = notice._icon_label.pixmap().cacheKey()
+        notice.set_palette(LIGHT_PALETTE)
+        after = notice._icon_label.pixmap().cacheKey()
+        self.assertNotEqual(before, after)
+
 
 if __name__ == "__main__":
     unittest.main()

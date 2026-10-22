@@ -56,7 +56,7 @@ QDialog {{
     def exec(self) -> int:  # noqa: A003 - matching QDialog's own name
         self._focus_before_open = QApplication.focusWidget()
         if self._animate:
-            self._fade(0.0, 1.0, MOTION_BASE)
+            self._fade(0.0, 1.0, MOTION_BASE.duration_ms)
         else:
             self.setWindowOpacity(1.0)
         return super().exec()

@@ -164,5 +164,51 @@ class RailFooterSignalsTest(unittest.TestCase):
         self.assertEqual(labels, ["About"])
 
 
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class RailPaletteTest(unittest.TestCase):
+    """Real bug, found in A6's code review (2026-10-22): every icon here
+    is a baked palette-tinted pixmap/QIcon, and there was no set_palette()
+    at all -- a live theme switch left every one of them tinted for
+    whichever palette the rail was constructed with.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _rail(self, palette):
+        from g7ctlc.icon_loader import LucideIconLoader
+        from g7ctlc.rail import Rail
+        return Rail(palette, LucideIconLoader())
+
+    def test_set_palette_retints_every_icon(self):
+        from g7ctlc.palette import DARK_PALETTE, LIGHT_PALETTE
+        rail = self._rail(DARK_PALETTE)
+        before = [
+            rail._profile_heading_icon_label.pixmap().cacheKey(),
+            rail._marker_icon_label.pixmap().cacheKey(),
+            rail._shared_heading_icon_label.pixmap().cacheKey(),
+            rail.read_button.icon().cacheKey(),
+            rail.snapshots_button.icon().cacheKey(),
+            rail.help_button.icon().cacheKey(),
+            rail._import_action.icon().cacheKey(),
+            rail._export_action.icon().cacheKey(),
+        ]
+        rail.set_palette(LIGHT_PALETTE)
+        after = [
+            rail._profile_heading_icon_label.pixmap().cacheKey(),
+            rail._marker_icon_label.pixmap().cacheKey(),
+            rail._shared_heading_icon_label.pixmap().cacheKey(),
+            rail.read_button.icon().cacheKey(),
+            rail.snapshots_button.icon().cacheKey(),
+            rail.help_button.icon().cacheKey(),
+            rail._import_action.icon().cacheKey(),
+            rail._export_action.icon().cacheKey(),
+        ]
+        for b, a in zip(before, after):
+            self.assertNotEqual(b, a, "an icon did not change for a different palette")
+
+
 if __name__ == "__main__":
     unittest.main()

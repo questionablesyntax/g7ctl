@@ -60,6 +60,7 @@ class Rail(QWidget):
         super().__init__(parent)
         self.setProperty("role", "rail")
         self.setAccessibleName("Navigation")
+        self._icon_loader = icon_loader
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -100,9 +101,9 @@ class Rail(QWidget):
         row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.setSpacing(6)
         icon = icon_loader.icon("gamepad-2", 16, "text_secondary", palette)
-        icon_label = QLabel(row)
-        icon_label.setPixmap(icon.pixmap(16, 16))
-        row_layout.addWidget(icon_label)
+        self._profile_heading_icon_label = QLabel(row)
+        self._profile_heading_icon_label.setPixmap(icon.pixmap(16, 16))
+        row_layout.addWidget(self._profile_heading_icon_label)
         label = QLabel("Profile", row)
         label.setProperty("role", "rail-heading")
         row_layout.addWidget(label)
@@ -122,9 +123,9 @@ class Rail(QWidget):
         row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.setSpacing(6)
         icon = icon_loader.icon("gamepad-2", 16, "text_secondary", palette)
-        icon_label = QLabel(row)
-        icon_label.setPixmap(icon.pixmap(16, 16))
-        row_layout.addWidget(icon_label)
+        self._marker_icon_label = QLabel(row)
+        self._marker_icon_label.setPixmap(icon.pixmap(16, 16))
+        row_layout.addWidget(self._marker_icon_label)
         self._marker_label = QLabel("", row)
         self._marker_label.setProperty("role", "secondary")
         row_layout.addWidget(self._marker_label)
@@ -166,9 +167,9 @@ class Rail(QWidget):
         row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.setSpacing(6)
         icon = icon_loader.icon("layers", 16, "text_secondary", palette)
-        icon_label = QLabel(row)
-        icon_label.setPixmap(icon.pixmap(16, 16))
-        row_layout.addWidget(icon_label)
+        self._shared_heading_icon_label = QLabel(row)
+        self._shared_heading_icon_label.setPixmap(icon.pixmap(16, 16))
+        row_layout.addWidget(self._shared_heading_icon_label)
         label = QLabel("Shared by all profiles", row)
         label.setProperty("role", "rail-heading")
         row_layout.addWidget(label)
@@ -209,6 +210,27 @@ class Rail(QWidget):
             if button.isChecked():
                 return key
         return "buttons"
+
+    def set_palette(self, palette: Palette) -> None:
+        """Real bug, found in A6's code review (2026-10-22): MainWindow's
+        _on_palette_changed() refreshes its QPainter-driven widgets on a
+        live theme switch but never called this -- because this never
+        existed. Every icon here is a baked palette-tinted pixmap/QIcon,
+        same as TrayIcon's own, so a regenerated stylesheet alone (QSS,
+        which the text labels do pick up) never reaches them; they kept
+        the old palette's tint through a live dark<->light toggle."""
+        loader = self._icon_loader
+        self._profile_heading_icon_label.setPixmap(
+            loader.icon("gamepad-2", 16, "text_secondary", palette).pixmap(16, 16))
+        self._marker_icon_label.setPixmap(
+            loader.icon("gamepad-2", 16, "text_secondary", palette).pixmap(16, 16))
+        self._shared_heading_icon_label.setPixmap(
+            loader.icon("layers", 16, "text_secondary", palette).pixmap(16, 16))
+        self.read_button.setIcon(loader.icon("refresh-cw", 16, "text_primary", palette))
+        self.snapshots_button.setIcon(loader.icon("file-down", 16, "text_primary", palette))
+        self.help_button.setIcon(loader.icon("circle-help", 16, "text_primary", palette))
+        self._import_action.setIcon(loader.icon("file-up", 16, "text_primary", palette))
+        self._export_action.setIcon(loader.icon("file-down", 16, "text_primary", palette))
 
     def set_nav_enabled(self, enabled: bool) -> None:
         """Gates every nav button together -- mid-sync/read, same as the
@@ -262,12 +284,12 @@ class Rail(QWidget):
 
     def _build_snapshots_menu(self, icon_loader: LucideIconLoader, palette: Palette) -> QMenu:
         menu = QMenu(self)
-        import_action = menu.addAction(icon_loader.icon("file-up", 16, "text_primary", palette), "Import…")
-        import_action.setToolTip("Load a previously exported JSON snapshot file")
-        import_action.triggered.connect(self.importRequested.emit)
-        export_action = menu.addAction(icon_loader.icon("file-down", 16, "text_primary", palette), "Export…")
-        export_action.setToolTip("Save the current state to a JSON snapshot file")
-        export_action.triggered.connect(self.exportRequested.emit)
+        self._import_action = menu.addAction(icon_loader.icon("file-up", 16, "text_primary", palette), "Import…")
+        self._import_action.setToolTip("Load a previously exported JSON snapshot file")
+        self._import_action.triggered.connect(self.importRequested.emit)
+        self._export_action = menu.addAction(icon_loader.icon("file-down", 16, "text_primary", palette), "Export…")
+        self._export_action.setToolTip("Save the current state to a JSON snapshot file")
+        self._export_action.triggered.connect(self.exportRequested.emit)
         return menu
 
     def wire_help_menu(self, build: Callable[[QMenu], None]) -> None:

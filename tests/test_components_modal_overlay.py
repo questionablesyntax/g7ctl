@@ -7,6 +7,7 @@ tests dialog-shaped widgets in this codebase without a blocking exec loop.
 """
 import os
 import unittest
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -66,6 +67,24 @@ class ModalOverlayBaseTest(unittest.TestCase):
         self.app.processEvents()
         self.assertIs(QApplication.focusWidget(), trigger)
         host.close()
+
+    def test_exec_with_animate_true_does_not_crash(self):
+        """Real bug, found in A6's code review (2026-10-22): exec() passed
+        the MOTION_BASE MotionToken itself, not its .duration_ms int,
+        straight into QPropertyAnimation.setDuration() -- a TypeError on
+        every real open, since every other test here uses animate=False
+        and so never exercised this line. super().exec() (QDialog's own,
+        a real blocking modal loop) is mocked out, the one thing this
+        file's module docstring says to avoid -- everything before that
+        call, including the crashing line, still runs for real."""
+        from PyQt6.QtWidgets import QDialog
+
+        from g7ctlc.modal_overlay import ModalOverlayBase
+
+        overlay = ModalOverlayBase(DARK_PALETTE)  # animate=True, the default
+        with mock.patch.object(QDialog, "exec", return_value=QDialog.DialogCode.Accepted):
+            result = overlay.exec()
+        self.assertEqual(result, QDialog.DialogCode.Accepted)
 
     def test_content_layout_is_ready_for_a_subclass_to_populate(self):
         from PyQt6.QtWidgets import QLabel

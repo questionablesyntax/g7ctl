@@ -153,7 +153,14 @@ class KeycodePicker(QWidget):
         self._populate()
         point = anchor.mapToGlobal(anchor.rect().bottomLeft())
         self.move(point)
-        self.resize(max(self.width(), anchor.width()), self.height())
+        # Real bug, found in A6's code review (2026-10-22): this used
+        # self.width()/height(), the widget's own pre-layout size (Qt's
+        # default top-level 640x480, or whatever a previous open last left
+        # it at) -- never the ~100-item list's actual content, which
+        # sizeHint() reflects. The popover opened oversized (or stale)
+        # every time instead of a compact anchored popup.
+        hint = self.sizeHint()
+        self.resize(max(hint.width(), anchor.width()), hint.height())
         self.show()
         self.search.setFocus(Qt.FocusReason.PopupFocusReason)
 

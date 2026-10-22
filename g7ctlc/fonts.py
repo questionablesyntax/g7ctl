@@ -73,9 +73,18 @@ def load_fonts() -> FontLoadResult:
 def _resolve_family(face: str, load_result: FontLoadResult) -> str:
     if face in load_result.loaded_families:
         return face
+    # Real bug, found in A6's code review (2026-10-22): `return fallback`
+    # on the loop's first iteration made this an unconditional "Noto
+    # Sans", regardless of whether it's actually installed -- the
+    # documented second tier (DejaVu Sans) was unreachable dead code.
+    # QFontDatabase.families() is every family Qt can actually resolve
+    # right now, vendored-and-loaded ones included, so this needs no
+    # special case for load_result's own families.
+    installed = QFontDatabase.families()
     for fallback in FALLBACK_CHAIN:
-        return fallback
-    return face  # pragma: no cover - FALLBACK_CHAIN is never empty
+        if fallback in installed:
+            return fallback
+    return face  # last resort -- Qt's own font substitution takes over
 
 
 def font_for(role: str, load_result: FontLoadResult, *, scale: float = 1.0) -> QFont:

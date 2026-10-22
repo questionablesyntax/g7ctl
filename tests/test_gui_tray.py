@@ -215,6 +215,19 @@ class ErrorStateTest(unittest.TestCase):
         tray.set_error("")
         self.assertEqual(tray.icon().cacheKey(), tray._icons["connected"].cacheKey())
 
+    def test_a_state_change_does_not_clobber_the_error_tooltip(self):
+        """Real bug, found in A6's code review (2026-10-22): set_state()
+        used to overwrite the tooltip unconditionally. The icon stayed
+        alarm-shaped through a state change while an error was still
+        active, but the tooltip explaining why reverted to a generic
+        state label -- an inconsistent, confusing combination."""
+        tray = self._tray()
+        tray.set_state("connected")
+        tray.set_error("USB write failed")
+        tray.set_state("disconnected")
+        self.assertIn("USB write failed", tray.toolTip())
+        self.assertEqual(tray.icon().cacheKey(), tray._alarm_icon.cacheKey())
+
     def test_a_successful_reconnect_clears_a_pending_error(self):
         # Same rule main_window.py's own set_connection_state() already
         # applies to error_label: a successful (re)connect supersedes any

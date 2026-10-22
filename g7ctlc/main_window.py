@@ -127,6 +127,16 @@ class MainWindow(QMainWindow):
         self._state_confirmed = False
         self._loading_profile_switch = False
         self._loading_report_rate_combo = False
+        # True only while the Shift layer's single screen is showing. The
+        # only reliable source of this -- rail.profile_switch.value() ==
+        # SHIFT_VIEW was tried and is wrong, since _select_shift_view()
+        # actually sets that control to None (off-scale), not "shift": a
+        # real bug found in A6's code review, 2026-10-22, that made the
+        # Shift-layer sync warning never show and let a background read
+        # silently re-check a numbered profile segment while Shift was
+        # still on screen. Set once, in _apply_view(), the one place that
+        # actually decides this.
+        self._viewing_shift = False
         self.setWindowIcon(self._app_icon())
 
         central = QWidget()
@@ -189,6 +199,12 @@ class MainWindow(QMainWindow):
         self.sticks_view.set_palette(palette)
         self.triggers_view.set_palette(palette)
         self._hatch_overlay.set_palette(palette)
+        # Real bug, found in A6's code review (2026-10-22): rail and
+        # _connection_alarm (InlineNotice) are the other baked-pixmap-icon
+        # widgets this method missed entirely -- both had no set_palette()
+        # to call until now (see each one's own docstring).
+        self.rail.set_palette(palette)
+        self._connection_alarm.set_palette(palette)
 
     @property
     def theme(self) -> ThemeController:
@@ -660,7 +676,7 @@ class MainWindow(QMainWindow):
         if not self._sync_allowed():
             return
         slot = self._state.get("controller_slot") or 1
-        if self.rail.profile_switch.value() == SHIFT_VIEW:
+        if self._viewing_shift:
             message = ("Push the current settings to the connected controller? The Shift "
                        f"layer is shared by all four profiles, so this changes it for every "
                        f"profile — and anything else edited since the last sync still goes to "
@@ -809,7 +825,7 @@ class MainWindow(QMainWindow):
         re-triggering _on_profile_changed (which would otherwise fire a
         redundant read/no-op write for a value that just came FROM state,
         not from the user picking a new one)."""
-        if self.rail.profile_switch.value() == SHIFT_VIEW:
+        if self._viewing_shift:
             # A read finishing must not yank the user out of the Shift view
             # back to whichever profile it happened to target. The Shift
             # layer came back with that read anyway -- it is global.
@@ -841,6 +857,18 @@ class MainWindow(QMainWindow):
         if key == "shift":
             self._select_shift_view()
             return
+        if key == "buttons" and self._viewing_shift:
+            # Both "buttons" and "shift" route to the same buttons_view
+            # widget, so a plain setCurrentWidget() here was a no-op: the
+            # rail's exclusive button group checks "Buttons" purely from
+            # the click, but nothing told buttons_view to leave shift mode
+            # or restored the profile switch -- real bug, found in A6's
+            # code review, 2026-10-22. Treat it exactly like picking the
+            # current profile, since that's genuinely what "Buttons" means
+            # once you're not on Shift.
+            self._apply_view(self._state.get("controller_slot") or 1)
+            self._sync_profile_switch()
+            return
         self.pages.setCurrentWidget(self._page_widgets[key])
 
     def _select_shift_view(self) -> None:
@@ -864,6 +892,7 @@ class MainWindow(QMainWindow):
         A3 is layout only.
         """
         shift_view = selected == SHIFT_VIEW
+        self._viewing_shift = shift_view
         self.buttons_view.set_layer("shift" if shift_view else "default")
         for key in PROFILE_PAGE_KEYS:
             if key == "buttons":
