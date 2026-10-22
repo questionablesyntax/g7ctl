@@ -1,25 +1,27 @@
 """Vibrations tab: grip/trigger levels and per-side trigger force/sync flags."""
 from typing import Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
-    QLabel,
     QScrollArea,
-    QSlider,
     QVBoxLayout,
     QWidget,
 )
 
 from pyg7.vibration import LEVELS
 
+from ..checkbox import Checkbox
+from ..segmented_control import SegmentedControl
+
 LEVEL_SETTINGS = [
     ("left_grip", "Left Grip"), ("right_grip", "Right Grip"),
     ("left_trigger", "Left Trigger"), ("right_trigger", "Right Trigger"),
 ]
+
+_LEVEL_SEGMENTS = [(str(lvl), str(lvl)) for lvl in LEVELS]
 
 
 def _nearest_level_index(value: Optional[int]) -> int:
@@ -36,32 +38,6 @@ def _nearest_level_index(value: Optional[int]) -> int:
     return min(range(len(LEVELS)), key=lambda i: abs(LEVELS[i] - value))
 
 
-def _level_row() -> tuple[QSlider, QWidget]:
-    # Range is an INDEX into LEVELS, not the level itself -- the only way to
-    # make a slider land on exactly five stops is to give it exactly five
-    # positions, rather than a 0-100 range with drag snapped after the
-    # fact (which still lets a fast drag release land in between on some
-    # Qt styles). See LEVELS' own comment for why five and not 101: below
-    # 25 nothing was felt on hardware, and 25/50/75/100 are each distinctly
-    # stronger with no plateau -- matches what GameSir Nexus itself offers.
-    slider = QSlider(Qt.Orientation.Horizontal)
-    slider.setRange(0, len(LEVELS) - 1)
-    slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-    slider.setTickInterval(1)
-    slider.setPageStep(1)
-    value_label = QLabel(str(LEVELS[0]))
-    value_label.setFixedWidth(30)
-    value_label.setStyleSheet("font-weight: 600;")
-    value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-    slider.valueChanged.connect(lambda i: value_label.setText(str(LEVELS[i])))
-    row = QHBoxLayout()
-    row.addWidget(slider, 1)
-    row.addWidget(value_label)
-    container = QWidget()
-    container.setLayout(row)
-    return slider, container
-
-
 class VibrationView(QWidget):
     changed = pyqtSignal()
 
@@ -69,9 +45,9 @@ class VibrationView(QWidget):
         super().__init__(parent)
         self._loading = False
         self._state = None
-        # Keys whose slider has genuinely been moved since the last
-        # load_state() -- see _on_edit()'s own comment for why this can't
-        # just be "whatever every slider currently shows."
+        # Keys whose level control has genuinely been changed since the
+        # last load_state() -- see _on_edit()'s own comment for why this
+        # can't just be "whatever every control currently shows."
         self._sliders_touched: set = set()
         # Modest content today, but QTabWidget sizes the whole main window's
         # minimum height to fit the LARGEST tab page, not just whichever is
@@ -87,10 +63,18 @@ class VibrationView(QWidget):
         form = QFormLayout(levels_box)
         form.setVerticalSpacing(10)
         form.setHorizontalSpacing(14)
-        self.sliders = {}
+        self.sliders: dict[str, SegmentedControl] = {}
         for key, label in LEVEL_SETTINGS:
-            slider, container = _level_row()
-            slider.setToolTip(
+            # The stepped-meter SegmentedControl variant (DIRECTION-A.md
+            # section 5), not a QSlider: exactly five real stops, not a
+            # continuous range snapped after the fact (which still lets a
+            # fast drag release land in between on some Qt styles -- the
+            # reason the old QSlider used an index range rather than 0-100
+            # in the first place). `self.sliders` keeps its old name --
+            # still "which control holds this level", regardless of widget
+            # type; renaming it isn't this phase's job.
+            control = SegmentedControl(_LEVEL_SEGMENTS, meter=True)
+            control.setToolTip(
                 f"{label} rumble intensity: {', '.join(str(lvl) for lvl in LEVELS)} -- "
                 "the same five values GameSir Nexus offers. Not arbitrary: "
                 "felt-tested on hardware, values below 25 produced no "
@@ -98,10 +82,10 @@ class VibrationView(QWidget):
             )
             # Order matters -- see settings_view.py's identical fix/comment
             # for why the touched-marker must connect before _on_edit.
-            slider.valueChanged.connect(lambda _v, k=key: self._mark_slider_touched(k))
-            slider.valueChanged.connect(self._on_edit)
-            form.addRow(label, container)
-            self.sliders[key] = slider
+            control.selectionChanged.connect(lambda _v, k=key: self._mark_slider_touched(k))
+            control.selectionChanged.connect(self._on_edit)
+            form.addRow(label, control)
+            self.sliders[key] = control
         outer.addWidget(levels_box)
 
         flags_box = QGroupBox("Trigger Vibration Flags")
@@ -110,13 +94,13 @@ class VibrationView(QWidget):
         flags_form.setHorizontalSpacing(14)
         self.checks = {}
         for side in ("left", "right"):
-            force = QCheckBox("Force")
+            force = Checkbox("Force")
             force.setToolTip(
                 "GameSir Nexus's own trigger vibration flags -- the exact "
                 "behavioral difference between Force and Sync isn't "
                 "independently confirmed."
             )
-            sync = QCheckBox("Sync")
+            sync = Checkbox("Sync")
             sync.setToolTip(force.toolTip())
             force.toggled.connect(self._on_edit)
             sync.toggled.connect(self._on_edit)
@@ -144,8 +128,8 @@ class VibrationView(QWidget):
         self._loading = True
         try:
             vib = state["vibration"]
-            for key, slider in self.sliders.items():
-                slider.setValue(_nearest_level_index(vib.get(key)))
+            for key, control in self.sliders.items():
+                control.set_value(str(LEVELS[_nearest_level_index(vib.get(key))]))
             for key, check in self.checks.items():
                 check.setChecked(bool(vib.get(key)))
         finally:
@@ -156,16 +140,16 @@ class VibrationView(QWidget):
 
     def _mark_slider_touched(self, key: str) -> None:
         # REAL BUG, found 2026-09-17 (Astra's bug-sweep): _on_edit() used to
-        # unconditionally re-derive EVERY vibration key from its slider's
+        # unconditionally re-derive EVERY vibration key from its control's
         # CURRENT position on any edit anywhere in this tab -- toggling an
-        # unrelated Force/Sync checkbox (or moving a DIFFERENT slider)
-        # rewrote every other slider's exact loaded value with its nearest
-        # of only five coarse stops, even though _nearest_level_index()'s
-        # own docstring promises an off-scale value "stays exactly what it
-        # was until this control is actually moved." Only the slider whose
-        # own signal fires for a real reason (guarded by _loading) gets
-        # marked -- matches settings_view.py's identical fix for the same
-        # pattern.
+        # unrelated Force/Sync checkbox (or moving a DIFFERENT level
+        # control) rewrote every other control's exact loaded value with
+        # its nearest of only five coarse stops, even though
+        # _nearest_level_index()'s own docstring promises an off-scale
+        # value "stays exactly what it was until this control is actually
+        # moved." Only the control whose own signal fires for a real
+        # reason (guarded by _loading) gets marked -- matches
+        # settings_view.py's identical fix for the same pattern.
         if not self._loading:
             self._sliders_touched.add(key)
 
@@ -173,9 +157,9 @@ class VibrationView(QWidget):
         if self._loading or self._state is None:
             return
         vib = self._state["vibration"]
-        for key, slider in self.sliders.items():
+        for key, control in self.sliders.items():
             if key in self._sliders_touched:
-                vib[key] = LEVELS[slider.value()]
+                vib[key] = int(control.value())
         for key, check in self.checks.items():
             vib[key] = check.isChecked()
         self.changed.emit()

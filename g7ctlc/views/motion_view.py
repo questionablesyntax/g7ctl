@@ -18,7 +18,6 @@ from typing import Optional
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QFormLayout,
     QGroupBox,
@@ -28,13 +27,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..widgets import (
-    CURVE_OPTIONS,
-    CategorySideWidget,
-    make_keycode_combo,
-    percent_spin,
-    select_by_data,
-)
+from pyg7.buttons import KNOWN_KEYCODES
+
+from ..binding_field import BindingField
+from ..checkbox import Checkbox
+from ..keycode_picker import KeycodePicker
+from ..number_field import NumberField
+from ..segmented_control import SegmentedControl
+from ..widgets import CategorySideWidget
 from ..widgets import (
     set_row_visible as _set_row_visible,
 )
@@ -47,6 +47,8 @@ ACTIVATE_METHOD_OPTIONS = [
     ("off", "Off"), ("hold_to_activate", "Hold to Activate"),
     ("press_to_activate", "Press to Activate"), ("always_on", "Always On"),
 ]
+_CURVE_SEGMENTS = [("standard", "Standard"), ("concave", "Concave"),
+                   ("s_curve", "S-curve"), ("custom", "Custom")]
 
 
 class _MotionSideWidget(CategorySideWidget):
@@ -62,36 +64,51 @@ class _MotionSideWidget(CategorySideWidget):
         self.form.setVerticalSpacing(10)
         self.form.setHorizontalSpacing(14)
 
+        # One shared KeycodePicker for this side's picker-backed fields
+        # (Activate Button plus the four direction bindings below) -- same
+        # reasoning as ButtonsView's/SticksView's single picker.
+        self._picker = KeycodePicker(self)
+        self._picker.codeChosen.connect(self._on_code_chosen)
+        self._active_field: Optional[BindingField] = None
+
         self.activate_method = QComboBox()
         for value, label in ACTIVATE_METHOD_OPTIONS:
             self.activate_method.addItem(label, value)
         self.activate_method.setToolTip("How motion input gets activated.")
-        self.activate_button = make_keycode_combo()
+        self.activate_button = BindingField()
+        self.activate_button.setAccessibleName("Activate Button")
         self.activate_button.setToolTip("Which button, held or pressed, activates motion input.")
+        self.activate_button.clicked.connect(lambda: self._open_picker(self.activate_button))
         self.x_axis_output_mode = QComboBox()
         for value, label in X_AXIS_OUTPUT_MODE_OPTIONS:
             self.x_axis_output_mode.addItem(label, value)
         self.x_axis_output_mode.setToolTip(
             "Yaw + Roll reveals an extra invert control below; plain Yaw does not."
         )
-        self.curve = QComboBox()
-        self.curve.addItems(CURVE_OPTIONS)
+        self.curve = SegmentedControl(_CURVE_SEGMENTS)
         self.curve.setToolTip(
             "The input-to-output response curve shape. Custom curves can be "
             "selected but their control points aren't editable here yet -- "
             "not captured on the wire for Motion (see pyg7/motion.py)."
         )
-        self.dz_initial = percent_spin()
+        # Display default, signals blocked -- see sticks_view.py's
+        # SegmentedControl off-scale fix for the full reasoning (no
+        # preset_points() call here to crash on None, but an always-real
+        # field left genuinely off-scale is still the wrong display).
+        self.curve.blockSignals(True)
+        self.curve.set_value("standard")
+        self.curve.blockSignals(False)
+        self.dz_initial = NumberField.percent()
         self.dz_initial.setToolTip("Motion below this percent of the stick's travel range is ignored.")
-        self.dz_max = percent_spin()
+        self.dz_max = NumberField.percent()
         self.dz_max.setToolTip("Percent of travel at which motion reports full output.")
-        self.adz_initial = percent_spin()
+        self.adz_initial = NumberField.percent()
         self.adz_initial.setToolTip(
             "Same Initial/Max shape as Deadzone above, but boosts output near center instead of ignoring it."
         )
-        self.adz_max = percent_spin()
+        self.adz_max = NumberField.percent()
         self.adz_max.setToolTip(self.adz_initial.toolTip())
-        self.sensitivity_scale = percent_spin()
+        self.sensitivity_scale = NumberField.percent()
         self.sensitivity_scale.setToolTip("X/Y sensitivity scale, 0-100 (50 = balanced).")
 
         self.form.addRow("Activate Method", self.activate_method)
@@ -104,10 +121,10 @@ class _MotionSideWidget(CategorySideWidget):
         self.form.addRow("Anti-Deadzone (max)", self.adz_max)
         self.form.addRow("X/Y Sensitivity Scale", self.sensitivity_scale)
 
-        self.invert_y = QCheckBox("Invert Y")
+        self.invert_y = Checkbox("Invert Y")
         self.invert_y.setToolTip("Reverses this sub-tab's Y axis.")
         self.form.addRow("", self.invert_y)
-        self.invert_yaw = QCheckBox("Invert Yaw")
+        self.invert_yaw = Checkbox("Invert Yaw")
         self.invert_yaw.setToolTip(
             "Only shown by Nexus when X-Axis Output Mode is Yaw + Roll and "
             "Output is not Button Binds. Address confirmed on the wire; "
@@ -116,7 +133,7 @@ class _MotionSideWidget(CategorySideWidget):
         )
         self.form.addRow("", self.invert_yaw)
         if side == "aim":
-            self.invert_roll = QCheckBox("Invert Roll")
+            self.invert_roll = Checkbox("Invert Roll")
             self.invert_roll.setToolTip(
                 "Aim only -- Tilt has no equivalent control. Only shown by "
                 "Nexus when X-Axis Output Mode is Yaw + Roll and Output is "
@@ -135,14 +152,14 @@ class _MotionSideWidget(CategorySideWidget):
         for value, label in OUTPUT_MODE_OPTIONS:
             self.output.addItem(label, value)
         self.output.setToolTip("What this sub-tab's motion is translated to.")
-        self.overlap_area = percent_spin()
+        self.overlap_area = NumberField.percent()
         self.overlap_area.setToolTip(
             "How much the diagonal zones overlap between adjacent directional buttons (Button Binds only)."
         )
         self.adv_form.addRow("Output", self.output)
         self.adv_form.addRow("Overlap area (Button Binds only)", self.overlap_area)
 
-        self.direction_combos = {}
+        self.direction_combos: dict[str, BindingField] = {}
         self.direction_box = QGroupBox("Direction Bindings (Button Binds only)")
         dir_form = QFormLayout(self.direction_box)
         dir_form.setVerticalSpacing(10)
@@ -150,17 +167,19 @@ class _MotionSideWidget(CategorySideWidget):
         # No "ring" zone here, unlike Sticks' direction_bindings -- Motion
         # has no stick click to bind (see pyg7/motion.py).
         for zone in ("up", "down", "left", "right"):
-            combo = make_keycode_combo()
-            combo.setToolTip(f"Keycode sent while motion is held toward {zone.capitalize()} (Button Binds only).")
-            combo.currentIndexChanged.connect(self._emit_changed)
-            dir_form.addRow(zone.capitalize(), combo)
-            self.direction_combos[zone] = combo
+            field = BindingField()
+            field.setAccessibleName(zone.capitalize())
+            field.setToolTip(f"Keycode sent while motion is held toward {zone.capitalize()} (Button Binds only).")
+            field.clicked.connect(lambda _checked=False, f=field: self._open_picker(f))
+            dir_form.addRow(zone.capitalize(), field)
+            self.direction_combos[zone] = field
         self.adv_form.addRow(self.direction_box)
         outer.addWidget(adv_box)
         outer.addStretch(1)
 
-        for w in (self.activate_method, self.activate_button, self.x_axis_output_mode, self.curve):
+        for w in (self.activate_method, self.x_axis_output_mode):
             w.currentIndexChanged.connect(self._emit_changed)
+        self.curve.selectionChanged.connect(self._emit_changed)
         for w in (self.dz_initial, self.dz_max, self.adz_initial, self.adz_max,
                   self.sensitivity_scale, self.overlap_area):
             w.valueChanged.connect(self._emit_changed)
@@ -171,6 +190,17 @@ class _MotionSideWidget(CategorySideWidget):
         self.output.currentIndexChanged.connect(self._update_visibility)
         self.output.currentIndexChanged.connect(self._emit_changed)
         self.x_axis_output_mode.currentIndexChanged.connect(self._update_visibility)
+
+    def _open_picker(self, field: BindingField) -> None:
+        self._active_field = field
+        self._picker.open_for(field, field.value(), known=field.is_known())
+
+    def _on_code_chosen(self, value) -> None:
+        if self._active_field is None:
+            return
+        self._active_field.set_value(value, known=value is None or value in KNOWN_KEYCODES)
+        self._active_field = None
+        self._emit_changed()
 
     def _update_visibility(self) -> None:
         directional = self.output.currentData() == "directional"
@@ -184,11 +214,11 @@ class _MotionSideWidget(CategorySideWidget):
     def _load_fields(self, side_data: dict) -> None:
         am_idx = self.activate_method.findData(side_data.get("activate_method") or "off")
         self.activate_method.setCurrentIndex(am_idx if am_idx >= 0 else 0)
-        select_by_data(self.activate_button, side_data.get("activate_button"))
+        self.activate_button.set_value(side_data.get("activate_button"))
         idx = self.x_axis_output_mode.findData(side_data.get("x_axis_output_mode") or "yaw")
         self.x_axis_output_mode.setCurrentIndex(idx if idx >= 0 else 0)
         curve = side_data.get("curve") or {}
-        self.curve.setCurrentText(curve.get("preset") or "standard")
+        self.curve.set_value(curve.get("preset") or "standard")
         dz = side_data.get("deadzone") or {}
         self.dz_initial.setValue(dz.get("initial") if dz.get("initial") is not None else 0)
         self.dz_max.setValue(dz.get("max") if dz.get("max") is not None else 100)
@@ -206,18 +236,18 @@ class _MotionSideWidget(CategorySideWidget):
         self.overlap_area.setValue(
             side_data.get("overlap_area") if side_data.get("overlap_area") is not None else 50)
         db = side_data.get("direction_bindings") or {}
-        for zone, combo in self.direction_combos.items():
-            select_by_data(combo, db.get(zone))
+        for zone, field in self.direction_combos.items():
+            field.set_value(db.get(zone))
 
     def _after_load(self) -> None:
         self._update_visibility()
 
     def save_into(self, side_data: dict) -> None:
         side_data["activate_method"] = self.activate_method.currentData()
-        side_data["activate_button"] = self.activate_button.currentData()
+        side_data["activate_button"] = self.activate_button.value()
         side_data["x_axis_output_mode"] = self.x_axis_output_mode.currentData()
         curve = side_data.setdefault("curve", {})
-        curve["preset"] = self.curve.currentText()
+        curve["preset"] = self.curve.value()
         # REAL BUG, found 2026-09-18 (Sol's bug-sweep): this used to set
         # curve["points"] = None unconditionally on every edit, actively
         # discarding real custom points that a device read may have
@@ -243,7 +273,7 @@ class _MotionSideWidget(CategorySideWidget):
         side_data["overlap_area"] = self.overlap_area.value()
         if side_data["output"] == "directional":
             side_data["direction_bindings"] = {
-                zone: combo.currentData() for zone, combo in self.direction_combos.items()
+                zone: field.value() for zone, field in self.direction_combos.items()
             }
 
 

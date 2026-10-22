@@ -39,6 +39,7 @@ from .modal_overlay import ModalOverlayBase
 from .ownership_bar import OwnershipBar
 from .qss import generate_stylesheet
 from .rail import PROFILE_PAGE_KEYS, SHARED_PAGE_KEYS, Rail
+from .segmented_control import SegmentedControl
 from .theme_runtime import ThemeController
 from .views.buttons_view import ButtonsView
 from .views.motion_view import MotionView
@@ -288,18 +289,24 @@ class MainWindow(QMainWindow):
         is now reached by that same generic sweep instead of needing its
         own special-cased line.
         """
-        from PyQt6.QtWidgets import QComboBox
         content = QWidget()
         form = QFormLayout(content)
-        self.report_rate_combo = QComboBox()
-        for hz in (250, 500, 1000):
-            self.report_rate_combo.addItem(f"{hz} Hz", hz)
+        # A3-style SegmentedControl, A4's re-skin -- "report_rate_combo"
+        # keeps its pre-redesign name (MainWindow/tests address it that
+        # way; same precedent as VibrationView's `sliders`), not because
+        # it's still a QComboBox.
+        self.report_rate_combo = SegmentedControl([(str(hz), f"{hz} Hz") for hz in (250, 500, 1000)])
         self.report_rate_combo.setToolTip(
             "Per-profile polling rate. Note: GameSir Nexus disables native "
             "trigger vibration when this is set to 1000 Hz -- likely a real "
             "bandwidth constraint, not a bug."
         )
-        self.report_rate_combo.currentIndexChanged.connect(self._on_report_rate_changed)
+        # Display default, signals blocked -- see sticks_view.py's
+        # SegmentedControl off-scale fix for why a fresh control needs one.
+        self.report_rate_combo.blockSignals(True)
+        self.report_rate_combo.set_value("1000")
+        self.report_rate_combo.blockSignals(False)
+        self.report_rate_combo.selectionChanged.connect(self._on_report_rate_changed)
         form.addRow("Report Rate:", self.report_rate_combo)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -788,21 +795,22 @@ class MainWindow(QMainWindow):
                 self.pages.setCurrentWidget(self.buttons_view)
 
     def _sync_report_rate_combo(self) -> None:
-        """Reflect self._state["report_rate_hz"] in the combo -- same
+        """Reflect self._state["report_rate_hz"] in the control -- same
         loading-guard reasoning as _sync_profile_switch()."""
         self._loading_report_rate_combo = True
         try:
-            idx = self.report_rate_combo.findData(self._state.get("report_rate_hz") or 1000)
-            # Falls back to the last item (1000 Hz) -- default_state_dict()'s
-            # own confirmed default, not just "whatever happens to be last."
-            self.report_rate_combo.setCurrentIndex(idx if idx >= 0 else self.report_rate_combo.count() - 1)
+            hz = self._state.get("report_rate_hz") or 1000
+            # Falls back to 1000 Hz -- default_state_dict()'s own confirmed
+            # default, not just "whatever happens to be last."
+            value = str(hz) if hz in (250, 500, 1000) else "1000"
+            self.report_rate_combo.set_value(value)
         finally:
             self._loading_report_rate_combo = False
 
-    def _on_report_rate_changed(self, _index: int) -> None:
-        if self._loading_report_rate_combo:
+    def _on_report_rate_changed(self, value: object) -> None:
+        if self._loading_report_rate_combo or value is None:
             return
-        self._state["report_rate_hz"] = self.report_rate_combo.currentData()
+        self._state["report_rate_hz"] = int(value)
         self._on_dirty()
 
     def _default_snapshot_dir(self) -> str:

@@ -164,16 +164,16 @@ class SticksViewRoundTripTest(unittest.TestCase):
         view.load_state(state)
         left = view.sides["left"]
 
-        left.curve.setCurrentIndex(left.curve.findText("standard"))
+        left.curve.set_value("standard")
         self.assertEqual(left.curve_points.points(), preset_points("standard"))
 
-        left.curve.setCurrentIndex(left.curve.findText("concave"))
+        left.curve.set_value("concave")
         self.assertEqual(left.curve_points.points(), preset_points("concave"),
                           "switching to a new named preset must refresh the displayed points")
 
         # Entering Custom next must preserve what's now actually on screen
         # (Concave's shape), not silently fall back to a stale seed.
-        left.curve.setCurrentIndex(left.curve.findText("custom"))
+        left.curve.set_value("custom")
         self.assertEqual(left.curve_points.points(), preset_points("concave"))
 
     def test_a_brand_new_state_defaults_both_sticks_output_mode_to_unconfigured(self):
@@ -204,6 +204,32 @@ class SticksViewRoundTripTest(unittest.TestCase):
         view.sides["right"].save_into(out)
         self.assertIsNone(out["advanced_mapping"]["output_mode"],
                           "an unconfigured stick must not save a spurious display value")
+
+    def test_a_freshly_constructed_side_survives_an_output_mode_change(self):
+        # REAL BUG, found while re-skinning onto SegmentedControl (A4):
+        # unlike QComboBox (which always auto-selects its first item), a
+        # fresh SegmentedControl is off-scale -- curve.value() is None
+        # until something calls set_value(). _update_curve_points_enabled()
+        # (wired to output_mode's own currentIndexChanged via
+        # _update_visibility) called preset_points(None), which raised an
+        # unhandled AttributeError *inside a Qt signal callback* -- fatal,
+        # not a catchable Python exception, since PyQt6 can't unwind a
+        # Python exception through the C++ signal machinery that invoked
+        # it. The crash reproduced even in total isolation (a single test,
+        # no suite-order dependency) -- confirmed with `python3 -m pytest`
+        # directly before being traced to this. Fixed by seeding curve/
+        # trajectory a real default value (with signals blocked) right
+        # where they're constructed, same as QComboBox's own implicit
+        # default-to-first-item behaviour. This test constructs a side
+        # widget the same minimal way (no load_state()) and changes
+        # output_mode, the exact path that used to abort the process.
+        from g7ctlc.views.sticks_view import _StickSideWidget
+        side = _StickSideWidget("left")
+        side.output_mode.setCurrentIndex(side.output_mode.findData("directional"))
+        side.output_mode.setCurrentIndex(side.output_mode.findData("mouse"))
+        # Reaching here at all is the assertion -- a crash aborts the
+        # whole process before any assertion could run or fail.
+        self.assertEqual(side.output_mode.currentData(), "mouse")
 
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
@@ -280,7 +306,7 @@ class VibrationViewRoundTripTest(unittest.TestCase):
 
         view = VibrationView()
         view.load_state(state)
-        self.assertEqual(view.sliders["left_grip"].value(), 2)  # index of 50 in LEVELS
+        self.assertEqual(view.sliders["left_grip"].value(), "50")  # nearest stop to 43
         self.assertEqual(state["vibration"]["left_grip"], 43, "load_state() must not rewrite the value it was given")
 
         # Corrected 2026-09-17 (real bug, found by Astra's bug-sweep): this
@@ -290,12 +316,13 @@ class VibrationViewRoundTripTest(unittest.TestCase):
         # exactly the bug (toggling an unrelated Force/Sync flag also
         # fires _on_edit(), and used to round every slider along with it).
         # Actually moving the slider is what should trigger normalization
-        # now -- setValue() to the SAME index is a Qt no-op (no signal
-        # fires), so this moves away and back to land a real
-        # valueChanged. See test_untouched_off_scale_value_survives_an_
-        # unrelated_edit below for the case this really guards against.
-        view.sliders["left_grip"].setValue(0)
-        view.sliders["left_grip"].setValue(2)
+        # now -- set_value() to the SAME value is a Qt no-op (the segment
+        # is already checked, so toggled never fires), so this moves away
+        # and back to land a real selectionChanged. See
+        # test_untouched_off_scale_value_survives_an_unrelated_edit below
+        # for the case this really guards against.
+        view.sliders["left_grip"].set_value("0")
+        view.sliders["left_grip"].set_value("50")
         self.assertEqual(state["vibration"]["left_grip"], 50)
 
     def test_untouched_off_scale_value_survives_an_unrelated_edit(self):
@@ -330,11 +357,11 @@ class VibrationViewRoundTripTest(unittest.TestCase):
         # touched flag is already set from the first.
         from g7ctlc.views.vibration_view import VibrationView
         state = state_mod.default_state_dict("test")
-        state["vibration"]["left_grip"] = 0  # nearest stop is index 0
+        state["vibration"]["left_grip"] = 0  # nearest stop is 0
         view = VibrationView()
         view.load_state(state)
 
-        view.sliders["left_grip"].setValue(2)  # ONE edit -- must land immediately
+        view.sliders["left_grip"].set_value("50")  # ONE edit -- must land immediately
         self.assertEqual(state["vibration"]["left_grip"], 50,
                           "the first edit after a load must write into state immediately, not require a second edit")
 
@@ -373,16 +400,16 @@ class SettingsViewRoundTripTest(unittest.TestCase):
 
         view = SettingsView()
         view.load_state(state)
-        self.assertEqual(view.brightness.currentIndex(), 0)  # index of 0% in BRIGHTNESS_OPTIONS
+        self.assertEqual(view.brightness.value(), "0")  # nearest stop to 10 is "Off"
         self.assertEqual(state["dock_led_brightness"], 10, "load_state() must not rewrite the value it was given")
 
         # Corrected 2026-09-17 -- same correction and same reasoning as
         # vibration_view.py's equivalent test; see its own comment.
-        # setCurrentIndex() to the SAME index is a Qt no-op (no signal
-        # fires), so this moves away and back to land a real
-        # currentIndexChanged.
-        view.brightness.setCurrentIndex(1)
-        view.brightness.setCurrentIndex(0)
+        # set_value() to the SAME value is a Qt no-op (the segment is
+        # already checked, so toggled never fires), so this moves away and
+        # back to land a real selectionChanged.
+        view.brightness.set_value("25")
+        view.brightness.set_value("0")
         self.assertEqual(state["dock_led_brightness"], 0)
 
     def test_untouched_off_scale_brightness_survives_an_unrelated_edit(self):
@@ -414,7 +441,7 @@ class SettingsViewRoundTripTest(unittest.TestCase):
         view = SettingsView()
         view.load_state(state)
 
-        view.brightness.setCurrentIndex(1)  # ONE edit -- must land immediately
+        view.brightness.set_value("25")  # ONE edit -- must land immediately
         self.assertEqual(state["dock_led_brightness"], 25,
                           "the first edit after a load must write into state immediately, not require a second edit")
 
@@ -813,7 +840,7 @@ class UnconfiguredCurveTest(unittest.TestCase):
         view = SticksView()
         view.load_state(state)
         side = view.sides["left"]
-        side.curve.setCurrentText("custom")
+        side.curve.set_value("custom")
         out = {}
         side.save_into(out)
         self.assertEqual(out["curve"]["points"], [[94, 23], [176, 79], [232, 161]],
@@ -841,7 +868,7 @@ class UnconfiguredCurveTest(unittest.TestCase):
 
         captured = []
         side.changed.connect(lambda: captured.append(side.curve_points.points()))
-        side.curve.setCurrentText("custom")
+        side.curve.set_value("custom")
 
         self.assertTrue(captured, "switching preset must emit changed at least once")
         for points in captured:
