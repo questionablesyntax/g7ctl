@@ -7,7 +7,6 @@ from typing import Optional
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QFormLayout,
     QGroupBox,
@@ -18,23 +17,28 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from pyg7.buttons import KNOWN_KEYCODES
 from pyg7.curves import preset_points
 
+from ..binding_field import BindingField
+from ..checkbox import Checkbox
 from ..curve_editor import CurveEditor
+from ..keycode_picker import KeycodePicker
+from ..number_field import NumberField
 from ..palette import DARK_PALETTE, Palette
+from ..segmented_control import SegmentedControl
 from ..widgets import (
-    CURVE_OPTIONS,
     CategorySideWidget,
     CurvePointsEditor,
-    make_keycode_combo,
-    percent_spin,
-    select_by_data,
 )
 from ..widgets import (
     set_row_visible as _set_row_visible,
 )
 
-TRAJECTORY_OPTIONS = ["circle", "raw"]
+_TRAJECTORY_SEGMENTS = [("circle", "Circle"), ("raw", "Raw")]
+_CURVE_SEGMENTS = [("standard", "Standard"), ("concave", "Concave"),
+                   ("s_curve", "S-curve"), ("custom", "Custom")]
+
 OUTPUT_MODE_OPTIONS = [
     ("left_stick", "Left Stick"), ("right_stick", "Right Stick"),
     ("directional", "Directional Buttons"), ("mouse", "Simulate Mouse"),
@@ -72,30 +76,49 @@ class _StickSideWidget(CategorySideWidget):
         form = QFormLayout(basic_box)
         form.setVerticalSpacing(10)
         form.setHorizontalSpacing(14)
-        self.trajectory = QComboBox()
-        self.trajectory.addItems(TRAJECTORY_OPTIONS)
+        self.trajectory = SegmentedControl(_TRAJECTORY_SEGMENTS)
         self.trajectory.setToolTip(
             "Circle: normalizes diagonal stick travel to a circular range. "
             "Raw: passes the physical X/Y axis values through unshaped."
         )
-        self.curve = QComboBox()
-        self.curve.addItems(CURVE_OPTIONS)
+        self.curve = SegmentedControl(_CURVE_SEGMENTS)
         self.curve.setToolTip("The input-to-output response curve shape.")
-        self.dz_initial = percent_spin()
+        # Real bug, found while re-skinning onto SegmentedControl: unlike
+        # QComboBox (which always auto-selects its first item), a fresh
+        # SegmentedControl is off-scale -- value() is None until something
+        # calls set_value(). _load_fields() does that on a real load(), but
+        # a widget that's merely constructed (every test that builds one
+        # directly, and this widget's own first instant before load_state()
+        # is ever called) is not "loaded" yet. curve.value() reaching
+        # preset_points(None) as an unhandled AttributeError inside a Qt
+        # signal callback is fatal, not a catchable Python exception --
+        # PyQt6 can't unwind a Python exception through the C++ signal
+        # machinery that invoked it, so it aborts the whole process.
+        # Signals blocked: this is a display default, not a user edit or a
+        # load, and nothing downstream (curve_points/curve_editor) exists
+        # yet at this point in __init__ for _update_curve_points_enabled()
+        # to touch even if it did fire.
+        self.trajectory.blockSignals(True)
+        self.trajectory.set_value("circle")
+        self.trajectory.blockSignals(False)
+        self.curve.blockSignals(True)
+        self.curve.set_value("standard")
+        self.curve.blockSignals(False)
+        self.dz_initial = NumberField.percent()
         self.dz_initial.setToolTip(
             "Stick movement below this percent of travel from center is ignored."
         )
-        self.dz_max = percent_spin()
+        self.dz_max = NumberField.percent()
         self.dz_max.setToolTip(
             "Percent of travel from center at which the stick reports full output."
         )
-        self.adz_initial = percent_spin()
+        self.adz_initial = NumberField.percent()
         self.adz_initial.setToolTip(
             "Same Initial/Max shape as Deadzone above, but boosts the output "
             "curve near center instead of ignoring it -- compensates for a "
             "stick that has a real mechanical dead zone."
         )
-        self.adz_max = percent_spin()
+        self.adz_max = NumberField.percent()
         self.adz_max.setToolTip(self.adz_initial.toolTip())
         self.resolution_bits = QSpinBox()
         self.resolution_bits.setRange(8, 12)
@@ -147,18 +170,18 @@ class _StickSideWidget(CategorySideWidget):
             "What this stick emulates: itself, the other stick, D-pad-style "
             "directional buttons, or mouse movement."
         )
-        self.invert_x = QCheckBox("Invert X")
+        self.invert_x = Checkbox("Invert X")
         self.invert_x.setToolTip("Reverses this stick's X axis.")
-        self.invert_y = QCheckBox("Invert Y")
+        self.invert_y = Checkbox("Invert Y")
         self.invert_y.setToolTip("Reverses this stick's Y axis.")
-        self.sensitivity = percent_spin()
+        self.sensitivity = NumberField.percent()
         self.sensitivity.setToolTip("X/Y sensitivity scale, 0-100 (50 = balanced).")
-        self.overlap_area = percent_spin()
+        self.overlap_area = NumberField.percent()
         self.overlap_area.setToolTip(
             "How much the diagonal zones overlap between adjacent directional "
             "buttons (Directional output mode only)."
         )
-        self.dpi = percent_spin()
+        self.dpi = NumberField.percent()
         self.dpi.setToolTip("Mouse movement speed (Simulate Mouse output mode only).")
         self.adv_form.addRow("Output mode", self.output_mode)
         self.adv_form.addRow("", self.invert_x)
@@ -167,25 +190,32 @@ class _StickSideWidget(CategorySideWidget):
         self.adv_form.addRow("Overlap area (Directional only)", self.overlap_area)
         self.adv_form.addRow("DPI (Simulate Mouse only)", self.dpi)
 
-        self.direction_combos = {}
+        # One shared KeycodePicker for this side's five direction fields,
+        # same reasoning as ButtonsView's single picker -- they're never
+        # open at once, so there's no reason to build five popovers.
+        self._direction_picker = KeycodePicker(self)
+        self._direction_picker.codeChosen.connect(self._on_direction_code_chosen)
+        self._active_direction_field: Optional[BindingField] = None
+        self.direction_combos: dict[str, BindingField] = {}
         self.direction_box = QGroupBox("Direction Bindings (Directional Buttons only)")
         dir_form = QFormLayout(self.direction_box)
         dir_form.setVerticalSpacing(10)
         dir_form.setHorizontalSpacing(14)
         for zone in ("up", "down", "left", "right", "ring"):
-            combo = make_keycode_combo()
-            combo.setToolTip(
+            field = BindingField()
+            field.setAccessibleName(zone.capitalize())
+            field.setToolTip(
                 f"Keycode sent while the stick is held toward {zone.capitalize()} "
                 "(Directional output mode only)."
             )
-            combo.currentIndexChanged.connect(self._emit_changed)
-            dir_form.addRow(zone.capitalize(), combo)
-            self.direction_combos[zone] = combo
+            field.clicked.connect(lambda _checked=False, z=zone: self._open_direction_picker(z))
+            dir_form.addRow(zone.capitalize(), field)
+            self.direction_combos[zone] = field
         self.adv_form.addRow(self.direction_box)
         outer.addWidget(adv_box)
         outer.addStretch(1)
 
-        self.trajectory.currentIndexChanged.connect(self._emit_changed)
+        self.trajectory.selectionChanged.connect(self._emit_changed)
         # Connection order matters here -- Qt fires slots in the order
         # they're connected on the same signal. _update_curve_points_enabled
         # must run BEFORE _emit_changed: switching to "custom" seeds
@@ -196,8 +226,8 @@ class _StickSideWidget(CategorySideWidget):
         # pre-seed value (all zeros) into state, one signal-fire before the
         # seed that was supposed to replace it -- silently wrong data synced
         # or exported, never shown on screen.
-        self.curve.currentIndexChanged.connect(self._update_curve_points_enabled)
-        self.curve.currentIndexChanged.connect(self._emit_changed)
+        self.curve.selectionChanged.connect(self._update_curve_points_enabled)
+        self.curve.selectionChanged.connect(self._emit_changed)
         for w in (self.dz_initial, self.dz_max, self.adz_initial, self.adz_max,
                   self.resolution_bits, self.sensitivity, self.overlap_area, self.dpi):
             w.valueChanged.connect(self._emit_changed)
@@ -209,8 +239,20 @@ class _StickSideWidget(CategorySideWidget):
         self.output_mode.currentIndexChanged.connect(self._emit_changed)
         self.output_mode.currentIndexChanged.connect(self._mark_output_mode_configured)
 
+    def _open_direction_picker(self, zone: str) -> None:
+        field = self.direction_combos[zone]
+        self._active_direction_field = field
+        self._direction_picker.open_for(field, field.value(), known=field.is_known())
+
+    def _on_direction_code_chosen(self, value) -> None:
+        if self._active_direction_field is None:
+            return
+        self._active_direction_field.set_value(value, known=value is None or value in KNOWN_KEYCODES)
+        self._active_direction_field = None
+        self._emit_changed()
+
     def _update_curve_points_enabled(self) -> None:
-        custom = self.curve.currentText() == "custom"
+        custom = self.curve.value() == "custom"
         if custom and not self.curve_points.is_configured():
             # A profile whose curve block was never written has no points to
             # edit. Seed from whichever preset is showing, which is what
@@ -231,7 +273,7 @@ class _StickSideWidget(CategorySideWidget):
             # this can't loop back into save_into() before _emit_changed
             # fires next on this same signal (connection order, see the
             # comment above this one).
-            self._last_preset = self.curve.currentText()
+            self._last_preset = self.curve.value()
             self.curve_points.load(preset_points(self._last_preset))
             self._sync_curve_editor()
         self.curve_points.set_points_enabled(custom)
@@ -248,7 +290,7 @@ class _StickSideWidget(CategorySideWidget):
             self.dz_initial.value(), self.dz_max.value(),
             self.adz_initial.value(), self.adz_max.value(),
             self.curve_points.points())
-        self.curve_editor.set_points_editable(self.curve.currentText() == "custom")
+        self.curve_editor.set_points_editable(self.curve.value() == "custom")
 
     def _on_editor_points(self, points: list) -> None:
         self.curve_points.load(points)
@@ -272,9 +314,9 @@ class _StickSideWidget(CategorySideWidget):
         self.direction_box.setVisible(mode == "directional")
 
     def _load_fields(self, side_data: dict) -> None:
-        self.trajectory.setCurrentText(side_data.get("trajectory") or "circle")
+        self.trajectory.set_value(side_data.get("trajectory") or "circle")
         curve = side_data.get("curve") or {}
-        self.curve.setCurrentText(curve.get("preset") or "standard")
+        self.curve.set_value(curve.get("preset") or "standard")
         self.curve_points.load(curve.get("points"))
         dz = side_data.get("deadzone") or {}
         self.dz_initial.setValue(dz.get("initial") if dz.get("initial") is not None else 0)
@@ -303,8 +345,8 @@ class _StickSideWidget(CategorySideWidget):
         self.overlap_area.setValue(am.get("overlap_area") if am.get("overlap_area") is not None else 50)
         self.dpi.setValue(am.get("dpi") if am.get("dpi") is not None else 50)
         db = am.get("direction_bindings") or {}
-        for zone, combo in self.direction_combos.items():
-            select_by_data(combo, db.get(zone))
+        for zone, field in self.direction_combos.items():
+            field.set_value(db.get(zone))
 
     def _after_load(self) -> None:
         self._update_visibility()
@@ -336,13 +378,13 @@ class _StickSideWidget(CategorySideWidget):
             self._output_mode_configured = True
 
     def save_into(self, side_data: dict) -> None:
-        side_data["trajectory"] = self.trajectory.currentText()
+        side_data["trajectory"] = self.trajectory.value()
         # Merge rather than replace: a plain assignment here dropped the
         # "points" a device read had brought back, so any unrelated edit
         # silently discarded them.
         curve = side_data.setdefault("curve", {})
-        curve["preset"] = self.curve.currentText()
-        curve["points"] = self.curve_points.points() if self.curve.currentText() == "custom" else None
+        curve["preset"] = self.curve.value()
+        curve["points"] = self.curve_points.points() if self.curve.value() == "custom" else None
         side_data["deadzone"] = {"initial": self.dz_initial.value(), "max": self.dz_max.value()}
         side_data["anti_deadzone"] = {"initial": self.adz_initial.value(), "max": self.adz_max.value()}
         side_data["resolution_bits"] = self.resolution_bits.value()
@@ -355,7 +397,7 @@ class _StickSideWidget(CategorySideWidget):
         am["dpi"] = self.dpi.value()
         if am["output_mode"] == "directional":
             am["direction_bindings"] = {
-                zone: combo.currentData() for zone, combo in self.direction_combos.items()
+                zone: field.value() for zone, field in self.direction_combos.items()
             }
 
 

@@ -7,7 +7,6 @@ from typing import Optional
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
-    QComboBox,
     QFormLayout,
     QGroupBox,
     QScrollArea,
@@ -19,10 +18,14 @@ from PyQt6.QtWidgets import (
 from pyg7.curves import preset_points
 
 from ..curve_editor import CurveEditor
+from ..number_field import NumberField
 from ..palette import DARK_PALETTE, Palette
-from ..widgets import CURVE_OPTIONS, CategorySideWidget, CurvePointsEditor, percent_spin
+from ..segmented_control import SegmentedControl
+from ..widgets import CategorySideWidget, CurvePointsEditor
 
 HAIR_TRIGGER_OPTIONS = [("off", "Off"), ("adaptive", "Adaptive"), ("fixed", "Fixed")]
+_CURVE_SEGMENTS = [("standard", "Standard"), ("concave", "Concave"),
+                   ("s_curve", "S-curve"), ("custom", "Custom")]
 
 
 class _TriggerSideWidget(CategorySideWidget):
@@ -36,32 +39,41 @@ class _TriggerSideWidget(CategorySideWidget):
         form.setVerticalSpacing(10)
         form.setHorizontalSpacing(14)
 
-        self.hair_trigger_mode = QComboBox()
-        for value, label in HAIR_TRIGGER_OPTIONS:
-            self.hair_trigger_mode.addItem(label, value)
+        self.hair_trigger_mode = SegmentedControl(HAIR_TRIGGER_OPTIONS)
         self.hair_trigger_mode.setToolTip(
             "Adaptive/Fixed shorten the trigger's travel before it registers "
             "as fully pressed -- useful for shooters. Off uses the full "
             "mechanical travel."
         )
-        self.curve = QComboBox()
-        self.curve.addItems(CURVE_OPTIONS)
+        self.curve = SegmentedControl(_CURVE_SEGMENTS)
         self.curve.setToolTip("The input-to-output response curve shape.")
-        self.dz_initial = percent_spin()
+        # Real bug (see sticks_view.py's identical fix and its own longer
+        # comment): unlike QComboBox, a fresh SegmentedControl is off-scale
+        # until something calls set_value() -- curve.value() reaching
+        # preset_points(None) as an unhandled exception inside a Qt signal
+        # callback is fatal, not catchable. Signals blocked: this is a
+        # display default, not a user edit or a load.
+        self.hair_trigger_mode.blockSignals(True)
+        self.hair_trigger_mode.set_value("off")
+        self.hair_trigger_mode.blockSignals(False)
+        self.curve.blockSignals(True)
+        self.curve.set_value("standard")
+        self.curve.blockSignals(False)
+        self.dz_initial = NumberField.percent()
         self.dz_initial.setToolTip(
             "Trigger movement below this percent of travel is ignored."
         )
-        self.dz_max = percent_spin()
+        self.dz_max = NumberField.percent()
         self.dz_max.setToolTip(
             "Percent of travel at which the trigger reports full output."
         )
-        self.adz_initial = percent_spin()
+        self.adz_initial = NumberField.percent()
         self.adz_initial.setToolTip(
             "Same Initial/Max shape as Deadzone above, but boosts the output "
             "curve near the resting position instead of ignoring it -- "
             "compensates for a trigger that has a real mechanical dead zone."
         )
-        self.adz_max = percent_spin()
+        self.adz_max = NumberField.percent()
         self.adz_max.setToolTip(self.adz_initial.toolTip())
 
         form.addRow("Hair Trigger Mode", self.hair_trigger_mode)
@@ -95,7 +107,7 @@ class _TriggerSideWidget(CategorySideWidget):
         outer.addWidget(self.curve_points_box)
         outer.addStretch(1)
 
-        self.hair_trigger_mode.currentIndexChanged.connect(self._emit_changed)
+        self.hair_trigger_mode.selectionChanged.connect(self._emit_changed)
         # Connection order matters here -- Qt fires slots in the order
         # they're connected on the same signal. _update_curve_points_enabled
         # must run BEFORE _emit_changed: switching to "custom" seeds
@@ -107,14 +119,14 @@ class _TriggerSideWidget(CategorySideWidget):
         # seed that was supposed to replace it -- silently wrong data synced
         # or exported, never shown on screen. See sticks_view.py, which had
         # the identical bug.
-        self.curve.currentIndexChanged.connect(self._update_curve_points_enabled)
-        self.curve.currentIndexChanged.connect(self._emit_changed)
+        self.curve.selectionChanged.connect(self._update_curve_points_enabled)
+        self.curve.selectionChanged.connect(self._emit_changed)
         for w in (self.dz_initial, self.dz_max, self.adz_initial, self.adz_max):
             w.valueChanged.connect(self._emit_changed)
             w.valueChanged.connect(self._sync_curve_editor)
 
     def _update_curve_points_enabled(self) -> None:
-        custom = self.curve.currentText() == "custom"
+        custom = self.curve.value() == "custom"
         if custom and not self.curve_points.is_configured():
             # A profile whose curve block was never written has no points to
             # edit. Seed from whichever preset is showing, which is what
@@ -123,7 +135,7 @@ class _TriggerSideWidget(CategorySideWidget):
             seed = preset_points(self._last_preset) or preset_points("standard")
             self.curve_points.load(seed)
         if not custom:
-            self._last_preset = self.curve.currentText()
+            self._last_preset = self.curve.value()
         self.curve_points.set_points_enabled(custom)
         self._sync_curve_editor()
     # --- graphical curve editor ------------------------------------------
@@ -138,7 +150,7 @@ class _TriggerSideWidget(CategorySideWidget):
             self.dz_initial.value(), self.dz_max.value(),
             self.adz_initial.value(), self.adz_max.value(),
             self.curve_points.points())
-        self.curve_editor.set_points_editable(self.curve.currentText() == "custom")
+        self.curve_editor.set_points_editable(self.curve.value() == "custom")
 
     def _on_editor_points(self, points: list) -> None:
         self.curve_points.load(points)
@@ -158,11 +170,10 @@ class _TriggerSideWidget(CategorySideWidget):
         self._sync_curve_editor()
 
     def _load_fields(self, side_data: dict) -> None:
-        idx = self.hair_trigger_mode.findData(side_data.get("hair_trigger_mode") or "off")
-        # Index 0 is "off" -- the confirmed factory default.
-        self.hair_trigger_mode.setCurrentIndex(idx if idx >= 0 else 0)
+        # "off" is the confirmed factory default.
+        self.hair_trigger_mode.set_value(side_data.get("hair_trigger_mode") or "off")
         curve = side_data.get("curve") or {}
-        self.curve.setCurrentText(curve.get("preset") or "standard")
+        self.curve.set_value(curve.get("preset") or "standard")
         self.curve_points.load(curve.get("points"))
         dz = side_data.get("deadzone") or {}
         self.dz_initial.setValue(dz.get("initial") if dz.get("initial") is not None else 0)
@@ -172,11 +183,11 @@ class _TriggerSideWidget(CategorySideWidget):
         self.adz_max.setValue(adz.get("max") if adz.get("max") is not None else 100)
 
     def save_into(self, side_data: dict) -> None:
-        side_data["hair_trigger_mode"] = self.hair_trigger_mode.currentData()
+        side_data["hair_trigger_mode"] = self.hair_trigger_mode.value()
         # Merge, don't replace -- see sticks_view for why.
         curve = side_data.setdefault("curve", {})
-        curve["preset"] = self.curve.currentText()
-        curve["points"] = self.curve_points.points() if self.curve.currentText() == "custom" else None
+        curve["preset"] = self.curve.value()
+        curve["points"] = self.curve_points.points() if self.curve.value() == "custom" else None
         side_data["deadzone"] = {"initial": self.dz_initial.value(), "max": self.dz_max.value()}
         side_data["anti_deadzone"] = {"initial": self.adz_initial.value(), "max": self.adz_max.value()}
 

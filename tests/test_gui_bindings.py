@@ -283,8 +283,9 @@ class SticksDirectionBindingsTest(unittest.TestCase):
         bindings = {"up": "w", "down": "s", "left": "a", "right": "d", "ring": "shift"}
         view, state = self._view_with(bindings)
         left = view.sides["left"]
-        combo = left.direction_combos["up"]
-        combo.setCurrentIndex(combo.findData(None))
+        field = left.direction_combos["up"]
+        field.set_value(None)
+        left._emit_changed()
         saved = state["sticks"]["left"]["advanced_mapping"]["direction_bindings"]
         self.assertIsNone(saved["up"])
         self.assertEqual(saved["down"], "s")  # untouched zones still present
