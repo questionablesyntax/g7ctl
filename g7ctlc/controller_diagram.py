@@ -10,13 +10,25 @@ Named hit regions are invisible elements already baked into the SVG
 highlight shape there, in the palette's signal colour. Scales with the
 widget the same way the rest of this app's vector assets do: render into
 whatever rect the layout gives it, aspect-fit, no fixed pixel size.
+
+Theming, real bug fixed 2026-10-22: `fill="currentColor"` in the SVG
+source does *not* pick up the host `QPainter`'s pen the way it would in
+a browser -- `QSvgRenderer` resolves it once, internally, against its
+own default (black), regardless of what the painter handed to
+`render()`. It rendered black line art on the dark theme until this was
+caught. `LucideIconLoader` (`icon_loader.py`) already solved this the
+only way that actually works for `QSvgRenderer`: text-substitute the
+colour into the SVG source itself before constructing the renderer.
+This widget does the same, rebuilding its renderer whenever the palette
+changes rather than trying to recolour at paint time.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
-from PyQt6.QtCore import QRectF, Qt
+from PyQt6.QtCore import QByteArray, QRectF, Qt
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import QSizePolicy, QWidget
@@ -24,23 +36,35 @@ from PyQt6.QtWidgets import QSizePolicy, QWidget
 from g7ctlc.palette import Palette
 
 _SVG_PATH = Path(__file__).parent / "assets" / "drawing" / "front.svg"
+_SVG_SOURCE = _SVG_PATH.read_text(encoding="utf-8")
+
+_FILL_CURRENT_COLOR_RE = re.compile(r'fill="currentColor"')
+_STROKE_CURRENT_COLOR_RE = re.compile(r'stroke="currentColor"')
 
 # Padding (px) kept clear around the aspect-fit drawing so the highlight
 # ring on an edge button (e.g. l4/r4) never clips against the widget edge.
 _MARGIN = 4
 
 
+def _build_renderer(palette: Palette) -> QSvgRenderer:
+    hex_color = palette.text_primary
+    svg = _FILL_CURRENT_COLOR_RE.sub(f'fill="{hex_color}"', _SVG_SOURCE)
+    svg = _STROKE_CURRENT_COLOR_RE.sub(f'stroke="{hex_color}"', svg)
+    return QSvgRenderer(QByteArray(svg.encode("utf-8")))
+
+
 class ControllerDiagram(QWidget):
     def __init__(self, palette: Palette, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._renderer = QSvgRenderer(str(_SVG_PATH))
         self._palette = palette
+        self._renderer = _build_renderer(palette)
         self._highlighted: str | None = None
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMinimumSize(160, 130)
 
     def set_palette(self, palette: Palette) -> None:
         self._palette = palette
+        self._renderer = _build_renderer(palette)
         self.update()
 
     def set_highlighted(self, button_id: str | None) -> None:
@@ -68,10 +92,13 @@ class ControllerDiagram(QWidget):
         return QRectF(x, y, w, h)
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt override signature
+        # No painter.setPen() for the line art itself -- see the module
+        # docstring. The colour is already baked into self._renderer by
+        # _build_renderer(); a pen set here would do nothing for it and
+        # falsely suggest this is how the theming works.
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         draw_rect = self._draw_rect()
-        painter.setPen(QColor(self._palette.text_primary))
         self._renderer.render(painter, draw_rect)
         if self._highlighted is not None:
             self._paint_highlight(painter, draw_rect)

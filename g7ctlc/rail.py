@@ -38,11 +38,11 @@ from g7ctlc.segmented_control import SegmentedControl
 # everything else is per-profile. Kept as plain strings, not an enum --
 # MainWindow's QStackedWidget indexes pages by these same keys via a dict,
 # and nothing outside this module needs to branch on a closed type.
-PROFILE_PAGE_KEYS = ("buttons", "sticks", "triggers", "motion", "vibration", "profile_settings")
+PROFILE_PAGE_KEYS = ("overview", "buttons", "sticks", "triggers", "motion", "vibration", "profile_settings")
 SHARED_PAGE_KEYS = ("shift", "dock")
 
 _PROFILE_PAGE_LABELS = {
-    "buttons": "Buttons", "sticks": "Sticks", "triggers": "Triggers",
+    "overview": "Overview", "buttons": "Buttons", "sticks": "Sticks", "triggers": "Triggers",
     "motion": "Motion", "vibration": "Vibration", "profile_settings": "Profile settings",
 }
 _SHARED_PAGE_LABELS = {"shift": "Shift layer", "dock": "Dock"}

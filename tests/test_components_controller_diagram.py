@@ -61,6 +61,34 @@ class ControllerDiagramTest(unittest.TestCase):
         self.diagram.set_palette(LIGHT_PALETTE)
         self.assertIs(self.diagram._palette, LIGHT_PALETTE)
 
+    def test_the_line_art_actually_recolours_for_a_different_palette(self):
+        # Real bug, found 2026-10-22: QSvgRenderer does not follow the
+        # host QPainter's pen for fill="currentColor"/stroke="currentColor"
+        # the way a browser would -- it resolves those once, internally,
+        # against its own default (black), so the drawing rendered black
+        # line art on the dark theme regardless of palette. A pixmap diff
+        # is the real behavioral check; comparing hex strings would only
+        # prove the *source* substitution ran, not that two differently-
+        # themed renders actually look different.
+        from g7ctlc.controller_diagram import ControllerDiagram
+
+        dark_widget = ControllerDiagram(DARK_PALETTE)
+        dark_widget.resize(300, 240)
+        light_widget = ControllerDiagram(LIGHT_PALETTE)
+        light_widget.resize(300, 240)
+        dark_pixmap = dark_widget.grab()
+        light_pixmap = light_widget.grab()
+        self.assertNotEqual(
+            dark_pixmap.toImage(), light_pixmap.toImage(),
+            "dark- and light-palette renders must not be pixel-identical",
+        )
+
+    def test_build_renderer_produces_a_valid_renderer_for_both_palettes(self):
+        from g7ctlc.controller_diagram import _build_renderer
+
+        self.assertTrue(_build_renderer(DARK_PALETTE).isValid())
+        self.assertTrue(_build_renderer(LIGHT_PALETTE).isValid())
+
     def test_paints_without_raising_with_a_highlight_active(self):
         # Exercises the actual paintEvent path, highlight branch included --
         # a geometry bug in _paint_highlight (e.g. a stray division) would

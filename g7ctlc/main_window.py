@@ -47,6 +47,7 @@ from .segmented_control import SegmentedControl
 from .theme_runtime import ThemeController
 from .views.buttons_view import ButtonsView
 from .views.motion_view import MotionView
+from .views.overview_view import OverviewView
 from .views.settings_view import SettingsView
 from .views.sticks_view import SticksView
 from .views.triggers_view import TriggersView
@@ -205,6 +206,7 @@ class MainWindow(QMainWindow):
         # to call until now (see each one's own docstring).
         self.rail.set_palette(palette)
         self._connection_alarm.set_palette(palette)
+        self.overview_view.set_palette(palette)
         self.buttons_view.set_palette(palette)
 
     @property
@@ -297,6 +299,7 @@ class MainWindow(QMainWindow):
         per-profile, while the dock settings it holds are device-wide.
         """
         self.pages = QStackedWidget()
+        self.overview_view = OverviewView(self._theme.palette)
         self.buttons_view = ButtonsView(self._theme.palette)
         self.sticks_view = SticksView(self._theme.palette)
         self.triggers_view = TriggersView(self._theme.palette)
@@ -305,6 +308,7 @@ class MainWindow(QMainWindow):
         self.settings_view = SettingsView()  # Dock, device-wide
         self._profile_settings_page = self._build_profile_settings_page()
         self._page_widgets = {
+            "overview": self.overview_view,
             "buttons": self.buttons_view,
             "sticks": self.sticks_view,
             "triggers": self.triggers_view,
@@ -326,6 +330,15 @@ class MainWindow(QMainWindow):
                 continue
             widget.changed.connect(self._on_dirty)
         self.buttons_view.changed.connect(self._on_dirty)
+        # Real bug, found adding the Overview page (D2, 2026-10-22):
+        # QStackedWidget.currentWidget() defaults to whichever widget was
+        # added *first*, which had only ever been buttons_view by accident
+        # of PROFILE_PAGE_KEYS' own ordering -- rail.py's default-checked
+        # nav button ("buttons") and the actual visible page content would
+        # have silently diverged the moment anything else led that tuple.
+        # Set explicitly so the two can never drift apart again regardless
+        # of iteration order.
+        self.pages.setCurrentWidget(self.buttons_view)
         return self.pages
 
     def _build_content_area(self) -> QStackedWidget:

@@ -1144,3 +1144,39 @@ class PaletteWiringTest(unittest.TestCase):
         ]
         for b, a in zip(before, after):
             self.assertNotEqual(b, a, "an icon did not change for a different palette")
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class OverviewPageWiringTest(unittest.TestCase):
+    """D2: the Overview page exists, is reachable from the rail, and its
+    addition didn't quietly change what page a fresh launch lands on --
+    `buttons` stays the default deliberately (DIRECTION-A.md frames
+    Overview as "home", but changing the actual launch page is its own
+    decision, not bundled into this slice)."""
+
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+        return MainWindow()
+
+    def test_buttons_is_still_the_default_page_on_launch(self):
+        w = self._window()
+        self.assertIs(w.pages.currentWidget(), w.buttons_view)
+
+    def test_requesting_overview_switches_to_it(self):
+        w = self._window()
+        w._on_page_requested("overview")
+        self.assertIs(w.pages.currentWidget(), w.overview_view)
+
+    def test_a_palette_change_reaches_the_overview_diagram(self):
+        from g7ctlc.palette import LIGHT_PALETTE
+        w = self._window()
+        before = w.overview_view.diagram._palette
+        w._on_palette_changed(LIGHT_PALETTE)
+        self.assertIsNot(w.overview_view.diagram._palette, before)
+        self.assertIs(w.overview_view.diagram._palette, LIGHT_PALETTE)
