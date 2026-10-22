@@ -173,6 +173,41 @@ def _stable_bytes(frames: list[bytes]) -> bytes:
     return bytes(out)
 
 
+def _held_bytes(rest: bytes, frames: list[bytes], min_occurrences: int = 2) -> bytes:
+    """Like _stable_bytes, but tuned for a brief or repeated tap rather
+    than one sustained hold held through the whole window.
+
+    REAL BUG, found capturing Guide (2026-10-22): a pure majority vote
+    (_stable_bytes) assumes the button stays pressed through most of the
+    sampling window. Xbox-style Guide/Home buttons commonly need a
+    deliberate, sustained hold before they even register as pressed at
+    all, and a *long* sustained hold on Guide specifically risks tripping
+    the controller's own built-in "hold Guide to power off" gesture --
+    neither a short tap nor a long hold is reliably safe here. A quick
+    tap (or several) spends most of the window released, so a strict
+    majority vote would silently vote the real signal away as noise,
+    same as never pressing it at all.
+
+    Reports, per byte, the most common *non-rest* value seen, as long as
+    it occurred in at least min_occurrences frames (filtering a single
+    torn/corrupted frame from looking like a real signal) -- falling back
+    to rest's own value if nothing cleared that bar."""
+    if not frames:
+        return rest
+    length = min(len(rest), min(len(f) for f in frames))
+    out = bytearray(rest[:length])
+    for i in range(length):
+        counts: dict[int, int] = {}
+        for f in frames:
+            if f[i] != rest[i]:
+                counts[f[i]] = counts.get(f[i], 0) + 1
+        if counts:
+            best_val, best_count = max(counts.items(), key=lambda kv: kv[1])
+            if best_count >= min_occurrences:
+                out[i] = best_val
+    return bytes(out)
+
+
 def _diff(rest: bytes, held: bytes) -> list[tuple[int, int, int]]:
     """[(offset, rest_value, held_value), ...] for every byte that
     differs. Offsets beyond PROTOCOL.md's documented ranges (9, 10 the
@@ -280,7 +315,7 @@ def _capture_one(sess: VendorSession, lock: threading.Lock, name: str, label: st
         print(f"  Only got {len(held_frames)}/{HOLD_FRAMES} held frames -- "
               "connection may be unstable. Recording what we have and continuing.")
     print("  You can release it now.")
-    held = _stable_bytes(held_frames)
+    held = _held_bytes(rest, held_frames)
 
     diffs = _diff(rest, held)
     if not diffs:

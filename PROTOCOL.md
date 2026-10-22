@@ -1157,10 +1157,10 @@ above this paragraph that cites "2026-10-22" as a source for a *specific*
 bit assignment should be read as superseded by this table, not trusted on
 its own.
 
-21 of 22 buttons came back clean on the recapture; `Guide` is still
-outstanding (missed by an unrelated disconnect right at the end of the
-run, not a repeat of the delay bug) and needs one more quick
-`--only guide` capture before its row below can be trusted.
+21 of 22 buttons came back clean on the recapture; `Guide` was missed by
+an unrelated disconnect right at the end of the run (not a repeat of the
+delay bug) and needed one more targeted capture -- see byte 11 below for
+why that one needed a different technique too.
 
 This capture is also the first real test of the "control the app with the
 controller" direction: it ran the whole time inside a claimed
@@ -1215,8 +1215,23 @@ for:**
 | 6 | L3 (left stick click) |
 | 7 | R3 (right stick click) |
 
-**Byte 11, bit 1 (`0x02`) -- confirmed: Share.** The other 7 bits never
-went high in this capture -- unconfirmed, not necessarily unused.
+**Byte 11 -- confirmed, two bits: bit 0 (`0x01`) is Guide/Xbox (not
+remappable, diagram-only -- `button-bitfield-capture.py`'s
+`_EXTRA_BUTTONS`), bit 1 (`0x02`) is Share.** Guide needed a different
+capture technique than every other button: a sustained hold risks
+tripping the controller's own "hold Guide to power off" gesture (a real
+power-off was hit capturing it the first time), but a brief tap or two
+spends most of a fixed sampling window released, and the script's
+original majority-vote sampling (`_stable_bytes()`) would silently vote
+that signal away as noise, same as never pressing it at all. Fixed with a
+second sampling mode (`_held_bytes()`) tuned for this -- reports the most
+common *non-rest* value seen, as long as it occurred in at least 2 sampled
+frames (filtering a single torn frame from looking like a real signal),
+rather than requiring an outright majority. Confirmed not to change any
+already-confirmed button's result (a sustained hold's pressed value is
+already well past 2 occurrences in a 20-frame window either way). The
+other 6 bits of this byte never went high in this capture -- unconfirmed,
+not necessarily unused.
 
 **Bytes 12/13 -- the original "triggers, 0 at rest, 0xFF at full" claim
 holds up after all.** Byte 12 is `LT`'s own analog value (`0x00` rest,
@@ -1230,18 +1245,21 @@ delay-contaminated capture and should be disregarded.)
 **Bytes 55-60, "raw group" -- mostly mirrors 9-13, with one real
 exception.** Bytes 55/56 mirror 9/10 bit-for-bit, and bytes 59/60 mirror
 12/13, confirming the "raw group" label for all of those. Byte 57 mirrors
-byte 11's one known bit (`Share`, `0x02`) but also carries two bits with
-no processed-region equivalent at all: `L4` (`0x08`) and `R4` (`0x10`) --
-simple digital paddles, unlike `LT`/`RT`, so there's no analog value for
-them to need a separate byte 12/13-style slot. Byte 58 carries two more
-raw-only bits: `L5` (`0x01`) and `R5` (`0x02`). Whether `L4`/`R4`/`L5`/`R5`
-have a processed-region bit somewhere genuinely unexamined, or simply
-don't, is still open.
+byte 11's two known bits (`Guide` `0x01`, `Share` `0x02`) but also carries
+two bits with no processed-region equivalent at all: `L4` (`0x08`) and
+`R4` (`0x10`) -- simple digital paddles, unlike `LT`/`RT`, so there's no
+analog value for them to need a separate byte 12/13-style slot. Byte 58
+carries two more raw-only bits: `L5` (`0x01`) and `R5` (`0x02`). Whether
+`L4`/`R4`/`L5`/`R5` have a processed-region bit somewhere genuinely
+unexamined, or simply don't, is still open.
 
-Full capture transcripts/JSON kept outside version control (see
-`.gitignore`): `button-bitfield-capture-20261022T132730Z.json` (the clean
-21-button recapture) and `button-bitfield-capture-byte9-recheck.json` (the
-isolated A/B/X/Y/R3 recheck that caught the delay bug).
+All 22 buttons are now mapped. Full capture transcripts/JSON kept outside
+version control (see `.gitignore`): `button-bitfield-capture-20261022T132730Z.json`
+(the clean 21-button recapture), `button-bitfield-capture-byte9-recheck.json`
+(the isolated A/B/X/Y/R3 recheck that caught the delay bug), and
+`button-bitfield-capture-20261022T134933Z.json` (Guide, the one holdout,
+captured with a brief hold plus repeated taps rather than one sustained
+hold).
 
 ### The gamepad and this stream do coexist -- a real claim here was flatly wrong
 
