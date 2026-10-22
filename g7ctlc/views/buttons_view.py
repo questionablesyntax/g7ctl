@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 from pyg7.buttons import BUTTON_TABLE_SLOTS, KNOWN_BUTTON_IDS, KNOWN_KEYCODES
 
 from ..binding_field import BindingField
+from ..binding_row import MAX_ROW_WIDTH as _MAX_ROW_WIDTH
 from ..binding_row import NAME_COL_WIDTH as _NAME_COL_WIDTH
 from ..binding_row import BindingRow
 from ..checkbox import Checkbox
@@ -204,6 +205,9 @@ class ButtonsView(QWidget):
 
     def _build_header(self) -> QWidget:
         header_widget = QWidget()
+        # Matches BindingRow's own cap so the header stays aligned with
+        # every row beneath it -- see binding_row.py's MAX_ROW_WIDTH.
+        header_widget.setMaximumWidth(_MAX_ROW_WIDTH)
         header = QHBoxLayout(header_widget)
         header.setContentsMargins(8, 4, 8, 8)
         header.setSpacing(8)

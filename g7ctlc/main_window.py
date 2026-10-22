@@ -38,6 +38,7 @@ from pyg7 import state as state_mod
 from . import help_content
 from .empty_state import EmptyState
 from .hatch_overlay import HatchOverlay
+from .inline_notice import InlineNotice
 from .modal_overlay import ModalOverlayBase
 from .ownership_bar import OwnershipBar
 from .qss import generate_stylesheet
@@ -135,6 +136,7 @@ class MainWindow(QMainWindow):
         outer.setSpacing(0)
 
         outer.addWidget(self._build_ownership_bar())
+        outer.addWidget(self._build_connection_alarm())
         content_row = QHBoxLayout()
         content_row.setContentsMargins(14, 10, 14, 10)
         content_row.setSpacing(14)
@@ -206,6 +208,23 @@ class MainWindow(QMainWindow):
         self.playability_label = self.ownership_bar.playability_label
         self.battery_label = self.ownership_bar.battery_label
         return self.ownership_bar
+
+    def _build_connection_alarm(self) -> QWidget:
+        """The alarm inline notice CRITIC.md #7 accepted but left unwired --
+        DESIGN-SPEC.md 10.1 #7: "the bar stays Holding and an alarm inline
+        notice sits directly beneath it", for a connection-level problem
+        (lost connection, a USB error, an unreachable identity -- see
+        watcher.py's own `_emit_error()` call sites) as distinct from an
+        ordinary failed Sync/Read, which already gets its own blocking
+        QMessageBox. error_label (the status bar's small text) stays as
+        today's quieter, persistent record of the same message; this is
+        the prominent one the bar's own docstring already pointed at.
+        """
+        self._connection_alarm = InlineNotice(
+            "alarm", "", self._theme.palette, self._theme.icons, parent=self
+        )
+        self._connection_alarm.hide()
+        return self._connection_alarm
 
     def _build_rail(self) -> QWidget:
         self.rail = Rail(self._theme.palette, self._theme.icons, self)
@@ -542,7 +561,7 @@ class MainWindow(QMainWindow):
             self.ownership_bar.set_release_enabled(not self._syncing)
             self._refresh_sync_btn()
             self.rail.read_button.setEnabled(not self._syncing)
-            self.error_label.setText("")  # a successful (re)connect supersedes any earlier error
+            self.set_error("")  # a successful (re)connect supersedes any earlier error
             if not was_connected:
                 self._auto_read_on_connect()
         elif state == "paused":
@@ -563,6 +582,8 @@ class MainWindow(QMainWindow):
 
     def set_error(self, message: str) -> None:
         self.error_label.setText(message)
+        self._connection_alarm.set_text(message)
+        self._connection_alarm.setVisible(bool(message))
 
     def _confirm(self, title: str, text: str) -> bool:
         """One seam for every "are you sure" prompt in this window -- a

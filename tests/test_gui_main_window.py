@@ -1018,3 +1018,47 @@ class EmptyStateAndHatchOverlayTest(unittest.TestCase):
             self.app.processEvents()
             time.sleep(0.02)
         self.assertTrue(w._hatch_overlay.isHidden(), "must be hidden once the reveal finishes")
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class ConnectionAlarmTest(unittest.TestCase):
+    """CRITIC.md #7's accepted-but-unwired finding, wired up: a
+    connection-level error (lost connection, a USB error -- anything that
+    reaches set_error(), as opposed to a Sync/Read failure, which already
+    gets its own QMessageBox) shows as an alarm InlineNotice directly
+    beneath the ownership bar, not just the quiet status-bar text label.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+        return MainWindow()
+
+    def test_starts_hidden(self):
+        w = self._window()
+        self.assertTrue(w._connection_alarm.isHidden())
+
+    def test_an_error_shows_the_alarm_with_the_message(self):
+        w = self._window()
+        w.set_error("Lost connection: timed out")
+        self.assertFalse(w._connection_alarm.isHidden())
+        self.assertEqual(w._connection_alarm.text_label.text(), "Lost connection: timed out")
+        # The quieter status-bar label still carries the same message too.
+        self.assertEqual(w.error_label.text(), "Lost connection: timed out")
+
+    def test_a_successful_reconnect_clears_and_hides_it(self):
+        w = self._window()
+        w.set_error("USB error: no such device")
+        w.set_connection_state("connected")
+        self.assertTrue(w._connection_alarm.isHidden())
+        self.assertEqual(w.error_label.text(), "")
+
+    def test_clearing_with_an_empty_message_hides_it(self):
+        w = self._window()
+        w.set_error("something went wrong")
+        w.set_error("")
+        self.assertTrue(w._connection_alarm.isHidden())

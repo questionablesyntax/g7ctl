@@ -26,6 +26,14 @@ from g7ctlc.widgets import keycode_display_text
 
 NAME_COL_WIDTH = 140
 LATCH_COL_WIDTH = 90
+# DIRECTION-A.md section 5's "the content measure caps at 760px for form
+# columns" -- found unimplemented in A6's design critique: at the real
+# 1120px default window width, default_field/shift_field/shift_reference
+# (each a stretch-1 column) grew unboundedly instead. Capped on the row
+# itself, not the individual fields, so Qt's own layout still splits the
+# available width between them proportionally in both "default" mode (two
+# stretch columns) and "shift" mode (one) -- no per-mode pixel math needed.
+MAX_ROW_WIDTH = 760
 
 
 class BindingRow(QWidget):
@@ -41,6 +49,7 @@ class BindingRow(QWidget):
         button-table record to hold a Continuous Trigger byte at all --
         see `pyg7.buttons.continuous_trigger_offset()`)."""
         super().__init__(parent)
+        self.setMaximumWidth(MAX_ROW_WIDTH)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
