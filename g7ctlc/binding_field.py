@@ -14,12 +14,19 @@ than building 21 popovers that are never open at the same time.
 
 from __future__ import annotations
 
+from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtGui import QFocusEvent
 from PyQt6.QtWidgets import QPushButton, QWidget
 
 from g7ctlc.widgets import is_known_keycode, keycode_display_text
 
 
 class BindingField(QPushButton):
+    # D2: lets a page (ButtonsView) sync a controller-diagram highlight to
+    # whichever field has keyboard focus, not just mouse clicks -- Tab
+    # alone must reach every button this field represents.
+    focused = pyqtSignal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setProperty("role", "binding-field")
@@ -28,6 +35,10 @@ class BindingField(QPushButton):
         self._edited = False
         self._base_accessible_name = ""
         self._refresh_text()
+
+    def focusInEvent(self, event: QFocusEvent) -> None:  # noqa: N802 - Qt override signature
+        super().focusInEvent(event)
+        self.focused.emit()
 
     def set_value(self, value: str | None, *, known: bool | None = None) -> None:
         self._value = value

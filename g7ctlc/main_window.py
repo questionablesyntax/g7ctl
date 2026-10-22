@@ -205,6 +205,7 @@ class MainWindow(QMainWindow):
         # to call until now (see each one's own docstring).
         self.rail.set_palette(palette)
         self._connection_alarm.set_palette(palette)
+        self.buttons_view.set_palette(palette)
 
     @property
     def theme(self) -> ThemeController:
@@ -296,7 +297,7 @@ class MainWindow(QMainWindow):
         per-profile, while the dock settings it holds are device-wide.
         """
         self.pages = QStackedWidget()
-        self.buttons_view = ButtonsView()
+        self.buttons_view = ButtonsView(self._theme.palette)
         self.sticks_view = SticksView(self._theme.palette)
         self.triggers_view = TriggersView(self._theme.palette)
         self.motion_view = MotionView()

@@ -39,7 +39,9 @@ from ..binding_row import MAX_ROW_WIDTH as _MAX_ROW_WIDTH
 from ..binding_row import NAME_COL_WIDTH as _NAME_COL_WIDTH
 from ..binding_row import BindingRow
 from ..checkbox import Checkbox
+from ..controller_diagram import ControllerDiagram
 from ..keycode_picker import KeycodePicker
+from ..palette import DARK_PALETTE, Palette
 
 _BUTTON_LABELS = {
     "share": "Share", "a": "A", "b": "B", "x": "X", "y": "Y",
@@ -90,7 +92,7 @@ _SHARED_SHIFT_TOOLTIP = (
 class ButtonsView(QWidget):
     changed = pyqtSignal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, palette: Palette = DARK_PALETTE, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._state = None
         self._layer = "default"
@@ -102,12 +104,22 @@ class ButtonsView(QWidget):
         self._picker = KeycodePicker(self)
         self._picker.codeChosen.connect(self._on_code_chosen)
 
-        outer = QVBoxLayout(self)
+        # D2: diagram beside the list, synced to whichever row currently
+        # has focus -- IMPLEMENTATION-PLAN.md Track D2, "Buttons diagram
+        # synced to list focus". Fixed width rather than Expanding so it
+        # doesn't fight the scroll area for space at narrow window widths;
+        # it still grows vertically with the page.
+        self.diagram = ControllerDiagram(palette, self)
+        self.diagram.setFixedWidth(260)
+
+        outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(self.diagram)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        outer.addWidget(scroll)
+        outer.addWidget(scroll, 1)
 
         rows_widget = QWidget()
         rows = QVBoxLayout(rows_widget)
@@ -140,6 +152,21 @@ class ButtonsView(QWidget):
                     lambda _checked=False, b=button_id: self._open_picker(b, "default"))
                 row.shift_field.clicked.connect(
                     lambda _checked=False, b=button_id: self._open_picker(b, "shift"))
+                # D2: wired to both signals deliberately, not just one. A
+                # real mouse click normally also focuses the button, which
+                # would be enough on its own -- but that's a platform/focus-
+                # policy detail, not a guarantee, so .clicked is connected
+                # directly too. .focused (via BindingField.focusInEvent) is
+                # what makes Tab alone reach every button with no click at
+                # all -- keyboard-only navigation needs this one specifically.
+                row.default_field.clicked.connect(
+                    lambda _checked=False, b=button_id: self.diagram.set_highlighted(b))
+                row.shift_field.clicked.connect(
+                    lambda _checked=False, b=button_id: self.diagram.set_highlighted(b))
+                row.default_field.focused.connect(
+                    lambda b=button_id: self.diagram.set_highlighted(b))
+                row.shift_field.focused.connect(
+                    lambda b=button_id: self.diagram.set_highlighted(b))
                 row.shift_reference.setToolTip(_SHARED_SHIFT_TOOLTIP)
                 if row.latch is not None:
                     row.latch.setToolTip(_LATCH_TOOLTIP)
@@ -239,6 +266,9 @@ class ButtonsView(QWidget):
         return header_widget
 
     # -- public API (unchanged contract) -------------------------------
+
+    def set_palette(self, palette: Palette) -> None:
+        self.diagram.set_palette(palette)
 
     def set_layer(self, layer: str) -> None:
         """Show the Base layer's bindings with the Shift layer as a
