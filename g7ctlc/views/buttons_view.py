@@ -104,13 +104,22 @@ class ButtonsView(QWidget):
         self._picker = KeycodePicker(self)
         self._picker.codeChosen.connect(self._on_code_chosen)
 
-        # D2: diagram beside the list, synced to whichever row currently
-        # has focus -- IMPLEMENTATION-PLAN.md Track D2, "Buttons diagram
-        # synced to list focus". Fixed width rather than Expanding so it
+        # D2: the diagram is the primary remapping surface, not a
+        # decoration beside the table -- IMPLEMENTATION-PLAN.md Track D2.
+        # `order` mirrors _BUTTON_GROUPS' physical layout so Tab through
+        # the diagram's hotspots follows the same sequence as Tab through
+        # the table rows beside it, instead of KNOWN_BUTTON_IDS'
+        # declaration order. Fixed width rather than Expanding so it
         # doesn't fight the scroll area for space at narrow window widths;
         # it still grows vertically with the page.
-        self.diagram = ControllerDiagram(palette, self)
+        self.diagram = ControllerDiagram(
+            palette,
+            labels=_BUTTON_LABELS,
+            order=[b for group in _BUTTON_GROUPS for b in group],
+            parent=self,
+        )
         self.diagram.setFixedWidth(260)
+        self.diagram.activated.connect(self._on_diagram_activated)
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -218,10 +227,17 @@ class ButtonsView(QWidget):
         row = self._rows[button_id]
         return row.default_field if layer == "default" else row.shift_field
 
-    def _open_picker(self, button_id: str, layer: str) -> None:
+    def _open_picker(self, button_id: str, layer: str, anchor: QWidget | None = None) -> None:
         field = self._field_for(button_id, layer)
         self._active_field = field
-        self._picker.open_for(field, field.value(), known=field.is_known())
+        self._picker.open_for(anchor or field, field.value(), known=field.is_known())
+
+    def _on_diagram_activated(self, button_id: str) -> None:
+        """A click or Enter/Space on a diagram hit region -- the diagram
+        itself doesn't know about layers or pickers, just that this part
+        was activated (see controller_diagram.py's module docstring)."""
+        self.diagram.set_highlighted(button_id)
+        self._open_picker(button_id, self._layer, anchor=self.diagram.hotspot_for(button_id))
 
     def _on_code_chosen(self, value) -> None:
         if self._active_field is None:
@@ -293,6 +309,20 @@ class ButtonsView(QWidget):
         self.swap_stick_dpad.setVisible(not shift)
         self.dpad_diagonal_lock.setVisible(not shift)
         self.options_separator.setVisible(not shift)
+        self._refresh_diagram_bindings()
+
+    def _refresh_diagram_bindings(self) -> None:
+        """Feed the diagram's callouts from whichever layer is showing,
+        reading each field's own already-formatted display text rather
+        than recomputing it -- so a callout can never say something
+        different from the row it mirrors (controller_diagram.py's
+        `set_bindings` docstring)."""
+        bindings = {}
+        for button_id, row in self._rows.items():
+            field = row.default_field if self._layer == "default" else row.shift_field
+            if field.value() is not None:
+                bindings[button_id] = field.text()
+        self.diagram.set_bindings(bindings)
 
     def load_state(self, state: dict) -> None:
         self._state = state
@@ -302,6 +332,7 @@ class ButtonsView(QWidget):
             row.default_field.set_value(default_value)
             row.shift_field.set_value(shift_value)
             row.set_shift_reference(shift_value)
+        self._refresh_diagram_bindings()
         continuous = state.get("continuous_trigger") or {}
         for button_id, check in self._continuous.items():
             check.blockSignals(True)
@@ -346,6 +377,7 @@ class ButtonsView(QWidget):
             continuous[button_id] = check.isChecked()
         self._state["dpad_diagonal_lock"] = self.dpad_diagonal_lock.isChecked()
         self._state["swap_stick_dpad"] = self.swap_stick_dpad.isChecked()
+        self._refresh_diagram_bindings()
         self.changed.emit()
 
     # -- back-compat read path for tests/other code reaching into rows --

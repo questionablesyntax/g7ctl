@@ -7,6 +7,8 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
     from PyQt6.QtWidgets import QApplication
 except ImportError:  # pragma: no cover - depends on the environment
     QApplication = None
@@ -105,6 +107,70 @@ class ControllerDiagramTest(unittest.TestCase):
         self.assertFalse(self.diagram._renderer.elementExists("guide"))
         self.assertFalse(self.diagram._renderer.elementExists("mode"))
 
+    def test_every_hit_region_has_a_hotspot(self):
+        from pyg7.buttons import KNOWN_BUTTON_IDS
+
+        self.assertEqual(set(self.diagram._hotspots), set(KNOWN_BUTTON_IDS))
+
+    def test_hotspots_are_positioned_inside_the_widget_once_shown(self):
+        self.diagram.show()
+        for hotspot in self.diagram._hotspots.values():
+            geo = hotspot.geometry()
+            self.assertGreater(geo.width(), 0)
+            self.assertGreater(geo.height(), 0)
+
+    def test_custom_order_controls_tab_order(self):
+        from g7ctlc.controller_diagram import ControllerDiagram
+
+        custom = ControllerDiagram(DARK_PALETTE, order=["b", "a"])
+        self.assertEqual(list(custom._hotspots), ["b", "a"])
+
+    def test_clicking_a_hotspot_emits_activated_with_its_button_id(self):
+        self.diagram.show()
+        received = []
+        self.diagram.activated.connect(received.append)
+        QTest.mouseClick(self.diagram.hotspot_for("a"), Qt.MouseButton.LeftButton)
+        self.assertEqual(received, ["a"])
+
+    def test_clicking_a_hotspot_also_focuses_and_highlights_it(self):
+        self.diagram.show()
+        self.app.processEvents()  # window must actually be active for setFocus() to stick
+        QTest.mouseClick(self.diagram.hotspot_for("b"), Qt.MouseButton.LeftButton)
+        self.assertTrue(self.diagram.hotspot_for("b").hasFocus())
+        self.assertEqual(self.diagram._highlighted, "b")
+
+    def test_enter_on_a_focused_hotspot_activates_it(self):
+        self.diagram.show()
+        self.diagram.hotspot_for("x").setFocus()
+        received = []
+        self.diagram.activated.connect(received.append)
+        QTest.keyClick(self.diagram.hotspot_for("x"), Qt.Key.Key_Return)
+        self.assertEqual(received, ["x"])
+
+    def test_space_on_a_focused_hotspot_activates_it(self):
+        self.diagram.show()
+        self.diagram.hotspot_for("y").setFocus()
+        received = []
+        self.diagram.activated.connect(received.append)
+        QTest.keyClick(self.diagram.hotspot_for("y"), Qt.Key.Key_Space)
+        self.assertEqual(received, ["y"])
+
+    def test_set_bindings_only_affects_remapped_buttons(self):
+        self.diagram.set_bindings({"a": "Keyboard: R"})
+        self.assertEqual(self.diagram._bindings, {"a": "Keyboard: R"})
+
+    def test_set_bindings_updates_the_hotspot_accessible_name(self):
+        self.diagram.set_bindings({"a": "Keyboard: R"})
+        self.assertIn("remapped to Keyboard: R", self.diagram.hotspot_for("a").accessibleName())
+        self.assertIn("not remapped", self.diagram.hotspot_for("b").accessibleName())
+
+    def test_paints_without_raising_with_bindings_set(self):
+        # Mirrors test_paints_without_raising_with_a_highlight_active --
+        # exercises the actual callout-painting path, not just the data.
+        self.diagram.set_bindings({"a": "Keyboard: R", "rb": "Not remapped"})
+        pixmap = self.diagram.grab()
+        self.assertFalse(pixmap.isNull())
+
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
 class ButtonsViewDiagramSyncTest(unittest.TestCase):
@@ -120,6 +186,27 @@ class ButtonsViewDiagramSyncTest(unittest.TestCase):
         self.view = ButtonsView(DARK_PALETTE)
         self.view.resize(900, 700)
         self.view.show()
+        # Real flake, caught adding the diagram hotspots: show() posts a
+        # deferred "window active, focus the first focusable child" event
+        # that a test's own later processEvents() call can pick up at the
+        # wrong moment (after a .click() already set a different
+        # highlight), clobbering it back to whichever hotspot is first in
+        # tab order. Settle that deferred focus here, once, before any
+        # test body runs -- a real user never interacts with a window in
+        # the same instant it's shown, so this isn't masking a product
+        # bug, just a synthetic-test timing artifact.
+        self.app.processEvents()
+
+    def tearDown(self):
+        # KeycodePicker is a Qt.WindowType.Popup -- an open one left over
+        # from a test that opened it without going through the real
+        # selection path (e.g. emitting codeChosen directly) holds an
+        # implicit input grab that pollutes every later test in the
+        # process, not just this class. Real bug caught writing these
+        # tests: test_clicking_a_field_also_highlights_its_button failed
+        # with the wrong button id only when run after a picker-opening
+        # test, never in isolation.
+        self.view._picker.close()
 
     def test_focusing_a_default_field_highlights_its_button_on_the_diagram(self):
         self.view._rows["x"].default_field.setFocus()
@@ -143,6 +230,52 @@ class ButtonsViewDiagramSyncTest(unittest.TestCase):
     def test_set_palette_reaches_the_diagram(self):
         self.view.set_palette(LIGHT_PALETTE)
         self.assertIs(self.view.diagram._palette, LIGHT_PALETTE)
+
+    # -- D2 rework: the diagram is the remapping surface, not an echo ----
+
+    def test_activating_a_hotspot_opens_the_shared_picker_for_that_button(self):
+        QTest.mouseClick(self.view.diagram.hotspot_for("y"), Qt.MouseButton.LeftButton)
+        self.assertTrue(self.view._picker.isVisible())
+        self.assertIs(self.view._active_field, self.view._rows["y"].default_field)
+
+    def test_activating_a_hotspot_on_the_shift_screen_opens_the_shift_field(self):
+        self.view.set_layer("shift")
+        QTest.mouseClick(self.view.diagram.hotspot_for("y"), Qt.MouseButton.LeftButton)
+        self.assertIs(self.view._active_field, self.view._rows["y"].shift_field)
+
+    def test_choosing_a_value_from_a_diagram_opened_picker_updates_the_row(self):
+        QTest.mouseClick(self.view.diagram.hotspot_for("y"), Qt.MouseButton.LeftButton)
+        self.view._picker.codeChosen.emit("r")
+        self.assertEqual(self.view._rows["y"].default_field.value(), "r")
+
+    def test_load_state_feeds_remapped_buttons_to_the_diagram_as_callouts(self):
+        state = {"buttons": {"default": {"y": "r"}, "shift": {}}}
+        self.view.load_state(state)
+        self.assertEqual(
+            self.view.diagram._bindings["y"],
+            self.view._rows["y"].default_field.text(),
+        )
+        self.assertNotIn("a", self.view.diagram._bindings)
+
+    def test_switching_to_shift_shows_shift_bindings_instead_of_default(self):
+        state = {"buttons": {"default": {"y": "r"}, "shift": {"a": "e"}}}
+        self.view.load_state(state)
+        self.view.set_layer("shift")
+        self.assertNotIn("y", self.view.diagram._bindings)
+        self.assertEqual(
+            self.view.diagram._bindings["a"],
+            self.view._rows["a"].shift_field.text(),
+        )
+
+    def test_an_edit_through_the_table_also_refreshes_the_diagram_callout(self):
+        self.view.load_state({"buttons": {"default": {}, "shift": {}}})
+        self.assertNotIn("y", self.view.diagram._bindings)
+        self.view._rows["y"].default_field.set_value("r")
+        self.view._on_edit()
+        self.assertEqual(
+            self.view.diagram._bindings["y"],
+            self.view._rows["y"].default_field.text(),
+        )
 
 
 if __name__ == "__main__":
