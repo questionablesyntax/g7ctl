@@ -1180,3 +1180,43 @@ class OverviewPageWiringTest(unittest.TestCase):
         w._on_palette_changed(LIGHT_PALETTE)
         self.assertIsNot(w.overview_view.diagram._palette, before)
         self.assertIs(w.overview_view.diagram._palette, LIGHT_PALETTE)
+
+    # -- Overview's scope line and report rate, 2026-10-22 owner decision --
+
+    def test_selecting_a_profile_updates_the_scope_line(self):
+        w = self._window()
+        w._on_profile_changed(2)
+        self.assertIn("Profile 2", w.overview_view.scope_line.text_label.text())
+
+    def test_scope_line_notes_when_the_active_profile_is_the_one_shown(self):
+        w = self._window()
+        w._on_profile_changed(2)
+        w.set_active_profile(2)
+        self.assertIn(
+            "using this profile right now", w.overview_view.scope_line.text_label.text())
+
+    def test_scope_line_says_nothing_extra_when_a_different_profile_is_active(self):
+        w = self._window()
+        w._on_profile_changed(2)
+        w.set_active_profile(3)
+        self.assertNotIn(
+            "using this profile right now", w.overview_view.scope_line.text_label.text())
+
+    def test_no_active_profile_says_nothing_extra_either(self):
+        w = self._window()
+        w._on_profile_changed(2)
+        w.set_active_profile(None)
+        self.assertNotIn(
+            "using this profile right now", w.overview_view.scope_line.text_label.text())
+
+    def test_editing_overviews_report_rate_updates_the_settings_page_combo_too(self):
+        w = self._window()
+        w.overview_view.report_rate_combo.set_value("500")
+        self.assertEqual(w._state["report_rate_hz"], 500)
+        self.assertEqual(w.report_rate_combo.value(), "500")
+
+    def test_editing_the_settings_pages_report_rate_updates_overview_too(self):
+        w = self._window()
+        w.report_rate_combo.set_value("250")
+        self.assertEqual(w._state["report_rate_hz"], 250)
+        self.assertEqual(w.overview_view.report_rate_combo.value(), "250")

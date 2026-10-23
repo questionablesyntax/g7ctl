@@ -299,7 +299,8 @@ class MainWindow(QMainWindow):
         per-profile, while the dock settings it holds are device-wide.
         """
         self.pages = QStackedWidget()
-        self.overview_view = OverviewView(self._theme.palette)
+        self.overview_view = OverviewView(self._theme.palette, icon_loader=self._theme.icons)
+        self.overview_view.reportRateChanged.connect(self._on_report_rate_changed)
         self.buttons_view = ButtonsView(self._theme.palette)
         self.sticks_view = SticksView(self._theme.palette)
         self.triggers_view = TriggersView(self._theme.palette)
@@ -482,6 +483,16 @@ class MainWindow(QMainWindow):
         """
         self._active_profile = slot
         self.rail.set_active_profile(slot)
+        self._sync_overview_scope()
+
+    def _sync_overview_scope(self) -> None:
+        """Push the viewed profile slot and the physically-active one into
+        Overview's scope line -- pushed directly rather than read from
+        `self._state` inside `OverviewView.load_state()`, so the profile
+        number updates the instant either one changes, not lagging behind
+        a device read (OverviewView's own module docstring)."""
+        self.overview_view.set_profile_scope(
+            self._state.get("controller_slot") or 1, self._active_profile)
 
     def set_firmware(self, version: str) -> None:
         """Record the controller's firmware version, read once per
@@ -851,12 +862,14 @@ class MainWindow(QMainWindow):
             self.rail.set_profile(self._state.get("controller_slot") or 1)
         finally:
             self._loading_profile_switch = False
+        self._sync_overview_scope()
 
     def _on_profile_changed(self, slot: object) -> None:
         if self._loading_profile_switch:
             return
         self._apply_view(slot)
         self._state["controller_slot"] = slot
+        self._sync_overview_scope()
         # The values on screen right now were confirmed (if ever) against
         # whichever profile was selected before, not this one -- they say
         # nothing about this profile until a read of it succeeds. Clearing
@@ -925,22 +938,30 @@ class MainWindow(QMainWindow):
                 self.pages.setCurrentWidget(self.buttons_view)
 
     def _sync_report_rate_combo(self) -> None:
-        """Reflect self._state["report_rate_hz"] in the control -- same
-        loading-guard reasoning as _sync_profile_switch()."""
+        """Reflect self._state["report_rate_hz"] in every control that
+        shows it -- the Settings page's own combo (same loading-guard
+        reasoning as _sync_profile_switch()) and Overview's independent
+        instance (D2's Overview work, 2026-10-22), which guards its own
+        signal via blockSignals() rather than this flag."""
+        hz = self._state.get("report_rate_hz") or 1000
         self._loading_report_rate_combo = True
         try:
-            hz = self._state.get("report_rate_hz") or 1000
             # Falls back to 1000 Hz -- default_state_dict()'s own confirmed
             # default, not just "whatever happens to be last."
             value = str(hz) if hz in (250, 500, 1000) else "1000"
             self.report_rate_combo.set_value(value)
         finally:
             self._loading_report_rate_combo = False
+        self.overview_view.set_report_rate(hz)
 
     def _on_report_rate_changed(self, value: object) -> None:
         if self._loading_report_rate_combo or value is None:
             return
         self._state["report_rate_hz"] = int(value)
+        # Keeps whichever combo the user did NOT just touch in sync --
+        # two independent SegmentedControl instances now show this value
+        # (Settings page, Overview), not one.
+        self._sync_report_rate_combo()
         self._on_dirty()
 
     def _default_snapshot_dir(self) -> str:
