@@ -801,6 +801,7 @@ class MainWindow(QMainWindow):
         # button-table slot on every read.
         self._state["continuous_trigger"] = device_state.get("continuous_trigger", {})
         self.buttons_view.load_state(self._state)
+        self.overview_view.load_state(self._state)
 
         self._state["sticks"] = device_state["sticks"]
         self._state["triggers"] = device_state["triggers"]
@@ -827,6 +828,7 @@ class MainWindow(QMainWindow):
         self._sync_profile_switch()
         self._sync_report_rate_combo()
         self.buttons_view.load_state(self._state)
+        self.overview_view.load_state(self._state)
         self.sticks_view.load_state(self._state)
         self.triggers_view.load_state(self._state)
         self.motion_view.load_state(self._state)
