@@ -880,7 +880,14 @@ class UnconfiguredCurveTest(unittest.TestCase):
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
 class ButtonsViewContinuousTriggerTest(unittest.TestCase):
-    """Continuous Trigger checkboxes on the Buttons tab.
+    """Continuous Trigger (Latch), folded into the shared KeycodePicker by
+    D2's rework (2026-10-22, decision) -- there's no per-button
+    checkbox left to read directly; every test here drives the real path
+    (activate the diagram hit region, then the picker's own
+    latch_checkbox) instead. The Shift-layer "no Latch row at all" case
+    and the LT/RT "reason text, not a checkbox" case are both already
+    covered at the diagram/picker level in
+    test_components_controller_diagram.py -- not duplicated here.
 
     Scoped to the data plumbing -- load a state in, edit, read it back out --
     because that is what a headless run can actually prove. Offscreen Qt will
@@ -898,53 +905,49 @@ class ButtonsViewContinuousTriggerTest(unittest.TestCase):
         from g7ctlc.views.buttons_view import ButtonsView
         return ButtonsView()
 
+    def _toggle(self, view, button_id, checked):
+        view._on_diagram_activated(button_id)
+        view._picker.latch_checkbox.setChecked(checked)
+
     def test_flags_round_trip(self):
         view = self._view()
         state = state_mod.default_state_dict()
         state["continuous_trigger"] = {"a": True, "y": True}
         view.load_state(state)
-        self.assertTrue(view._continuous["a"].isChecked())
-        self.assertTrue(view._continuous["y"].isChecked())
-        self.assertFalse(view._continuous["b"].isChecked())
+        view._on_diagram_activated("a")
+        self.assertTrue(view._picker.latch_checkbox.isChecked())
+        view._on_diagram_activated("y")
+        self.assertTrue(view._picker.latch_checkbox.isChecked())
+        view._on_diagram_activated("b")
+        self.assertFalse(view._picker.latch_checkbox.isChecked())
 
-        view._continuous["b"].setChecked(True)
-        view._continuous["a"].setChecked(False)
+        self._toggle(view, "b", True)
+        self._toggle(view, "a", False)
         self.assertEqual(state["continuous_trigger"]["b"], True)
         self.assertEqual(state["continuous_trigger"]["a"], False)
         self.assertEqual(state["continuous_trigger"]["y"], True)
 
-    def test_triggers_have_no_checkbox_at_all(self):
-        # LT/RT have no button-table record, so offering a checkbox would be
-        # offering a control that cannot be written -- see
-        # pyg7.buttons.continuous_trigger_offset().
-        view = self._view()
-        self.assertNotIn("lt", view._continuous)
-        self.assertNotIn("rt", view._continuous)
-
-    def test_every_table_slot_the_gui_shows_has_a_checkbox(self):
+    def test_every_table_slot_shows_a_real_checkbox_when_activated(self):
         from pyg7.buttons import BUTTON_TABLE_SLOTS
         view = self._view()
+        view.load_state(state_mod.default_state_dict())
         for slot in BUTTON_TABLE_SLOTS:
-            if slot is not None:
-                self.assertIn(slot, view._continuous, f"{slot} has no Continuous Trigger checkbox")
+            if slot is None:
+                continue
+            view._on_diagram_activated(slot)
+            self.assertTrue(
+                view._picker.latch_checkbox.isVisible(), f"{slot} has no Latch checkbox")
 
     def test_written_flags_are_accepted_by_validate_state(self):
-        # The view writes a bool for every slot, including unbound ones. If
-        # that shape didn't validate, the GUI would build states it cannot
-        # save -- which is only caught by running the two together.
+        # The view writes a bool only for a slot that was actually toggled
+        # (no more sweep -- see the module docstring). If that shape
+        # didn't validate, the GUI would build states it cannot save --
+        # which is only caught by running the two together.
         view = self._view()
         state = state_mod.default_state_dict()
         view.load_state(state)
-        view._continuous["a"].setChecked(True)
+        self._toggle(view, "a", True)
         state_mod.validate_state(state)
-
-    def test_shift_layer_hides_the_column(self):
-        # Continuous Trigger is per-profile; the Shift layer is device-global. Note
-        # this asserts the visibility *flag*, not that anything was painted.
-        view = self._view()
-        view.set_layer("shift")
-        self.assertFalse(view.continuous_header.isVisible())
-        view.set_layer("default")
 
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")

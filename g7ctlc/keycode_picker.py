@@ -12,12 +12,22 @@ Raw/unrecognised codes are preserved exactly like `widgets.py`'s
 "Raw: {value}" item instead of falling back to "(Default)" -- falling
 back would misreport the device and then let the next unrelated edit drop
 the binding entirely (`widgets.py` explains the full failure chain).
+
+The optional Latch row (`open_for`'s `latch`/`latch_reason`), added for
+the Buttons page's D2 rework (2026-10-22, decision: drop the
+side-panel table entirely, fold Latch into the one place a button's
+binding is already being edited rather than keep a second, separate
+surface for it). Sticks' and Motion's own direction pickers never pass
+either, so they keep getting no Latch row at all -- it was never
+applicable there.
 """
 
 from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
@@ -25,6 +35,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from g7ctlc.checkbox import Checkbox
 from g7ctlc.widgets import KEYCODE_GROUPS
 
 _HEADER = "__header__"
@@ -37,6 +48,10 @@ class KeycodePicker(QWidget):
     """
 
     codeChosen = pyqtSignal(object)  # emits the keycode name (str), or None for "(Default)"
+    # Latch doesn't close the popover (unlike choosing a code) -- a user
+    # may want to toggle it and still pick a different key, or vice versa,
+    # in the same visit.
+    latchToggled = pyqtSignal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent, Qt.WindowType.Popup)
@@ -52,6 +67,19 @@ class KeycodePicker(QWidget):
         self.search.textChanged.connect(self._apply_filter)
         self.search.installEventFilter(self)
         layout.addWidget(self.search)
+
+        self.latch_row = QWidget(self)
+        latch_row_layout = QHBoxLayout(self.latch_row)
+        latch_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.latch_checkbox = Checkbox("Latch", self.latch_row)
+        self.latch_checkbox.toggled.connect(self.latchToggled)
+        latch_row_layout.addWidget(self.latch_checkbox)
+        self.latch_reason_label = QLabel(self.latch_row)
+        self.latch_reason_label.setProperty("role", "secondary")
+        self.latch_reason_label.setWordWrap(True)
+        latch_row_layout.addWidget(self.latch_reason_label)
+        layout.addWidget(self.latch_row)
+        self.latch_row.setVisible(False)
 
         self.list = QListWidget(self)
         self.list.setAccessibleName("Key")
@@ -124,6 +152,25 @@ class KeycodePicker(QWidget):
         query = getattr(self, "_empty_query", None)
         return f'No key matches "{query}".' if query else None
 
+    # -- latch row ----------------------------------------------------------
+
+    def _set_latch_row(self, latch: bool | None, latch_reason: str | None) -> None:
+        if latch_reason is not None:
+            self.latch_checkbox.setVisible(False)
+            self.latch_reason_label.setVisible(True)
+            self.latch_reason_label.setText(latch_reason)
+            self.latch_row.setVisible(True)
+            return
+        if latch is not None:
+            self.latch_checkbox.setVisible(True)
+            self.latch_reason_label.setVisible(False)
+            self.latch_checkbox.blockSignals(True)
+            self.latch_checkbox.setChecked(latch)
+            self.latch_checkbox.blockSignals(False)
+            self.latch_row.setVisible(True)
+            return
+        self.latch_row.setVisible(False)
+
     # -- selection --------------------------------------------------------
 
     def _select_value(self, value: str | None) -> None:
@@ -143,12 +190,30 @@ class KeycodePicker(QWidget):
 
     # -- public entry point -------------------------------------------------
 
-    def open_for(self, anchor: QWidget, current_value: str | None, *, known: bool) -> None:
+    def open_for(
+        self,
+        anchor: QWidget,
+        current_value: str | None,
+        *,
+        known: bool,
+        latch: bool | None = None,
+        latch_reason: str | None = None,
+    ) -> None:
         """Show the popover anchored below `anchor`. `known=False` means
         `current_value` isn't in `KNOWN_KEYCODES` -- it gets its own
-        preserved "Raw: ..." entry rather than being lost."""
+        preserved "Raw: ..." entry rather than being lost.
+
+        `latch`/`latch_reason` are both `None` by default, which hides the
+        Latch row entirely (Sticks' and Motion's direction pickers, and
+        the Buttons page's own picker when it isn't applicable, e.g. the
+        Shift layer). Passing `latch_reason` (a string) shows that text
+        instead of a checkbox -- LT/RT, which have no Latch byte at all.
+        Passing `latch` (a bool) shows a real, checked-to-match checkbox;
+        toggling it emits `latchToggled`, not `codeChosen` -- the two are
+        independent edits that happen to share one popover now."""
         self._current_value = current_value
         self._raw_value = current_value if not known and current_value is not None else None
+        self._set_latch_row(latch, latch_reason)
         self.search.clear()
         self._populate()
         point = anchor.mapToGlobal(anchor.rect().bottomLeft())

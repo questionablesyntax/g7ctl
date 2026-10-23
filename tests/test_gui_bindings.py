@@ -1,10 +1,16 @@
 """GUI tests for the one thing the GUI can silently destroy: bindings.
 
-The Buttons tab writes back to the shared state dict by sweeping EVERY combo
-on any edit, not just the one that changed. That makes "the picker cannot
-represent this value" equivalent to "this binding is deleted" -- which is
-exactly how a set of newly-discovered keycodes went missing after being added
-to the protocol layer but not to the picker.
+Historically the Buttons tab wrote back to the shared state dict by
+sweeping EVERY combo on any edit, not just the one that changed -- that
+made "the picker cannot represent this value" equivalent to "this
+binding is deleted," exactly how a set of newly-discovered keycodes went
+missing after being added to the protocol layer but not to the picker.
+D2's rework (2026-10-22, decision) replaced that whole per-button
+widget layer with direct edits through the diagram + a shared picker --
+there's nothing left to sweep, each edit writes only the one key it
+changed -- but the underlying hazard this file guards (the picker must
+offer every real keycode, and an edit must never disturb an unrelated
+binding) is unchanged, so these tests stay, driven through the new path.
 
 Runs headless (offscreen platform); skipped entirely if PyQt6 is absent so
 the protocol-library tests stay runnable without Qt installed.
@@ -59,13 +65,21 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         view.load_state(state)
         return view, state
 
+    def _edit(self, view, button_id, value, *, layer="default"):
+        """Drives a real edit through the actual interaction path (diagram
+        activation opens the picker, codeChosen writes state) -- D2's
+        rework (2026-10-22, decision) replaced the old per-button
+        BindingField/_combos shape entirely, so there is no widget left to
+        call set_value() on directly."""
+        view.set_layer(layer)
+        view._on_diagram_activated(button_id)
+        view._picker.codeChosen.emit(value)
+
     def test_named_keycodes_survive_an_unrelated_edit(self):
         bindings = {"l4": "mouse_button4", "r4": "numpad_enter",
                     "share": "native_share_capture", "a": "f11"}
         view, state = self._view_with(bindings)
-        field = view._combos[("a", "default")]
-        field.set_value("f12")
-        view._on_edit()
+        self._edit(view, "a", "f12")
         for button, expected in bindings.items():
             if button == "a":
                 continue
@@ -80,9 +94,7 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         # this code path.
         bindings = {"l4": "0xab", "r4": "0xac", "l5": "0xad", "r5": "0xae", "a": "f11"}
         view, state = self._view_with(bindings)
-        field = view._combos[("a", "default")]
-        field.set_value("f12")
-        view._on_edit()
+        self._edit(view, "a", "f12")
         for button, expected in bindings.items():
             if button == "a":
                 continue
@@ -98,14 +110,12 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         # `assertIsNone(state["buttons"]["default"].get("a"))`, which passes
         # identically whether "a" is present with value None OR missing from
         # the dict entirely -- so it kept passing right through the actual
-        # bug (ButtonsView._on_edit() popped the key on Default instead of
+        # bug (the old combo-sweep popped the key on Default instead of
         # storing None), masking it instead of catching it. Strengthened to
         # assert key presence, which the old buggy code fails and the fix
         # passes.
         view, state = self._view_with({"a": "f11"})
-        field = view._combos[("a", "default")]
-        field.set_value(None)
-        view._on_edit()
+        self._edit(view, "a", None)
         self.assertIn("a", state["buttons"]["default"],
                        "Default must store an explicit reset, not remove the key")
         self.assertIsNone(state["buttons"]["default"]["a"])
@@ -118,9 +128,7 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         # though Sync reported success.
         from pyg7 import state as state_mod
         view, state = self._view_with({"a": "f11"})
-        field = view._combos[("a", "default")]
-        field.set_value(None)
-        view._on_edit()
+        self._edit(view, "a", None)
         # A real device baseline where "a" was previously bound to f11 --
         # decode_button_table()'s real shape, not a synthetic shortcut.
         baseline = state_mod.default_state_dict("baseline")
@@ -131,18 +139,9 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
                          f"expected an unbind step for button 'a', got: {labels}")
 
     def test_button_left_at_default_the_whole_time_emits_no_write(self):
-        # Guard against the naive fix's own failure mode: since _on_edit()
-        # sweeps EVERY combo on any single edit, always storing an explicit
-        # None must not turn every already-Default button into a real write
-        # every time -- that would flood every sync with redundant,
-        # heartbeat-paced writes for buttons nobody touched. Confirms
-        # _build_steps()'s existing baseline-diff logic (None-vs-None still
-        # skips) actually protects against this once "a" is edited.
         from pyg7 import state as state_mod
         view, state = self._view_with({"a": "f11"})
-        field = view._combos[("a", "default")]
-        field.set_value("f12")  # edit a DIFFERENT value on "a"
-        view._on_edit()
+        self._edit(view, "a", "f12")  # edit a DIFFERENT value on "a"
         # "b" was never configured on this device either side -- both state
         # and baseline should agree it's None, matching decode_button_table()'s
         # real shape (an unconfigured slot decodes to None, not a missing key).
@@ -154,11 +153,10 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         self.assertFalse(any("Button b " in label for label in labels),
                           f"button 'b' was never touched and should generate no write, got: {labels}")
 
-    def test_every_known_button_has_a_row(self):
+    def test_every_known_button_is_reachable_on_the_diagram(self):
         from pyg7.buttons import KNOWN_BUTTON_IDS
         view, _state = self._view_with({})
-        shown = {button for button, _layer in view._combos}
-        self.assertEqual(shown, set(KNOWN_BUTTON_IDS))
+        self.assertEqual(set(view.diagram._hotspots), set(KNOWN_BUTTON_IDS))
 
     def _view_for_profile(self, slot, shift_bindings=None):
         from g7ctlc.views.buttons_view import ButtonsView
@@ -171,40 +169,26 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         view.load_state(state)
         return view, state
 
-    def test_default_layer_is_the_column_shown_by_default(self):
-        """A freshly-constructed view must already be on the Default layer.
-
-        This used to assert `isVisible() or not view.isVisible()`, which is a
-        tautology on an unshown widget and passed no matter what the view
-        did -- so it did not catch the Shift column being visible on every
-        fresh launch until the user changed profile. `isVisibleTo(parent)`
-        reports the explicit hide flag without needing a shown window, which
-        is the thing actually worth asserting here.
-        """
+    def test_default_layer_is_shown_by_default(self):
+        """A freshly-constructed view must already be editing the Default
+        layer -- D2's rework (2026-10-22) dropped the old column-visibility
+        UI entirely, so `_layer` itself is the thing worth asserting now."""
         view, _state = self._view_for_profile(1)
-        self.assertEqual(view.column_header.text(), "Base Layer")
-        self.assertTrue(view._combos[("a", "default")].isVisibleTo(view))
-        self.assertFalse(view._combos[("a", "shift")].isVisibleTo(view),
-                         "the shared Shift column is showing inside the "
-                         "per-profile screen before any profile change")
+        self.assertEqual(view._layer, "default")
 
-    def test_set_layer_switches_which_column_is_shown(self):
-        """One editable column, and which layer it edits follows the
-        profile selector (plus the always-visible read-only Shift
-        reference, which only the Shift screen itself hides).
-
-        The Shift layer is device-global, so it lives behind its own entry in
-        the selector rather than beside a per-profile column -- a global
-        column sitting in a per-profile screen is what made it look
-        profile-scoped in the first place.
-        """
-        view, _state = self._view_for_profile(1)
+    def test_set_layer_switches_which_layer_is_edited(self):
+        """The Shift layer is device-global, so it lives behind its own
+        entry in the selector rather than a per-profile column -- a global
+        layer sitting in a per-profile screen is what made it look
+        profile-scoped in the first place."""
+        view, state = self._view_for_profile(1)
         view.set_layer("shift")
-        self.assertIn("shared", view.column_header.text())
-        self.assertFalse(view._combos[("a", "default")].isVisible())
+        self.assertEqual(view._layer, "shift")
+        self._edit(view, "a", "f11", layer="shift")
+        self.assertEqual(state["buttons"]["shift"]["a"], "f11")
+        self.assertNotIn("a", state["buttons"]["default"])
         view.set_layer("default")
-        self.assertEqual(view.column_header.text(), "Base Layer")
-        self.assertFalse(view._combos[("a", "shift")].isVisible())
+        self.assertEqual(view._layer, "default")
 
     def test_dpad_options_hide_on_the_shift_screen(self):
         """They are profile-scoped and cannot be written to the Shift blob."""
@@ -215,21 +199,16 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         view.set_layer("default")
         self.assertTrue(view.swap_stick_dpad.isVisibleTo(view))
 
-    def test_switching_layers_does_not_drop_bindings(self):
-        """_on_edit() sweeps every combo, so a hidden column must keep its
-        values or switching views would silently clear the other layer."""
+    def test_editing_one_layer_does_not_touch_the_other(self):
         from pyg7 import state as state_mod
         view, state = self._view_for_profile(1)
         state["buttons"]["shift"]["y"] = "numpad1"
         state["buttons"]["default"]["a"] = "f11"
         view.load_state(state)
-        view.set_layer("shift")
-        field = view._combos[("y", "shift")]
-        field.set_value("numpad3")
-        view._on_edit()
+        self._edit(view, "y", "numpad3", layer="shift")
         self.assertEqual(state["buttons"]["shift"]["y"], "numpad3")
         self.assertEqual(state["buttons"]["default"]["a"], "f11",
-                         "the hidden Default layer was swept out of the state")
+                         "editing the Shift layer touched the hidden Default layer")
         state_mod.validate_state(state)
 
     def test_shift_bindings_survive_a_profile_that_is_not_1(self):
@@ -238,17 +217,7 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         view, state = self._view_for_profile(3, {"a": "f11"})
         self.assertEqual(state["buttons"]["shift"].get("a"), "f11")
         view.set_layer("shift")
-        self.assertEqual(view._combos[("a", "shift")].value(), "f11")
-
-    def test_shift_reference_column_explains_it_is_shared(self):
-        """Real gap, found in A6's code review (2026-10-22): the
-        pre-redesign Shift combo boxes carried this explanation; the new
-        read-only reference column lost it with nothing in its place."""
-        from g7ctlc.views.buttons_view import _SHARED_SHIFT_TOOLTIP, ButtonsView
-        view = ButtonsView()
-        self.assertEqual(view.shift_reference_header.toolTip(), _SHARED_SHIFT_TOOLTIP)
-        row = next(iter(view._rows.values()))
-        self.assertEqual(row.shift_reference.toolTip(), _SHARED_SHIFT_TOOLTIP)
+        self.assertIn("a", view.diagram._bindings)
 
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")

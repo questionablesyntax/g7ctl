@@ -478,8 +478,10 @@ class ShiftViewSelectorTest(unittest.TestCase):
         self.assertIsNone(window.rail.profile_switch.value(),
                          "a completed read pulled the user back to a profile screen")
         self.assertEqual(window.rail.current_page(), "shift")
-        # ...and the Shift bindings that read brought back are on screen.
-        self.assertEqual(window.buttons_view._combos[("a", "shift")].value(), "f11")
+        # ...and the Shift bindings that read brought back are on screen --
+        # no more per-button widget to read directly (D2's rework,
+        # 2026-10-22), so this reads the diagram's own callout instead.
+        self.assertIn("a", window.buttons_view.diagram._bindings)
 
     def test_shift_entries_are_hidden_on_a_freshly_launched_window(self):
         """Regression: the Shift column was visible on Profile 1 until the
@@ -491,18 +493,16 @@ class ShiftViewSelectorTest(unittest.TestCase):
         rest of the session, which is why it read as a redraw glitch rather
         than a missing call. Reported from the real desktop 2026-08-08.
 
-        Asserted with `isVisibleTo()`, not `isVisible()`: nothing is shown
-        under the offscreen platform, so `isVisible()` is False for every
-        widget here and would pass whether or not the bug was present.
+        D2's rework (2026-10-22) replaced the column-visibility UI this
+        originally guarded with direct `_layer` state, so the real
+        invariant now is simply: a fresh window's ButtonsView starts on
+        the Default layer, not Shift.
         """
         window = self._window()
         view = window.buttons_view
         self.assertEqual(window.rail.profile_switch.value(), "1")
-        self.assertEqual(view.column_header.text(), "Base Layer")
-        self.assertFalse(view._combos[("a", "shift")].isVisibleTo(view),
-                         "Shift column visible on Profile 1 before any "
-                         "profile change")
-        self.assertTrue(view._combos[("a", "default")].isVisibleTo(view))
+        self.assertEqual(view._layer, "default",
+                         "ButtonsView was left on the Shift layer on a fresh launch")
 
     def test_sync_warning_mentions_shift_is_shared_while_viewing_it(self):
         """Real bug, found in A6's code review (2026-10-22):
@@ -548,7 +548,7 @@ class ShiftViewSelectorTest(unittest.TestCase):
         self.assertTrue(window._viewing_shift)
         window.rail.pageRequested.emit("buttons")
         self.assertFalse(window._viewing_shift)
-        self.assertEqual(window.buttons_view.column_header.text(), "Base Layer")
+        self.assertEqual(window.buttons_view._layer, "default")
         self.assertEqual(window.rail.profile_switch.value(), "3")
         self.assertTrue(window.rail.is_page_visible("sticks"))
 
@@ -685,13 +685,20 @@ class ContinuousTriggerReachesTheViewTest(unittest.TestCase):
         state["continuous_trigger"] = continuous
         return state
 
+    def _latch_checked(self, buttons_view, button_id):
+        # No per-button checkbox left to read directly (D2's rework,
+        # 2026-10-22) -- activating the diagram opens the shared picker,
+        # whose own Latch checkbox is set to match state on every open.
+        buttons_view._on_diagram_activated(button_id)
+        return buttons_view._picker.latch_checkbox.isChecked()
+
     def test_device_values_reach_the_checkboxes(self):
         w = self._window()
         w.set_connection_state("connected")
         w.set_read_finished(True, "ok", self._device_state({"a": True, "y": True, "b": False}))
-        self.assertTrue(w.buttons_view._continuous["a"].isChecked())
-        self.assertTrue(w.buttons_view._continuous["y"].isChecked())
-        self.assertFalse(w.buttons_view._continuous["b"].isChecked())
+        self.assertTrue(self._latch_checked(w.buttons_view, "a"))
+        self.assertTrue(self._latch_checked(w.buttons_view, "y"))
+        self.assertFalse(self._latch_checked(w.buttons_view, "b"))
 
     def test_the_state_dict_itself_carries_them(self):
         w = self._window()
@@ -706,7 +713,7 @@ class ContinuousTriggerReachesTheViewTest(unittest.TestCase):
         w.set_connection_state("connected")
         w.set_read_finished(True, "ok", self._device_state({"a": True}))
         w.set_read_finished(True, "ok", self._device_state({"a": False}))
-        self.assertFalse(w.buttons_view._continuous["a"].isChecked())
+        self.assertFalse(self._latch_checked(w.buttons_view, "a"))
 
     def test_a_device_state_without_the_key_does_not_crash(self):
         # Older state files and any read predating this feature.
@@ -715,7 +722,7 @@ class ContinuousTriggerReachesTheViewTest(unittest.TestCase):
         state = self._device_state({})
         del state["continuous_trigger"]
         w.set_read_finished(True, "ok", state)
-        self.assertFalse(w.buttons_view._continuous["a"].isChecked())
+        self.assertFalse(self._latch_checked(w.buttons_view, "a"))
 
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")

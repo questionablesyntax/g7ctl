@@ -9,10 +9,10 @@ remapping surface (D2's own rework; see `IMPLEMENTATION-PLAN.md`'s D2
 section); this page just reflects whatever the Base layer currently
 holds, via the same `set_bindings()` callout mechanism, fed by
 `load_state()` reading the state dict directly rather than through any
-`BindingField`. `keycode_display_text()` is the same read-only wording
-`BindingRow.set_shift_reference()` already uses for its Shift column --
-not `BindingField`'s own "Raw: ..." phrasing, which is specifically for
-an editable field (`g7ctlc/widgets.py`'s docstrings explain why the two
+editable field. `keycode_display_text()` is the read-only wording for a
+binding -- not `BindingField`'s own "Raw: ..." phrasing (still used on
+Sticks/Motion's own direction pickers), which is specifically for an
+editable field (`g7ctlc/widgets.py`'s docstrings explain why the two
 read-only/editable wordings differ).
 
 Scope line and report rate are wired now too (owner decision,

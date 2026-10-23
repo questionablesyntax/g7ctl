@@ -231,36 +231,8 @@ class ButtonsViewDiagramSyncTest(unittest.TestCase):
         # test, never in isolation.
         self.view._picker.close()
 
-    def test_focusing_the_shown_rows_field_highlights_its_button_on_the_diagram(self):
-        # Before the D2 rework cut the table entirely (2026-10-22, owner
-        # decision), this focused row "x" directly -- every row sat in the
-        # layout simultaneously then, so any of the 21 could take Tab focus
-        # on its own. Only the detail panel's current row is a real,
-        # focusable widget now ("a", the default selection -- see
-        # ButtonsView._show_detail_for), so this proves the still-real
-        # part of the old assertion: a visible row's own field focus still
-        # syncs the diagram.
-        self.view._rows["a"].default_field.setFocus()
-        self.app.processEvents()
-        self.assertEqual(self.view.diagram._highlighted, "a")
-
-    def test_the_diagram_is_now_the_path_to_every_other_button(self):
-        # Replaces the old "focus a different table row" assertion -- the
-        # diagram's own hotspots are the only way to reach a button that
-        # isn't already the one shown, and doing so both highlights it and
-        # swaps the detail panel to its row.
-        self.view.diagram.hotspot_for("l4").setFocus()
-        self.app.processEvents()
-        self.assertEqual(self.view.diagram._highlighted, "l4")
-        self.assertEqual(self.view._selected_button, "l4")
-        self.assertIs(self.view._rows["l4"].parent(), self.view._detail_slot)
-        self.assertIsNone(self.view._rows["a"].parent())
-
-    def test_clicking_a_field_also_highlights_its_button(self):
-        # Real-world path alongside keyboard Tab -- .click() both focuses
-        # and emits clicked(), the same as a real mouse press.
-        self.view._rows["y"].default_field.click()
-        self.app.processEvents()
+    def test_clicking_a_hotspot_highlights_its_button(self):
+        QTest.mouseClick(self.view.diagram.hotspot_for("y"), Qt.MouseButton.LeftButton)
         self.assertEqual(self.view.diagram._highlighted, "y")
 
     def test_set_palette_reaches_the_diagram(self):
@@ -270,81 +242,111 @@ class ButtonsViewDiagramSyncTest(unittest.TestCase):
     # -- D2 rework: the diagram is the remapping surface, not an echo ----
 
     def test_activating_a_hotspot_opens_the_shared_picker_for_that_button(self):
+        self.view.load_state({"buttons": {"default": {"y": "r"}, "shift": {}}})
         QTest.mouseClick(self.view.diagram.hotspot_for("y"), Qt.MouseButton.LeftButton)
         self.assertTrue(self.view._picker.isVisible())
-        self.assertIs(self.view._active_field, self.view._rows["y"].default_field)
+        self.assertEqual(self.view._active_button, "y")
+        self.assertEqual(self.view._picker._current_value, "r")
 
-    def test_activating_a_hotspot_on_the_shift_screen_opens_the_shift_field(self):
+    def test_activating_a_hotspot_on_the_shift_screen_opens_the_shift_value(self):
+        self.view.load_state({"buttons": {"default": {}, "shift": {"y": "e"}}})
         self.view.set_layer("shift")
         QTest.mouseClick(self.view.diagram.hotspot_for("y"), Qt.MouseButton.LeftButton)
-        self.assertIs(self.view._active_field, self.view._rows["y"].shift_field)
+        self.assertEqual(self.view._picker._current_value, "e")
 
-    def test_choosing_a_value_from_a_diagram_opened_picker_updates_the_row(self):
+    def test_choosing_a_value_from_a_diagram_opened_picker_updates_state(self):
+        self.view.load_state({"buttons": {"default": {}, "shift": {}}})
         QTest.mouseClick(self.view.diagram.hotspot_for("y"), Qt.MouseButton.LeftButton)
         self.view._picker.codeChosen.emit("r")
-        self.assertEqual(self.view._rows["y"].default_field.value(), "r")
+        self.assertEqual(self.view._state["buttons"]["default"]["y"], "r")
 
     def test_load_state_feeds_remapped_buttons_to_the_diagram_as_callouts(self):
+        from g7ctlc.widgets import keycode_display_text
+
         state = {"buttons": {"default": {"y": "r"}, "shift": {}}}
         self.view.load_state(state)
-        self.assertEqual(
-            self.view.diagram._bindings["y"],
-            self.view._rows["y"].default_field.text(),
-        )
+        self.assertEqual(self.view.diagram._bindings["y"], keycode_display_text("r"))
         self.assertNotIn("a", self.view.diagram._bindings)
 
     def test_switching_to_shift_shows_shift_bindings_instead_of_default(self):
+        from g7ctlc.widgets import keycode_display_text
+
         state = {"buttons": {"default": {"y": "r"}, "shift": {"a": "e"}}}
         self.view.load_state(state)
         self.view.set_layer("shift")
         self.assertNotIn("y", self.view.diagram._bindings)
-        self.assertEqual(
-            self.view.diagram._bindings["a"],
-            self.view._rows["a"].shift_field.text(),
-        )
+        self.assertEqual(self.view.diagram._bindings["a"], keycode_display_text("e"))
 
-    def test_an_edit_on_any_row_refreshes_the_diagram_callout(self):
-        # "y" need not be the row currently shown in the detail panel --
-        # _on_edit() sweeps every row regardless (see its own docstring).
+    def test_choosing_a_value_refreshes_the_diagram_callout(self):
         self.view.load_state({"buttons": {"default": {}, "shift": {}}})
         self.assertNotIn("y", self.view.diagram._bindings)
-        self.view._rows["y"].default_field.set_value("r")
-        self.view._on_edit()
-        self.assertEqual(
-            self.view.diagram._bindings["y"],
-            self.view._rows["y"].default_field.text(),
-        )
+        QTest.mouseClick(self.view.diagram.hotspot_for("y"), Qt.MouseButton.LeftButton)
+        self.view._picker.codeChosen.emit("r")
+        self.assertIn("y", self.view.diagram._bindings)
 
-    # -- D2 rework (2026-10-22, owner decision): the table is cut
-    # entirely -- one row at a time lives in the detail panel, chosen by
-    # the diagram's own focus ------------------------------------------
+    # -- Latch, folded into the picker (2026-10-22, decision after a
+    # hands-on test drive: drop the side panel, nest Latch in the picker
+    # rather than keep a second surface for it) --------------------------
 
-    def test_a_is_shown_by_default_with_nothing_else_selected_yet(self):
-        self.assertEqual(self.view._selected_button, "a")
-        self.assertIs(self.view._rows["a"].parent(), self.view._detail_slot)
-
-    def test_every_other_row_starts_unparented(self):
-        for button_id, row in self.view._rows.items():
-            if button_id != "a":
-                self.assertIsNone(row.parent(), f"{button_id}'s row should not be laid out yet")
-
-    def test_activating_a_different_hotspot_swaps_the_detail_panel(self):
-        QTest.mouseClick(self.view.diagram.hotspot_for("rb"), Qt.MouseButton.LeftButton)
-        self.assertEqual(self.view._selected_button, "rb")
-        self.assertIs(self.view._rows["rb"].parent(), self.view._detail_slot)
-        self.assertIsNone(self.view._rows["a"].parent())
-
-    def test_the_shown_rows_latch_checkbox_still_works_once_swapped_in(self):
-        QTest.mouseClick(self.view.diagram.hotspot_for("rb"), Qt.MouseButton.LeftButton)
+    def test_activating_a_latch_capable_button_shows_the_checkbox(self):
         self.view.load_state({"buttons": {"default": {}, "shift": {}}})
-        self.view._continuous["rb"].setChecked(True)
+        QTest.mouseClick(self.view.diagram.hotspot_for("rb"), Qt.MouseButton.LeftButton)
+        self.assertTrue(self.view._picker.latch_row.isVisible())
+        self.assertTrue(self.view._picker.latch_checkbox.isVisible())
+
+    def test_activating_a_trigger_shows_the_reason_text_instead(self):
+        # LT/RT have no Continuous Trigger byte at all -- see
+        # pyg7.buttons.continuous_trigger_offset().
+        self.view.load_state({"buttons": {"default": {}, "shift": {}}})
+        QTest.mouseClick(self.view.diagram.hotspot_for("lt"), Qt.MouseButton.LeftButton)
+        self.assertFalse(self.view._picker.latch_checkbox.isVisible())
+        self.assertEqual(
+            self.view._picker.latch_reason_label.text(), "Triggers have no latch setting")
+
+    def test_activating_on_the_shift_screen_hides_the_latch_row_entirely(self):
+        # Latch is Base-layer-only, and "rb" supports it on the Base layer
+        # -- the Shift screen must still show no Latch row for it at all,
+        # not just hide the checkbox.
+        self.view.load_state({"buttons": {"default": {}, "shift": {}}})
+        self.view.set_layer("shift")
+        QTest.mouseClick(self.view.diagram.hotspot_for("rb"), Qt.MouseButton.LeftButton)
+        self.assertFalse(self.view._picker.latch_row.isVisible())
+
+    def test_the_checkbox_opens_pre_checked_to_match_state(self):
+        self.view.load_state({"buttons": {"default": {}, "shift": {}},
+                               "continuous_trigger": {"rb": True}})
+        QTest.mouseClick(self.view.diagram.hotspot_for("rb"), Qt.MouseButton.LeftButton)
+        self.assertTrue(self.view._picker.latch_checkbox.isChecked())
+
+    def test_toggling_the_checkbox_updates_state(self):
+        self.view.load_state({"buttons": {"default": {}, "shift": {}}})
+        QTest.mouseClick(self.view.diagram.hotspot_for("rb"), Qt.MouseButton.LeftButton)
+        self.view._picker.latch_checkbox.setChecked(True)
         self.assertTrue(self.view._state["continuous_trigger"]["rb"])
 
-    def test_re_selecting_the_same_button_is_a_no_op(self):
-        row_before = self.view._rows["a"]
-        self.view._show_detail_for("a")
-        self.assertIs(self.view._rows["a"], row_before)
-        self.assertIs(row_before.parent(), self.view._detail_slot)
+    def test_toggling_the_checkbox_does_not_close_the_picker(self):
+        # Independent of choosing a code -- a user may want to do both in
+        # the same visit (module docstring).
+        self.view.load_state({"buttons": {"default": {}, "shift": {}}})
+        QTest.mouseClick(self.view.diagram.hotspot_for("rb"), Qt.MouseButton.LeftButton)
+        self.view._picker.latch_checkbox.setChecked(True)
+        self.assertTrue(self.view._picker.isVisible())
+
+    def test_the_latch_checkbox_and_reason_label_carry_their_explanations(self):
+        from g7ctlc.views.buttons_view import _LATCH_TOOLTIP
+
+        self.assertEqual(self.view._picker.latch_checkbox.toolTip(), _LATCH_TOOLTIP)
+        self.assertTrue(self.view._picker.latch_reason_label.toolTip())
+
+    def test_the_shared_checkbox_announces_which_button_its_for(self):
+        # One checkbox now, not one per button (module docstring) -- a
+        # screen reader needs it to keep saying which button, the same
+        # way the old per-row checkbox said "RB, Latch".
+        self.view.load_state({"buttons": {"default": {}, "shift": {}}})
+        QTest.mouseClick(self.view.diagram.hotspot_for("rb"), Qt.MouseButton.LeftButton)
+        self.assertEqual(self.view._picker.latch_checkbox.accessibleName(), "RB, Latch")
+        QTest.mouseClick(self.view.diagram.hotspot_for("lb"), Qt.MouseButton.LeftButton)
+        self.assertEqual(self.view._picker.latch_checkbox.accessibleName(), "LB, Latch")
 
 
 if __name__ == "__main__":
