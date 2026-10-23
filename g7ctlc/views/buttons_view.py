@@ -1,23 +1,27 @@
-"""Buttons page: per-button Default/Shift-layer keycode assignment, A4 of
-the redesign.
+"""Buttons page: per-button Default/Shift-layer keycode assignment, A4/D2
+of the redesign.
 
-Row order groups controls the way they're physically arranged on the
-controller (face buttons, stick clicks, shoulder/paddle pairs, trigger/
-paddle pairs, D-pad, misc) rather than KNOWN_BUTTON_IDS's declaration
-order -- a flat alphabetical-ish list was the single biggest usability
-complaint on the first pass. Short-term measure; the eventual goal is a
-diagram layout closer to GameSir Nexus's own controller-image UI.
+The controller diagram (`controller_diagram.py`) is the only remapping
+surface -- the always-visible 21-row table this page used to show beside
+it was cut entirely, owner decision, D2 rework (2026-10-22;
+`IMPLEMENTATION-PLAN.md`'s D2 section has the full history of why a
+table existed in the first place and why it's gone). `BindingRow` still
+exists and is still built once per button, same wiring as before (Latch,
+Shift reference, `_on_edit()`'s full sweep) -- only one row at a time is
+now parented into the page's detail panel, whichever button the diagram
+itself currently has focus on (`_show_detail_for`). `_order` groups
+controls the way they're physically arranged on the controller (face
+buttons, stick clicks, shoulder/paddle pairs, trigger/paddle pairs,
+D-pad, misc) rather than KNOWN_BUTTON_IDS's declaration order, and
+doubles as the diagram's own Tab order.
 
-Re-skinned onto BindingRow/BindingField/KeycodePicker/Checkbox
-(DIRECTION-A.md section 3): the Shift column is now a read-only
-reference on this page (a real, editable Shift column lives on the
-separate Shift page this same view also serves, selected via
-set_layer("shift") -- see that method). save_into/touched-guard
-contracts are unchanged from the pre-redesign version: _on_edit() still
-sweeps every field on every edit and still stores an explicit None
-rather than popping a key on a deliberate reset (2026-09-17's real bug,
-see that method's own comment) -- A4 is a re-skin, not a behaviour change
-to the write path.
+The Shift column is a read-only reference on this page (a real, editable
+Shift column lives on the separate Shift page this same view also
+serves, selected via set_layer("shift") -- see that method). save_into/
+touched-guard contracts are unchanged from the pre-redesign version:
+_on_edit() still sweeps every field on every edit and still stores an
+explicit None rather than popping a key on a deliberate reset (2026-09-17's
+real bug, see that method's own comment).
 """
 import logging
 
@@ -104,96 +108,101 @@ class ButtonsView(QWidget):
         self._picker = KeycodePicker(self)
         self._picker.codeChosen.connect(self._on_code_chosen)
 
-        # D2: the diagram is the primary remapping surface, not a
-        # decoration beside the table -- IMPLEMENTATION-PLAN.md Track D2.
-        # `order` mirrors _BUTTON_GROUPS' physical layout so Tab through
-        # the diagram's hotspots follows the same sequence as Tab through
-        # the table rows beside it, instead of KNOWN_BUTTON_IDS'
-        # declaration order. Fixed width rather than Expanding so it
-        # doesn't fight the scroll area for space at narrow window widths;
-        # it still grows vertically with the page.
+        # D2 rework (2026-10-22, owner decision): the table is cut
+        # entirely, not kept as a secondary list -- the diagram is the
+        # only remapping surface now. `_order` mirrors _BUTTON_GROUPS'
+        # physical layout so Tab through the diagram's hotspots follows
+        # the page's established button grouping, not KNOWN_BUTTON_IDS'
+        # declaration order; it also picks the button shown in the detail
+        # panel before anything has been selected (see _show_detail_for).
+        self._order = [b for group in _BUTTON_GROUPS for b in group]
+        self._selected_button: str | None = None
         self.diagram = ControllerDiagram(
-            palette,
-            labels=_BUTTON_LABELS,
-            order=[b for group in _BUTTON_GROUPS for b in group],
-            parent=self,
-        )
-        self.diagram.setFixedWidth(260)
+            palette, labels=_BUTTON_LABELS, order=self._order, parent=self)
         self.diagram.activated.connect(self._on_diagram_activated)
+        self.diagram.focused.connect(self._show_detail_for)
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(self.diagram)
+        outer.addWidget(self.diagram, 1)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        outer.addWidget(scroll, 1)
+        # Fixed rather than Expanding, and deliberately narrower than
+        # BindingRow's own MAX_ROW_WIDTH cap (760 -- sized for the old
+        # table, where 20 other rows needed the same width to stay
+        # aligned as columns). A single row doesn't need that; the
+        # diagram is the primary surface now and should get the window's
+        # real estate, not a leftover sliver.
+        _DETAIL_WIDTH = 520
+        scroll.setFixedWidth(_DETAIL_WIDTH)
+        outer.addWidget(scroll)
 
-        rows_widget = QWidget()
-        rows = QVBoxLayout(rows_widget)
-        rows.setContentsMargins(10, 8, 10, 8)
-        rows.setSpacing(2)
+        content_widget = QWidget()
+        content = QVBoxLayout(content_widget)
+        content.setContentsMargins(10, 8, 10, 8)
+        content.setSpacing(2)
 
-        rows.addWidget(self._build_header())
+        content.addWidget(self._build_header())
+
+        # One row at a time lives here -- whichever button the diagram's
+        # own focus is currently on (see _show_detail_for). Every row is
+        # still built below regardless of whether it's ever shown, so
+        # _on_edit()'s full sweep, Latch state and the Shift reference all
+        # keep working exactly as before; only the always-visible list of
+        # 21 is gone.
+        self._detail_slot = QWidget()
+        self._detail_layout = QVBoxLayout(self._detail_slot)
+        self._detail_layout.setContentsMargins(0, 0, 0, 0)
+        content.addWidget(self._detail_slot)
 
         # Defensive check: a button present in KNOWN_BUTTON_IDS but missing
         # from _BUTTON_GROUPS would silently vanish from the GUI, exactly
         # the L5/R5 bug from before this list existed.
-        grouped = {b for group in _BUTTON_GROUPS for b in group}
+        grouped = set(self._order)
         missing = [b for b in KNOWN_BUTTON_IDS if b not in grouped]
         assert not missing, f"buttons missing from _BUTTON_GROUPS: {missing}"
 
-        for group_index, group in enumerate(_BUTTON_GROUPS):
-            if group_index > 0:
-                separator = QFrame()
-                separator.setFrameShape(QFrame.Shape.HLine)
-                separator.setProperty("role", "separator")
-                rows.addWidget(separator)
-
-            for button_id in group:
-                supports_latch = button_id in BUTTON_TABLE_SLOTS
-                row = BindingRow(
-                    _BUTTON_LABELS.get(button_id, button_id),
-                    latch_reason=None if supports_latch else _LATCH_UNSUPPORTED_REASON,
-                )
-                row.default_field.clicked.connect(
-                    lambda _checked=False, b=button_id: self._open_picker(b, "default"))
-                row.shift_field.clicked.connect(
-                    lambda _checked=False, b=button_id: self._open_picker(b, "shift"))
-                # D2: wired to both signals deliberately, not just one. A
-                # real mouse click normally also focuses the button, which
-                # would be enough on its own -- but that's a platform/focus-
-                # policy detail, not a guarantee, so .clicked is connected
-                # directly too. .focused (via BindingField.focusInEvent) is
-                # what makes Tab alone reach every button with no click at
-                # all -- keyboard-only navigation needs this one specifically.
-                row.default_field.clicked.connect(
-                    lambda _checked=False, b=button_id: self.diagram.set_highlighted(b))
-                row.shift_field.clicked.connect(
-                    lambda _checked=False, b=button_id: self.diagram.set_highlighted(b))
-                row.default_field.focused.connect(
-                    lambda b=button_id: self.diagram.set_highlighted(b))
-                row.shift_field.focused.connect(
-                    lambda b=button_id: self.diagram.set_highlighted(b))
-                row.shift_reference.setToolTip(_SHARED_SHIFT_TOOLTIP)
-                if row.latch is not None:
-                    row.latch.setToolTip(_LATCH_TOOLTIP)
-                    row.latch.toggled.connect(self._on_edit)
-                    self._continuous[button_id] = row.latch
-                else:
-                    row.latch_reason_label.setToolTip(
-                        "The triggers have no Continuous Trigger setting -- they're "
-                        "stored differently from the other buttons, and whether the "
-                        "hardware supports it for them at all is unknown.")
-                    self._continuous_spacers.append(row.latch_reason_label)
-                self._rows[button_id] = row
-                rows.addWidget(row)
+        for button_id in self._order:
+            supports_latch = button_id in BUTTON_TABLE_SLOTS
+            row = BindingRow(
+                _BUTTON_LABELS.get(button_id, button_id),
+                latch_reason=None if supports_latch else _LATCH_UNSUPPORTED_REASON,
+            )
+            row.default_field.clicked.connect(
+                lambda _checked=False, b=button_id: self._open_picker(b, "default"))
+            row.shift_field.clicked.connect(
+                lambda _checked=False, b=button_id: self._open_picker(b, "shift"))
+            # The one row the detail panel is currently showing can still
+            # be focused/clicked directly (its fields are real widgets in
+            # the layout) -- keep it in sync with the diagram the same way
+            # a click or Tab onto the diagram's own hotspot does.
+            row.default_field.clicked.connect(
+                lambda _checked=False, b=button_id: self.diagram.set_highlighted(b))
+            row.shift_field.clicked.connect(
+                lambda _checked=False, b=button_id: self.diagram.set_highlighted(b))
+            row.default_field.focused.connect(
+                lambda b=button_id: self.diagram.set_highlighted(b))
+            row.shift_field.focused.connect(
+                lambda b=button_id: self.diagram.set_highlighted(b))
+            row.shift_reference.setToolTip(_SHARED_SHIFT_TOOLTIP)
+            if row.latch is not None:
+                row.latch.setToolTip(_LATCH_TOOLTIP)
+                row.latch.toggled.connect(self._on_edit)
+                self._continuous[button_id] = row.latch
+            else:
+                row.latch_reason_label.setToolTip(
+                    "The triggers have no Continuous Trigger setting -- they're "
+                    "stored differently from the other buttons, and whether the "
+                    "hardware supports it for them at all is unknown.")
+                self._continuous_spacers.append(row.latch_reason_label)
+            self._rows[button_id] = row
 
         self.options_separator = QFrame()
         self.options_separator.setFrameShape(QFrame.Shape.HLine)
         self.options_separator.setProperty("role", "separator")
-        rows.addWidget(self.options_separator)
+        content.addWidget(self.options_separator)
 
         self.swap_stick_dpad = Checkbox("Swap Left Stick and D-pad")
         self.swap_stick_dpad.toggled.connect(self._on_edit)
@@ -203,14 +212,21 @@ class ButtonsView(QWidget):
             "the OFF blob came back byte-identical to the pre-write baseline. "
             "See pyg7/dpad_options.py."
         )
-        rows.addWidget(self.swap_stick_dpad)
+        content.addWidget(self.swap_stick_dpad)
 
         self.dpad_diagonal_lock = Checkbox("D-Pad Diagonal Lock")
         self.dpad_diagonal_lock.toggled.connect(self._on_edit)
-        rows.addWidget(self.dpad_diagonal_lock)
+        content.addWidget(self.dpad_diagonal_lock)
 
-        rows.addStretch(1)
-        scroll.setWidget(rows_widget)
+        content.addStretch(1)
+        scroll.setWidget(content_widget)
+
+        # Show the first button's row until the diagram says otherwise --
+        # a fresh page with nothing selected would otherwise show an empty
+        # detail panel for no reason, and this also keeps the Default/
+        # Shift visibility invariants (`test_gui_bindings.py`) true of
+        # "a" the same way they were on the old always-visible table.
+        self._show_detail_for(self._order[0])
 
         # Apply the starting layer rather than trusting the caller to.
         # Both layers' fields are built above and are visible by default, so
@@ -220,6 +236,24 @@ class ButtonsView(QWidget):
         # the per-profile screen on every fresh launch, showing exactly the
         # thing the Shift-as-its-own-screen change existed to stop showing.
         self.set_layer(self._layer)
+
+    def _show_detail_for(self, button_id: str) -> None:
+        """Swap which button's row is parented into the detail panel --
+        the diagram's own `focused` signal is the only thing that calls
+        this in practice, but it takes a plain button id rather than
+        assuming that, so a test or a future caller can drive it directly."""
+        if button_id not in self._rows or button_id == self._selected_button:
+            return
+        if self._selected_button is not None:
+            old_row = self._rows[self._selected_button]
+            self._detail_layout.removeWidget(old_row)
+            old_row.setParent(None)
+        self._selected_button = button_id
+        row = self._rows[button_id]
+        row.setParent(self._detail_slot)
+        self._detail_layout.addWidget(row)
+        row.show()
+        self.diagram.set_highlighted(button_id)
 
     # -- the shared picker --------------------------------------------------
 

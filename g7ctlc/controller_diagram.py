@@ -91,6 +91,7 @@ class _DiagramHotspot(QWidget):
     def focusInEvent(self, event) -> None:  # noqa: N802 - Qt override signature
         super().focusInEvent(event)
         self._diagram.set_highlighted(self.button_id)
+        self._diagram.focused.emit(self.button_id)
         self.update()
 
     def focusOutEvent(self, event) -> None:  # noqa: N802 - Qt override signature
@@ -143,6 +144,11 @@ class ControllerDiagram(QWidget):
     # Emits the hit-region's button id on click, Enter or Space -- the
     # owning page decides what that means (which layer, which picker).
     activated = pyqtSignal(str)
+    # Emits whenever a hit region gains keyboard or mouse focus -- Tab
+    # alone (no activation) reaches every part, and the owning page uses
+    # this to show that part's own detail (binding, Latch, Shift
+    # reference) without necessarily opening the picker.
+    focused = pyqtSignal(str)
 
     def __init__(
         self,

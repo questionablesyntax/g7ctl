@@ -208,17 +208,30 @@ class ButtonsViewDiagramSyncTest(unittest.TestCase):
         # test, never in isolation.
         self.view._picker.close()
 
-    def test_focusing_a_default_field_highlights_its_button_on_the_diagram(self):
-        self.view._rows["x"].default_field.setFocus()
+    def test_focusing_the_shown_rows_field_highlights_its_button_on_the_diagram(self):
+        # Before the D2 rework cut the table entirely (2026-10-22, owner
+        # decision), this focused row "x" directly -- every row sat in the
+        # layout simultaneously then, so any of the 21 could take Tab focus
+        # on its own. Only the detail panel's current row is a real,
+        # focusable widget now ("a", the default selection -- see
+        # ButtonsView._show_detail_for), so this proves the still-real
+        # part of the old assertion: a visible row's own field focus still
+        # syncs the diagram.
+        self.view._rows["a"].default_field.setFocus()
         self.app.processEvents()
-        self.assertEqual(self.view.diagram._highlighted, "x")
+        self.assertEqual(self.view.diagram._highlighted, "a")
 
-    def test_focusing_a_different_row_moves_the_highlight(self):
-        self.view._rows["x"].default_field.setFocus()
-        self.app.processEvents()
-        self.view._rows["l4"].default_field.setFocus()
+    def test_the_diagram_is_now_the_path_to_every_other_button(self):
+        # Replaces the old "focus a different table row" assertion -- the
+        # diagram's own hotspots are the only way to reach a button that
+        # isn't already the one shown, and doing so both highlights it and
+        # swaps the detail panel to its row.
+        self.view.diagram.hotspot_for("l4").setFocus()
         self.app.processEvents()
         self.assertEqual(self.view.diagram._highlighted, "l4")
+        self.assertEqual(self.view._selected_button, "l4")
+        self.assertIs(self.view._rows["l4"].parent(), self.view._detail_slot)
+        self.assertIsNone(self.view._rows["a"].parent())
 
     def test_clicking_a_field_also_highlights_its_button(self):
         # Real-world path alongside keyboard Tab -- .click() both focuses
@@ -267,7 +280,9 @@ class ButtonsViewDiagramSyncTest(unittest.TestCase):
             self.view._rows["a"].shift_field.text(),
         )
 
-    def test_an_edit_through_the_table_also_refreshes_the_diagram_callout(self):
+    def test_an_edit_on_any_row_refreshes_the_diagram_callout(self):
+        # "y" need not be the row currently shown in the detail panel --
+        # _on_edit() sweeps every row regardless (see its own docstring).
         self.view.load_state({"buttons": {"default": {}, "shift": {}}})
         self.assertNotIn("y", self.view.diagram._bindings)
         self.view._rows["y"].default_field.set_value("r")
@@ -276,6 +291,37 @@ class ButtonsViewDiagramSyncTest(unittest.TestCase):
             self.view.diagram._bindings["y"],
             self.view._rows["y"].default_field.text(),
         )
+
+    # -- D2 rework (2026-10-22, owner decision): the table is cut
+    # entirely -- one row at a time lives in the detail panel, chosen by
+    # the diagram's own focus ------------------------------------------
+
+    def test_a_is_shown_by_default_with_nothing_else_selected_yet(self):
+        self.assertEqual(self.view._selected_button, "a")
+        self.assertIs(self.view._rows["a"].parent(), self.view._detail_slot)
+
+    def test_every_other_row_starts_unparented(self):
+        for button_id, row in self.view._rows.items():
+            if button_id != "a":
+                self.assertIsNone(row.parent(), f"{button_id}'s row should not be laid out yet")
+
+    def test_activating_a_different_hotspot_swaps_the_detail_panel(self):
+        QTest.mouseClick(self.view.diagram.hotspot_for("rb"), Qt.MouseButton.LeftButton)
+        self.assertEqual(self.view._selected_button, "rb")
+        self.assertIs(self.view._rows["rb"].parent(), self.view._detail_slot)
+        self.assertIsNone(self.view._rows["a"].parent())
+
+    def test_the_shown_rows_latch_checkbox_still_works_once_swapped_in(self):
+        QTest.mouseClick(self.view.diagram.hotspot_for("rb"), Qt.MouseButton.LeftButton)
+        self.view.load_state({"buttons": {"default": {}, "shift": {}}})
+        self.view._continuous["rb"].setChecked(True)
+        self.assertTrue(self.view._state["continuous_trigger"]["rb"])
+
+    def test_re_selecting_the_same_button_is_a_no_op(self):
+        row_before = self.view._rows["a"]
+        self.view._show_detail_for("a")
+        self.assertIs(self.view._rows["a"], row_before)
+        self.assertIs(row_before.parent(), self.view._detail_slot)
 
 
 if __name__ == "__main__":
