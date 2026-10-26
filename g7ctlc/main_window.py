@@ -160,12 +160,21 @@ class MainWindow(QMainWindow):
         # flagged as most irregular (see motion_view.py's module
         # docstring for what's deliberately still deferred).
         self._motion_draft = DesiredDraft(ObservedSnapshot(None, confirmed=False))
+        # Buttons' draft -- per-profile scope too, covering both layers
+        # (default/shift) and the two D-pad options under one ledger, same
+        # as every other per-side/multi-field slice. The hardest fit: no
+        # per-field widget exists on this page at all (see
+        # buttons_view.py's own module docstring) -- its touch/revert UI
+        # lives inside KeycodePicker's own was/Revert row instead of a
+        # wrapped form field.
+        self._buttons_draft = DesiredDraft(ObservedSnapshot(None, confirmed=False))
         # Which draft a currently-in-flight execute_requested belongs to --
-        # "vibration", "dock", "triggers", "sticks", or "motion". All five
-        # write buttons are disabled while self._syncing is true (same as
-        # Sync Now/Read), so only one job is ever in flight, but
-        # set_execute_finished() still needs to know which draft's
-        # bookkeeping to update when the response comes back.
+        # "vibration", "dock", "triggers", "sticks", "motion", or
+        # "buttons". All six write buttons are disabled while
+        # self._syncing is true (same as Sync Now/Read), so only one job
+        # is ever in flight, but set_execute_finished() still needs to
+        # know which draft's bookkeeping to update when the response comes
+        # back.
         self._pending_execute_scope: Optional[str] = None
         # Bumped by DeviceWatcher.connection_generation_changed every time a
         # connection is freshly (re-)established -- captured into any
@@ -349,6 +358,8 @@ class MainWindow(QMainWindow):
         self.overview_view = OverviewView(self._theme.palette, icon_loader=self._theme.icons)
         self.overview_view.reportRateChanged.connect(self._on_report_rate_changed)
         self.buttons_view = ButtonsView(self._theme.palette)
+        self.buttons_view.fieldTouched.connect(self._on_buttons_field_touched)
+        self.buttons_view.fieldReverted.connect(self._on_buttons_field_reverted)
         self.sticks_view = SticksView(self._theme.palette)
         self.sticks_view.fieldTouched.connect(self._on_sticks_field_touched)
         self.sticks_view.fieldReverted.connect(self._on_sticks_field_reverted)
@@ -547,6 +558,16 @@ class MainWindow(QMainWindow):
         )
         self.motion_write_btn.clicked.connect(self._on_write_motion_clicked)
         row.addWidget(self.motion_write_btn)
+        self.buttons_write_btn = QPushButton("Write 1 change")
+        self.buttons_write_btn.setProperty("role", "write")
+        self.buttons_write_btn.setVisible(False)
+        self.buttons_write_btn.setToolTip(
+            "Write only the button bindings and D-pad options changed "
+            "since the last read -- re-reads the controller first and "
+            "refuses if something else changed there since."
+        )
+        self.buttons_write_btn.clicked.connect(self._on_write_buttons_clicked)
+        row.addWidget(self.buttons_write_btn)
         self.sync_btn = QPushButton("Sync Now")
         self.sync_btn.setProperty("role", "write")
         self.sync_btn.setEnabled(False)
@@ -871,6 +892,7 @@ class MainWindow(QMainWindow):
             self._reset_triggers_draft()
             self._reset_sticks_draft()
             self._reset_motion_draft()
+            self._reset_buttons_draft()
         else:
             QMessageBox.warning(self, "Sync failed", message)
 
@@ -1012,6 +1034,29 @@ class MainWindow(QMainWindow):
             ObservedSnapshot(copy.deepcopy(self._state), self._state_confirmed, imported=imported))
         self._refresh_motion_draft_ui()
 
+    def _on_buttons_field_touched(self, path: tuple, field: object, desired: object, profile: int) -> None:
+        self._buttons_draft.touch(path, field, desired, profile)
+        self._refresh_buttons_draft_ui()
+
+    def _on_buttons_field_reverted(self, path: tuple) -> None:
+        self._buttons_draft.untouch(path)
+        self._refresh_buttons_draft_ui()
+
+    def _refresh_buttons_draft_ui(self) -> None:
+        count = self._buttons_draft.edit_count
+        self.rail.set_edit_count("buttons", count)
+        self.buttons_write_btn.setVisible(count > 0)
+        self.buttons_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
+        self.buttons_write_btn.setEnabled(
+            count > 0 and self._connection_state == "connected" and not self._syncing)
+
+    def _reset_buttons_draft(self, imported: bool = False) -> None:
+        """Same shape/reasoning as `_reset_motion_draft()` -- Buttons is
+        per-profile scope too, discarded on a profile switch."""
+        self._buttons_draft = DesiredDraft(
+            ObservedSnapshot(copy.deepcopy(self._state), self._state_confirmed, imported=imported))
+        self._refresh_buttons_draft_ui()
+
     def _rebuild_draft_snapshot(self, draft: DesiredDraft) -> DesiredDraft:
         """Refresh a draft's own `ObservedSnapshot` to the current
         `self._state`, re-touching whatever marks still remain against it
@@ -1060,6 +1105,7 @@ class MainWindow(QMainWindow):
         self._reset_triggers_draft()
         self._reset_sticks_draft()
         self._reset_motion_draft()
+        self._reset_buttons_draft()
 
     def _on_write_vibration_clicked(self) -> None:
         if self._vibration_draft.edit_count == 0 or self._syncing:
@@ -1101,6 +1147,14 @@ class MainWindow(QMainWindow):
         baseline = self._motion_draft.observed.state or {}
         self._start_execute(intents, baseline)
 
+    def _on_write_buttons_clicked(self) -> None:
+        if self._buttons_draft.edit_count == 0 or self._syncing:
+            return
+        self._pending_execute_scope = "buttons"
+        intents = self._buttons_draft.to_approved_intents()
+        baseline = self._buttons_draft.observed.state or {}
+        self._start_execute(intents, baseline)
+
     def _start_execute(self, intents: list, baseline: dict) -> None:
         self._syncing = True
         self.syncing_changed.emit(True)
@@ -1110,6 +1164,7 @@ class MainWindow(QMainWindow):
         self.triggers_write_btn.setEnabled(False)
         self.sticks_write_btn.setEnabled(False)
         self.motion_write_btn.setEnabled(False)
+        self.buttons_write_btn.setEnabled(False)
         self.rail.read_button.setEnabled(False)
         self.rail.set_nav_enabled(False)
         self.ownership_bar.set_release_enabled(False)
@@ -1172,12 +1227,19 @@ class MainWindow(QMainWindow):
                     self._motion_draft.untouch(outcome.intent.path)
                 self.motion_view.load_state(self._state)
                 self._refresh_motion_draft_ui()
+            elif scope == "buttons":
+                self._buttons_draft = self._rebuild_draft_snapshot(self._buttons_draft)
+                for outcome in read_back.ok:
+                    self._buttons_draft.untouch(outcome.intent.path)
+                self.buttons_view.load_state(self._state)
+                self._refresh_buttons_draft_ui()
         elif not success:
             self._refresh_vibration_draft_ui()
             self._refresh_dock_draft_ui()
             self._refresh_triggers_draft_ui()
             self._refresh_sticks_draft_ui()
             self._refresh_motion_draft_ui()
+            self._refresh_buttons_draft_ui()
             QMessageBox.warning(self, "Write failed", message)
 
     @staticmethod
@@ -1290,6 +1352,7 @@ class MainWindow(QMainWindow):
         self._reset_triggers_draft()
         self._reset_sticks_draft()
         self._reset_motion_draft()
+        self._reset_buttons_draft()
 
         self._set_dirty(False)  # local state now matches the device, not a pending change
 
@@ -1308,6 +1371,7 @@ class MainWindow(QMainWindow):
         self._reset_triggers_draft(imported=imported)
         self._reset_sticks_draft(imported=imported)
         self._reset_motion_draft(imported=imported)
+        self._reset_buttons_draft(imported=imported)
         self._set_dirty(False)
 
     def _sync_profile_switch(self) -> None:
@@ -1340,14 +1404,15 @@ class MainWindow(QMainWindow):
         # read from leaving the previous profile's real values on screen
         # looking exactly like a confirmed reading of the new selection.
         self._state_confirmed = False
-        # Vibration's, Triggers', Sticks', and Motion's drafts are all
-        # per-profile scope, not shared (DESIGN-SPEC.md 10.1 #5) -- a
-        # switch discards them, same as every other page's unsynced
+        # Vibration's, Triggers', Sticks', Motion's, and Buttons' drafts
+        # are all per-profile scope, not shared (DESIGN-SPEC.md 10.1 #5)
+        # -- a switch discards them, same as every other page's unsynced
         # edits, until scoped intents exist to do better.
         self._reset_vibration_draft()
         self._reset_triggers_draft()
         self._reset_sticks_draft()
         self._reset_motion_draft()
+        self._reset_buttons_draft()
         self._refresh_confirmed_display()
         self._refresh_sync_btn()
         if self._connection_state == "connected" and not self._syncing:

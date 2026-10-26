@@ -213,26 +213,52 @@ class SettingsView(QWidget):
         # this codebase), not on every edit anywhere in this tab.
         if self._loading:
             return
+        observed = self._loaded.get("dock_led_brightness")
+        value = int(self.brightness.value())
+        if observed is not None and value == observed:
+            # REAL BUG, found 2026-10-26 (hardware test):
+            # manually dialing back to the originally-loaded value (not
+            # clicking Revert) left the mark/revert row and the draft
+            # ledger both still claiming an outstanding edit, even though
+            # Write correctly found nothing left to do -- prepare()'s own
+            # ALREADY_SATISFIED classification was right, but nothing told
+            # this view or MainWindow's DesiredDraft the touch was gone.
+            # Same fix as every other field below: treat landing back on
+            # the baseline as an implicit revert, not a no-op touch.
+            self._brightness_touched = False
+            self.brightness.set_edited(False)
+            self._brightness_was_label.setVisible(False)
+            self._brightness_revert_btn.setVisible(False)
+            self.fieldReverted.emit(("dock_led_brightness",))
+            return
         self._brightness_touched = True
         self.brightness.set_edited(True)
-        observed = self._loaded.get("dock_led_brightness")
         self._brightness_was_label.setText("was Unknown" if observed is None else f"was {observed}%")
         self._brightness_was_label.setVisible(True)
         self._brightness_revert_btn.setVisible(True)
         self.fieldTouched.emit(("dock_led_brightness",), DOCK_FIELDS["dock_led_brightness"],
-                                int(self.brightness.value()), _DOCK_PROFILE_PLACEHOLDER)
+                                value, _DOCK_PROFILE_PLACEHOLDER)
 
     def _mark_auto_on_off_touched(self, *_args: object) -> None:
         if self._loading:
             return
+        observed = self._loaded.get("dock_auto_on_off")
+        value = self.auto_on_off.isChecked()
+        if observed is not None and value == bool(observed):
+            # Same implicit-revert fix as _mark_brightness_touched() above.
+            self._auto_on_off_touched = False
+            self.auto_on_off.set_edited(False)
+            self._auto_was_label.setVisible(False)
+            self._auto_revert_btn.setVisible(False)
+            self.fieldReverted.emit(("dock_auto_on_off",))
+            return
         self._auto_on_off_touched = True
         self.auto_on_off.set_edited(True)
-        observed = self._loaded.get("dock_auto_on_off")
         self._auto_was_label.setText("was Unknown" if observed is None else f"was {'on' if observed else 'off'}")
         self._auto_was_label.setVisible(True)
         self._auto_revert_btn.setVisible(True)
         self.fieldTouched.emit(("dock_auto_on_off",), DOCK_FIELDS["dock_auto_on_off"],
-                                self.auto_on_off.isChecked(), _DOCK_PROFILE_PLACEHOLDER)
+                                value, _DOCK_PROFILE_PLACEHOLDER)
 
     def _revert_brightness(self) -> None:
         if self._state is None:

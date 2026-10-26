@@ -210,6 +210,23 @@ class VibrationFastPathTest(unittest.TestCase):
 
         self.assertEqual(window._vibration_draft.edit_count, 0)
 
+    def test_manually_dialing_back_to_the_loaded_value_clears_the_draft_end_to_end(self):
+        """REAL BUG, reported 2026-10-26: manually
+        reverting a field by picking its original value again (not
+        clicking the view's own Revert button) left MainWindow's own
+        draft/rail-count/write-button all still claiming an edit. Proves
+        the view-level fix (vibration_view.py's own regression test)
+        actually reaches MainWindow's draft through the real
+        fieldReverted signal, not just the view's own display state."""
+        window = self._window()
+        window.vibration_view.sliders["left_grip"].set_value("75")
+        self.assertEqual(window._vibration_draft.edit_count, 1)
+
+        window.vibration_view.sliders["left_grip"].set_value("25")  # back to loaded, not Revert
+
+        self.assertEqual(window._vibration_draft.edit_count, 0)
+        self.assertTrue(window.vibration_write_btn.isHidden())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -115,6 +115,36 @@ class DockFieldTouchedTest(unittest.TestCase):
         view.brightness.set_value("0")
         self.assertIn("Unknown", view._brightness_was_label.text())
 
+    def test_manually_dialing_brightness_back_to_the_loaded_value_acts_as_an_implicit_revert(self):
+        """Same real bug as vibration_view.py's identical test -- see its
+        own comment."""
+        view, state = self._view_with_state(dock_led_brightness=25)
+        view.brightness.set_value("100")
+        reverted = []
+        view.fieldReverted.connect(lambda path: reverted.append(path))
+
+        view.brightness.set_value("25")  # back to the loaded value, not Revert
+
+        # SegmentedControl's own selectionChanged fires once per button
+        # whose checked state flips within the exclusive group -- same
+        # tolerance vibration_view.py's identical test documents.
+        self.assertGreaterEqual(len(reverted), 1)
+        self.assertEqual(set(reverted), {("dock_led_brightness",)})
+        self.assertTrue(view._brightness_was_label.isHidden())
+        self.assertFalse(view.brightness.is_edited())
+
+    def test_manually_toggling_auto_on_off_back_to_the_loaded_value_acts_as_an_implicit_revert(self):
+        view, state = self._view_with_state(dock_auto_on_off=False)
+        view.auto_on_off.setChecked(True)
+        reverted = []
+        view.fieldReverted.connect(lambda path: reverted.append(path))
+
+        view.auto_on_off.setChecked(False)  # back to the loaded value, not Revert
+
+        self.assertEqual(reverted, [("dock_auto_on_off",)])
+        self.assertTrue(view._auto_was_label.isHidden())
+        self.assertFalse(view.auto_on_off.is_edited())
+
     def test_moving_brightness_does_not_also_mark_auto_on_off(self):
         """Mirrors vibration_view.py's "unrelated edit" regression -- two
         independent fields sharing one _on_edit() must not cross-touch."""

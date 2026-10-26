@@ -209,15 +209,29 @@ class VibrationView(QWidget):
         # settings_view.py's identical fix for the same pattern.
         if self._loading:
             return
-        self._sliders_touched.add(key)
         control = self.sliders[key]
-        control.set_edited(True)
+        value = int(control.value())
         observed = self._loaded_levels.get(key)
+        if observed is not None and value == observed:
+            # REAL BUG, found 2026-10-26 (hardware test):
+            # manually dialing a level back to its originally-loaded value
+            # (not clicking Revert) left the mark/revert row and the
+            # draft ledger both still claiming an outstanding edit, even
+            # though Write correctly found nothing left to do. Treat
+            # landing back on the baseline as an implicit revert.
+            self._sliders_touched.discard(key)
+            control.set_edited(False)
+            self._was_labels[key].setVisible(False)
+            self._revert_buttons[key].setVisible(False)
+            self.fieldReverted.emit(("vibration", key))
+            return
+        self._sliders_touched.add(key)
+        control.set_edited(True)
         self._was_labels[key].setText("was Unknown" if observed is None else f"was {observed}%")
         self._was_labels[key].setVisible(True)
         self._revert_buttons[key].setVisible(True)
         profile = (self._state or {}).get("controller_slot") or 1
-        self.fieldTouched.emit(("vibration", key), VIBRATION_LEVEL_FIELDS[key], int(control.value()), profile)
+        self.fieldTouched.emit(("vibration", key), VIBRATION_LEVEL_FIELDS[key], value, profile)
 
     def _revert_level(self, key: str) -> None:
         if self._state is None:

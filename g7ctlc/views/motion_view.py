@@ -21,15 +21,23 @@ Track S's own ordering flagged as most irregular. Migrated: all 11-12 of
 (`activate_method`, `x_axis_output_mode`, `curve` preset,
 `deadzone_initial/max`, `anti_deadzone_initial/max`, `invert_y`,
 `invert_yaw`, `sensitivity_scale`, `output`, `overlap_area`, plus
-`invert_roll` on Aim only). **Deliberately not migrated**:
-`activate_button` and the four `direction_up/down/left/right` zone
-bindings -- unlike every field migrated so far, these have a REAL
-`Intent.CLEAR` ("unbound," a genuine wire value, not "unknown") that the
-touch/revert UI this slice built has no representation for yet; a real
-design question deserving its own pass. `curve_points` has no write-side
-UI at all in this view to migrate (see this docstring's own first
-paragraph). All four still write through the old whole-side Sync Now
-path only.
+`invert_roll` on Aim only), plus a second pass adding `activate_button`
+and the four `direction_up/down/left/right` zone bindings -- the first
+keycode-binding fields on the per-field draft model anywhere in the
+app. Traced all the way through before building: these use plain
+`FieldSpec` + `Intent.CLEAR`, not `ButtonFieldSpec`, so `prepare()`/
+`execute()` already round-trip them correctly with no engine change
+needed (unlike Buttons' own `ButtonFieldSpec`, which needed a real
+signature fix -- see `pyg7/field_spec.py`'s `ButtonFieldSpec` docstring).
+The only new work was GUI-side: `KeycodePicker`'s existing "(Default)"
+choice already emits `None` for "unbind", so `_on_code_chosen()` now
+maps that to `Intent.CLEAR` (not raw `None`) when marking a field
+touched, and the "was X" row shows `keycode_display_text()`'s own
+"Not remapped" wording for a `None` baseline -- the same label the
+field itself already shows, not a new one invented for this slice.
+`curve_points` has no write-side UI at all in this view to migrate (see
+this docstring's own first paragraph) and remains the one field still
+write-only through the old whole-side Sync Now path.
 """
 from typing import Optional
 
@@ -48,14 +56,14 @@ from PyQt6.QtWidgets import (
 )
 
 from pyg7.buttons import KNOWN_KEYCODES
-from pyg7.field_spec import MOTION_FIELDS
+from pyg7.field_spec import MOTION_FIELDS, Intent
 
 from ..binding_field import BindingField
 from ..checkbox import Checkbox
 from ..keycode_picker import KeycodePicker
 from ..number_field import NumberField
 from ..segmented_control import SegmentedControl
-from ..widgets import CategorySideWidget
+from ..widgets import CategorySideWidget, keycode_display_text
 from ..widgets import (
     set_row_visible as _set_row_visible,
 )
@@ -90,7 +98,22 @@ _SIMPLE_SETTING_PATHS = {
     "output": ("output",),
     "overlap_area": ("overlap_area",),
     "invert_roll": ("invert_roll",),
+    # Keycode-binding settings -- same table, same path-building code at
+    # every call site, but `_KEYCODE_SETTINGS` below marks these for the
+    # CLEAR-mapping/"was X" differences their `None` actually needs.
+    "activate_button": ("activate_button",),
+    "direction_up": ("direction_bindings", "up"),
+    "direction_down": ("direction_bindings", "down"),
+    "direction_left": ("direction_bindings", "left"),
+    "direction_right": ("direction_bindings", "right"),
 }
+# A keycode field's `None` is a real, confirmed "unbound" state (motion.py's
+# own `_resolve_keycode_or_unbound()`) -- never a display fallback like
+# every other field's `None` means, so these get their own `Intent.CLEAR`
+# mapping and "was X" wording instead of `_SETTING_DEFAULTS`/`_format_was`'s
+# generic path.
+_KEYCODE_SETTINGS = frozenset(
+    {"activate_button", "direction_up", "direction_down", "direction_left", "direction_right"})
 # Confirmed factory defaults (same values `_load_fields` already falls
 # back to for a `None` reading).
 _SETTING_DEFAULTS = {
@@ -138,6 +161,11 @@ class _MotionSideWidget(CategorySideWidget):
         self._picker = KeycodePicker(self)
         self._picker.codeChosen.connect(self._on_code_chosen)
         self._active_field: Optional[BindingField] = None
+        # Maps a BindingField instance back to its own setting name --
+        # _on_code_chosen() is one shared callback for every keycode field
+        # on this side, so it needs this to know which one to mark
+        # touched once the picker returns.
+        self._field_to_setting: dict[BindingField, str] = {}
 
         self.activate_method = QComboBox()
         for value, label in ACTIVATE_METHOD_OPTIONS:
@@ -147,6 +175,7 @@ class _MotionSideWidget(CategorySideWidget):
         self.activate_button.setAccessibleName("Activate Button")
         self.activate_button.setToolTip("Which button, held or pressed, activates motion input.")
         self.activate_button.clicked.connect(lambda: self._open_picker(self.activate_button))
+        self._field_to_setting[self.activate_button] = "activate_button"
         self.x_axis_output_mode = QComboBox()
         for value, label in X_AXIS_OUTPUT_MODE_OPTIONS:
             self.x_axis_output_mode.addItem(label, value)
@@ -183,11 +212,11 @@ class _MotionSideWidget(CategorySideWidget):
             "activate_method": self.activate_method, "x_axis_output_mode": self.x_axis_output_mode,
             "curve": self.curve, "deadzone_initial": self.dz_initial, "deadzone_max": self.dz_max,
             "anti_deadzone_initial": self.adz_initial, "anti_deadzone_max": self.adz_max,
-            "sensitivity_scale": self.sensitivity_scale,
+            "sensitivity_scale": self.sensitivity_scale, "activate_button": self.activate_button,
         }
 
         self.form.addRow("Activate Method", self._wrap_with_mark_revert("activate_method", self.activate_method))
-        self.form.addRow("Activate Button", self.activate_button)
+        self.form.addRow("Activate Button", self._wrap_with_mark_revert("activate_button", self.activate_button))
         self.form.addRow(
             "X-Axis Output Mode", self._wrap_with_mark_revert("x_axis_output_mode", self.x_axis_output_mode))
         self.form.addRow("Curve preset", self._wrap_with_mark_revert("curve", self.curve))
@@ -255,7 +284,10 @@ class _MotionSideWidget(CategorySideWidget):
             field.setAccessibleName(zone.capitalize())
             field.setToolTip(f"Keycode sent while motion is held toward {zone.capitalize()} (Button Binds only).")
             field.clicked.connect(lambda _checked=False, f=field: self._open_picker(f))
-            dir_form.addRow(zone.capitalize(), field)
+            setting = f"direction_{zone}"
+            self._controls[setting] = field
+            self._field_to_setting[field] = setting
+            dir_form.addRow(zone.capitalize(), self._wrap_with_mark_revert(setting, field))
             self.direction_combos[zone] = field
         self.adv_form.addRow(self.direction_box)
         outer.addWidget(adv_box)
@@ -312,7 +344,7 @@ class _MotionSideWidget(CategorySideWidget):
             return control.currentData()
         if isinstance(control, Checkbox):
             return control.isChecked()
-        return control.value()  # SegmentedControl (str) / NumberField (int)
+        return control.value()  # SegmentedControl (str) / NumberField (int) / BindingField (keycode name or None)
 
     def _set_value(self, setting: str, value) -> None:
         control = self._controls[setting]
@@ -323,10 +355,27 @@ class _MotionSideWidget(CategorySideWidget):
             control.setChecked(bool(value))
         elif isinstance(control, SegmentedControl):
             control.set_value(value)
+        elif isinstance(control, BindingField):
+            control.set_value(value, known=value is None or value in KNOWN_KEYCODES)
         else:
             control.setValue(value)
 
+    def _effective(self, setting: str, raw):
+        """The value to show in a "was X" row and to restore on revert.
+        A keycode field's `None` IS the real baseline (genuinely unbound,
+        not a missing default) -- every other field's `None` instead
+        means "never read/configured," which falls back to
+        `_SETTING_DEFAULTS` the same way `_load_fields` already does."""
+        if setting in _KEYCODE_SETTINGS:
+            return raw
+        return raw if raw is not None else _SETTING_DEFAULTS[setting]
+
     def _format_was(self, setting: str, value) -> str:
+        if setting in _KEYCODE_SETTINGS:
+            # Same wording the field itself already shows for this value
+            # (BindingField._refresh_text()) -- not a new label invented
+            # for this row.
+            return f"was {keycode_display_text(value)}"
         if setting == "activate_method":
             return f"was {_ACTIVATE_METHOD_LABELS.get(value, value)}"
         if setting == "x_axis_output_mode":
@@ -342,22 +391,42 @@ class _MotionSideWidget(CategorySideWidget):
     def _mark_touched(self, setting: str) -> None:
         if self._loading:
             return
-        self._touched.add(setting)
         control = self._controls[setting]
+        value = self._get_value(setting)
+        effective = self._effective(setting, self._loaded.get(setting))
+        path = ("motion", self.side) + _SIMPLE_SETTING_PATHS[setting]
+        if value == effective:
+            # REAL BUG, found 2026-10-26 (hardware test):
+            # manually dialing a field back to its originally-loaded
+            # value (not clicking Revert) left the mark/revert row and
+            # the draft ledger both still claiming an outstanding edit,
+            # even though Write correctly found nothing left to do.
+            # Treat landing back on the baseline as an implicit revert --
+            # including a keycode field picked back to "(Default)" when
+            # that genuinely was the loaded baseline (both sides None).
+            self._touched.discard(setting)
+            if hasattr(control, "set_edited"):
+                control.set_edited(False)
+            self._was_labels[setting].setVisible(False)
+            self._revert_buttons[setting].setVisible(False)
+            self.fieldReverted.emit(path)
+            return
+        self._touched.add(setting)
         if hasattr(control, "set_edited"):
             control.set_edited(True)
-        raw = self._loaded.get(setting)
-        effective = raw if raw is not None else _SETTING_DEFAULTS[setting]
         self._was_labels[setting].setText(self._format_was(setting, effective))
         self._was_labels[setting].setVisible(True)
         self._revert_buttons[setting].setVisible(True)
         field = MOTION_FIELDS[self.side][setting]
-        path = ("motion", self.side) + _SIMPLE_SETTING_PATHS[setting]
-        self.fieldTouched.emit(path, field, self._get_value(setting), self._profile)
+        # A keycode field's chosen None means "declared: unbind this,"
+        # Intent.CLEAR -- not Intent.PRESERVE (which DesiredDraft.touch()
+        # rejects) and not raw None, which FieldSpec.plan_operation()
+        # would not recognise as the CLEAR sentinel.
+        desired = Intent.CLEAR if (setting in _KEYCODE_SETTINGS and value is None) else value
+        self.fieldTouched.emit(path, field, desired, self._profile)
 
     def _revert_setting(self, setting: str) -> None:
-        raw = self._loaded.get(setting)
-        effective = raw if raw is not None else _SETTING_DEFAULTS[setting]
+        effective = self._effective(setting, self._loaded.get(setting))
         self._loading = True
         try:
             self._set_value(setting, effective)
@@ -387,8 +456,11 @@ class _MotionSideWidget(CategorySideWidget):
         if self._active_field is None:
             return
         self._active_field.set_value(value, known=value is None or value in KNOWN_KEYCODES)
+        setting = self._field_to_setting.get(self._active_field)
         self._active_field = None
         self._emit_changed()
+        if setting is not None:
+            self._mark_touched(setting)
 
     def _update_visibility(self) -> None:
         directional = self.output.currentData() == "directional"
@@ -439,6 +511,9 @@ class _MotionSideWidget(CategorySideWidget):
             "invert_roll": side_data.get("invert_roll"),
             "sensitivity_scale": side_data.get("sensitivity_scale"),
             "output": side_data.get("output"), "overlap_area": side_data.get("overlap_area"),
+            "activate_button": side_data.get("activate_button"),
+            "direction_up": db.get("up"), "direction_down": db.get("down"),
+            "direction_left": db.get("left"), "direction_right": db.get("right"),
         }
         for setting, control in self._controls.items():
             if hasattr(control, "set_edited"):

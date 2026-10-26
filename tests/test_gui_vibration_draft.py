@@ -108,6 +108,31 @@ class VibrationFieldTouchedTest(unittest.TestCase):
         self.assertTrue(view._was_labels["left_grip"].isHidden())
         self.assertFalse(view.sliders["left_grip"].is_edited())
 
+    def test_manually_dialing_back_to_the_loaded_value_acts_as_an_implicit_revert(self):
+        """REAL BUG, found 2026-10-26 (hardware test): bind
+        left_grip away from its loaded value, then manually move the
+        control back to that SAME value (not via the Revert button) --
+        the mark/revert row and the draft ledger both kept claiming an
+        outstanding edit even though Write correctly found nothing left
+        to do."""
+        view, state = self._view_with_state(left_grip=25)
+        view.sliders["left_grip"].set_value("75")
+        reverted = []
+        view.fieldReverted.connect(lambda path: reverted.append(path))
+
+        view.sliders["left_grip"].set_value("25")  # back to the loaded value, not Revert
+
+        # SegmentedControl's own selectionChanged fires once per button
+        # whose checked state flips within the exclusive group (the old
+        # button unchecking AND the new one checking both toggle it) --
+        # same tolerance test_moving_a_level_emits_fieldTouched... already
+        # documents for the touch side; the revert side inherits it too.
+        self.assertGreaterEqual(len(reverted), 1)
+        self.assertEqual(set(reverted), {("vibration", "left_grip")})
+        self.assertTrue(view._was_labels["left_grip"].isHidden())
+        self.assertTrue(view._revert_buttons["left_grip"].isHidden())
+        self.assertFalse(view.sliders["left_grip"].is_edited())
+
     def test_unknown_observed_value_shows_as_unknown_not_a_fabricated_number(self):
         from g7ctlc.views.vibration_view import VibrationView
 

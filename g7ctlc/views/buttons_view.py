@@ -34,13 +34,39 @@ declaration order, and doubles as the diagram's own Tab order. The
 D-pad options (Swap Left Stick and D-pad, D-Pad Diagonal Lock) sit in a
 thin row below the diagram -- page-level settings, not per-button, so
 they were never part of the picker rework.
+
+S6 (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md, Track S): the
+seventh S6 slice, and the hardest fit yet -- this page has no per-field
+widget at all (the whole point of the cuts above), so the "was X%"/
+revert row every other slice wraps a widget in has nowhere to attach.
+The picker popover is the one per-button editing surface that exists,
+so that's where `KeycodePicker`'s own new `was_text`/`revertRequested`
+row lives instead (see its module docstring) -- opening the picker for
+an already-touched button shows "was X" and a Revert button right
+there, and the diagram's existing callout text (the only other
+per-button display surface) gets an " (unwritten)" suffix so a pending
+edit is visible without opening the picker at all. The D-pad options,
+being plain checkboxes, get the ordinary wrap-the-widget row every
+other slice uses instead -- this page has two different per-field UI
+shapes because it has two genuinely different kinds of fields, not one
+mechanism invented to look wrong for the other.
+
+Deliberately not migrated: Latch/Continuous Trigger. It's `CT_FIELDS`
+in `pyg7.field_spec` (a plain `FieldSpec`), but it shares a wire record
+with the button's own binding rather than being independently
+addressable the way every other coupled-field deferral in this track
+(Vibration's Force/Sync, Sticks'/Triggers'/Motion's curve_points) has
+been -- its own pass, not assumed here. Still writes through the old
+whole-state Sync Now path only, same as before this slice.
 """
+import copy
 import logging
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QScrollArea, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
 from pyg7.buttons import BUTTON_TABLE_SLOTS, KNOWN_BUTTON_IDS
+from pyg7.field_spec import BUTTON_FIELDS, DPAD_FIELDS, Intent
 
 from ..checkbox import Checkbox
 from ..controller_diagram import ControllerDiagram
@@ -89,16 +115,31 @@ log = logging.getLogger(__name__)
 
 class ButtonsView(QWidget):
     changed = pyqtSignal()
+    # path, FieldSpec, desired value, profile -- same shape as every other
+    # S6 slice's per-field signals. `path` is `("buttons", layer, button)`
+    # for a binding or `(setting,)` for a D-pad option; MainWindow's
+    # per-profile `_buttons_draft` listens to this, not to `changed`.
+    fieldTouched = pyqtSignal(tuple, object, object, int)
+    fieldReverted = pyqtSignal(tuple)
 
     def __init__(self, palette: Palette = DARK_PALETTE, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._state = None
         self._layer = "default"
         self._active_button: str | None = None  # whichever button's picker is open
+        self._profile = 1
+        # (layer, button_id) tuples with an outstanding, unwritten touch,
+        # and the per-layer baseline (as of the last load_state()) they're
+        # compared/reverted against -- this view's own display bookkeeping,
+        # same role VibrationView's _loaded_levels/_sliders_touched play;
+        # MainWindow's DesiredDraft is the authoritative ledger.
+        self._touched: set = set()
+        self._loaded_buttons: dict = {"default": {}, "shift": {}}
 
         self._picker = KeycodePicker(self)
         self._picker.codeChosen.connect(self._on_code_chosen)
         self._picker.latchToggled.connect(self._on_latch_toggled)
+        self._picker.revertRequested.connect(self._on_revert_requested)
         self._picker.latch_checkbox.setToolTip(_LATCH_TOOLTIP)
         self._picker.latch_reason_label.setToolTip(
             "The triggers have no Continuous Trigger setting -- they're "
@@ -139,7 +180,15 @@ class ButtonsView(QWidget):
         options_row = QHBoxLayout(options_widget)
         options_row.setContentsMargins(10, 8, 10, 8)
 
+        self._dpad_controls: dict = {}
+        self._dpad_was_labels: dict = {}
+        self._dpad_revert_buttons: dict = {}
+        self._dpad_row_widgets: dict = {}
+        self._dpad_loaded: dict = {}
+        self._dpad_touched: set = set()
+
         self.swap_stick_dpad = Checkbox("Swap Left Stick and D-pad")
+        self.swap_stick_dpad.toggled.connect(lambda _v: self._mark_dpad_touched("swap_stick_dpad"))
         self.swap_stick_dpad.toggled.connect(self._on_dpad_option_changed)
         self.swap_stick_dpad.setToolTip(
             "Hardware-verified 2026-07-29: a full-blob diff of a real ON then "
@@ -147,11 +196,14 @@ class ButtonsView(QWidget):
             "the OFF blob came back byte-identical to the pre-write baseline. "
             "See pyg7/dpad_options.py."
         )
-        options_row.addWidget(self.swap_stick_dpad)
+        self._dpad_controls["swap_stick_dpad"] = self.swap_stick_dpad
+        options_row.addWidget(self._wrap_dpad_with_mark_revert("swap_stick_dpad", self.swap_stick_dpad))
 
         self.dpad_diagonal_lock = Checkbox("D-Pad Diagonal Lock")
+        self.dpad_diagonal_lock.toggled.connect(lambda _v: self._mark_dpad_touched("dpad_diagonal_lock"))
         self.dpad_diagonal_lock.toggled.connect(self._on_dpad_option_changed)
-        options_row.addWidget(self.dpad_diagonal_lock)
+        self._dpad_controls["dpad_diagonal_lock"] = self.dpad_diagonal_lock
+        options_row.addWidget(self._wrap_dpad_with_mark_revert("dpad_diagonal_lock", self.dpad_diagonal_lock))
         options_row.addStretch(1)
 
         scroll.setWidget(options_widget)
@@ -182,12 +234,18 @@ class ButtonsView(QWidget):
             else:
                 latch_reason = _LATCH_UNSUPPORTED_REASON
 
+        was_text = None
+        if (self._layer, button_id) in self._touched:
+            baseline = self._loaded_buttons.get(self._layer, {}).get(button_id)
+            was_text = f"was {keycode_display_text(baseline)}"
+
         self._picker.open_for(
             self.diagram.hotspot_for(button_id),
             value,
             known=is_known_keycode(value),
             latch=latch,
             latch_reason=latch_reason,
+            was_text=was_text,
         )
         # The picker's Latch checkbox is one shared widget now, not one
         # per button -- without this it would keep announcing "Latch" with
@@ -204,7 +262,44 @@ class ButtonsView(QWidget):
         # rather than popping the key -- 2026-09-17's real bug, see the
         # module docstring.
         layer_dict[self._active_button] = value
+        self._mark_button_touched(self._layer, self._active_button, value)
         self._refresh_diagram_bindings()
+        self.changed.emit()
+
+    def _mark_button_touched(self, layer: str, button_id: str, value: str | None) -> None:
+        path = ("buttons", layer, button_id)
+        baseline = self._loaded_buttons.get(layer, {}).get(button_id)
+        if value == baseline:
+            # REAL BUG, found 2026-10-26 (hardware test):
+            # manually picking a button back to its originally-loaded
+            # binding (not clicking Revert) left the diagram's
+            # "(unwritten)" suffix and the draft ledger both still
+            # claiming an outstanding edit, even though Write correctly
+            # found nothing left to do. Treat landing back on the
+            # baseline as an implicit revert -- including picking
+            # "(Default)" back to a genuinely-already-unbound baseline
+            # (both sides None).
+            self._touched.discard((layer, button_id))
+            self.fieldReverted.emit(path)
+            return
+        self._touched.add((layer, button_id))
+        field = BUTTON_FIELDS[layer][button_id]
+        # A chosen None means "declared: unbind this," Intent.CLEAR -- not
+        # raw None, which ButtonFieldSpec.plan_operation() wouldn't
+        # recognise as the clear sentinel (same mapping motion_view.py's
+        # keycode fields use, same reasoning).
+        desired = Intent.CLEAR if value is None else value
+        self.fieldTouched.emit(path, field, desired, self._profile)
+
+    def _on_revert_requested(self) -> None:
+        if self._active_button is None or self._state is None:
+            return
+        layer, button_id = self._layer, self._active_button
+        baseline = self._loaded_buttons.get(layer, {}).get(button_id)
+        self._state["buttons"].setdefault(layer, {})[button_id] = baseline
+        self._touched.discard((layer, button_id))
+        self._refresh_diagram_bindings()
+        self.fieldReverted.emit(("buttons", layer, button_id))
         self.changed.emit()
 
     def _on_latch_toggled(self, checked: bool) -> None:
@@ -221,6 +316,59 @@ class ButtonsView(QWidget):
         self._state["swap_stick_dpad"] = self.swap_stick_dpad.isChecked()
         self.changed.emit()
 
+    def _wrap_dpad_with_mark_revert(self, setting: str, control: QWidget) -> QWidget:
+        row_widget = QWidget()
+        row = QHBoxLayout(row_widget)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        row.addWidget(control)
+        was_label = QLabel("")
+        was_label.setProperty("role", "muted")
+        was_label.setVisible(False)
+        row.addWidget(was_label)
+        revert_btn = QPushButton("Revert")
+        revert_btn.setProperty("role", "link")
+        revert_btn.setVisible(False)
+        revert_btn.clicked.connect(lambda _c=False, s=setting: self._revert_dpad_setting(s))
+        row.addWidget(revert_btn)
+        self._dpad_was_labels[setting] = was_label
+        self._dpad_revert_buttons[setting] = revert_btn
+        self._dpad_row_widgets[setting] = row_widget
+        return row_widget
+
+    def _mark_dpad_touched(self, setting: str) -> None:
+        control = self._dpad_controls[setting]
+        value = control.isChecked()
+        baseline = bool(self._dpad_loaded.get(setting))
+        if value == baseline:
+            # Same implicit-revert fix as _mark_button_touched() above.
+            self._dpad_touched.discard(setting)
+            control.set_edited(False)
+            self._dpad_was_labels[setting].setVisible(False)
+            self._dpad_revert_buttons[setting].setVisible(False)
+            self.fieldReverted.emit((setting,))
+            return
+        self._dpad_touched.add(setting)
+        control.set_edited(True)
+        self._dpad_was_labels[setting].setText(f"was {'On' if baseline else 'Off'}")
+        self._dpad_was_labels[setting].setVisible(True)
+        self._dpad_revert_buttons[setting].setVisible(True)
+        self.fieldTouched.emit((setting,), DPAD_FIELDS[setting], value, self._profile)
+
+    def _revert_dpad_setting(self, setting: str) -> None:
+        effective = bool(self._dpad_loaded.get(setting))
+        control = self._dpad_controls[setting]
+        control.blockSignals(True)
+        control.setChecked(effective)
+        control.blockSignals(False)
+        self._dpad_touched.discard(setting)
+        control.set_edited(False)
+        self._dpad_was_labels[setting].setVisible(False)
+        self._dpad_revert_buttons[setting].setVisible(False)
+        self._state[setting] = effective
+        self.fieldReverted.emit((setting,))
+        self.changed.emit()
+
     # -- public API -------------------------------------------------------
 
     def set_palette(self, palette: Palette) -> None:
@@ -234,8 +382,12 @@ class ButtonsView(QWidget):
         self._layer = layer
         shift = layer == "shift"
         self.options_separator.setVisible(not shift)
-        self.swap_stick_dpad.setVisible(not shift)
-        self.dpad_diagonal_lock.setVisible(not shift)
+        # Hide the whole wrapped row, not just the checkbox -- see
+        # sticks_view.py's identical fix/comment for why hiding only the
+        # raw control would leave its "was X"/revert row showing emptily
+        # beside it.
+        self._dpad_row_widgets["swap_stick_dpad"].setVisible(not shift)
+        self._dpad_row_widgets["dpad_diagonal_lock"].setVisible(not shift)
         self._refresh_diagram_bindings()
 
     def _refresh_diagram_bindings(self) -> None:
@@ -243,17 +395,32 @@ class ButtonsView(QWidget):
         `keycode_display_text()` is the same read-only wording Overview's
         own callouts and the old Shift-reference column used -- a callout
         is inherently read-only now, there's no editable field it could
-        drift from."""
+        drift from.
+
+        S6: a touched-but-unwritten button gets an " (unwritten)" suffix
+        -- including one whose desired value is None (a pending unbind),
+        which the old `value is not None` filter alone would hide
+        entirely, making a pending unbind look identical to an
+        already-synced empty slot. KeycodePicker's own "was X"/Revert row
+        is the only OTHER place this state is visible, so this suffix is
+        what lets a pending edit be seen without opening every picker."""
         layer_values = (self._state or {}).get("buttons", {}).get(self._layer, {})
-        bindings = {
-            button_id: keycode_display_text(value)
-            for button_id, value in layer_values.items()
-            if value is not None
-        }
+        bindings = {}
+        for button_id, value in layer_values.items():
+            touched = (self._layer, button_id) in self._touched
+            if value is None and not touched:
+                continue
+            text = keycode_display_text(value)
+            if touched:
+                text += " (unwritten)"
+            bindings[button_id] = text
         self.diagram.set_bindings(bindings)
 
     def load_state(self, state: dict) -> None:
         self._state = state
+        self._profile = state.get("controller_slot") or 1
+        self._touched = set()
+        self._loaded_buttons = copy.deepcopy(state.get("buttons", {}))
         self._refresh_diagram_bindings()
         self.swap_stick_dpad.blockSignals(True)
         self.swap_stick_dpad.setChecked(bool(state.get("swap_stick_dpad")))
@@ -261,3 +428,12 @@ class ButtonsView(QWidget):
         self.dpad_diagonal_lock.blockSignals(True)
         self.dpad_diagonal_lock.setChecked(bool(state.get("dpad_diagonal_lock")))
         self.dpad_diagonal_lock.blockSignals(False)
+        self._dpad_touched = set()
+        self._dpad_loaded = {
+            "swap_stick_dpad": state.get("swap_stick_dpad"),
+            "dpad_diagonal_lock": state.get("dpad_diagonal_lock"),
+        }
+        for setting, control in self._dpad_controls.items():
+            control.set_edited(False)
+            self._dpad_was_labels[setting].setVisible(False)
+            self._dpad_revert_buttons[setting].setVisible(False)

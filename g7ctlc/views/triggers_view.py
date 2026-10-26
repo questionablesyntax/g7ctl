@@ -240,17 +240,31 @@ class _TriggerSideWidget(CategorySideWidget):
     def _mark_touched(self, setting: str) -> None:
         if self._loading:
             return
-        self._touched.add(setting)
         control = self._controls[setting]
-        control.set_edited(True)
+        value = control.value()
         raw = self._loaded.get(setting)
         effective = raw if raw is not None else _SETTING_DEFAULTS[setting]
+        path = ("triggers", self.side) + _SIMPLE_SETTING_PATHS[setting]
+        if value == effective:
+            # REAL BUG, found 2026-10-26 (hardware test):
+            # manually dialing a field back to its originally-loaded
+            # value (not clicking Revert) left the mark/revert row and
+            # the draft ledger both still claiming an outstanding edit,
+            # even though Write correctly found nothing left to do.
+            # Treat landing back on the baseline as an implicit revert.
+            self._touched.discard(setting)
+            control.set_edited(False)
+            self._was_labels[setting].setVisible(False)
+            self._revert_buttons[setting].setVisible(False)
+            self.fieldReverted.emit(path)
+            return
+        self._touched.add(setting)
+        control.set_edited(True)
         self._was_labels[setting].setText(self._format_was(setting, effective))
         self._was_labels[setting].setVisible(True)
         self._revert_buttons[setting].setVisible(True)
         field = TRIGGER_FIELDS[self.side][setting]
-        path = ("triggers", self.side) + _SIMPLE_SETTING_PATHS[setting]
-        self.fieldTouched.emit(path, field, control.value(), self._profile)
+        self.fieldTouched.emit(path, field, value, self._profile)
 
     def _revert_setting(self, setting: str) -> None:
         raw = self._loaded.get(setting)

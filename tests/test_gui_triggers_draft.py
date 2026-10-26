@@ -148,6 +148,21 @@ class TriggersFieldTouchedTest(unittest.TestCase):
         self.assertFalse(side.curve.is_edited())
         self.assertTrue(side._was_labels["curve"].isHidden())
 
+    def test_manually_dialing_back_to_the_loaded_value_acts_as_an_implicit_revert(self):
+        """Same real bug as vibration_view.py's identical test -- see its
+        own comment."""
+        view, state = self._view_with_state("left")
+        side = view.sides["left"]
+        side.dz_initial.setValue(40)
+        reverted = []
+        view.fieldReverted.connect(lambda path: reverted.append(path))
+
+        side.dz_initial.setValue(0)  # back to the loaded value, not Revert
+
+        self.assertEqual(reverted, [("triggers", "left", "deadzone", "initial")])
+        self.assertTrue(side._was_labels["deadzone_initial"].isHidden())
+        self.assertFalse(side.dz_initial.is_edited())
+
     def test_touching_left_side_does_not_touch_right_side(self):
         view, state = self._view_with_state("left")
         view.sides["left"].hair_trigger_mode.set_value("fixed")

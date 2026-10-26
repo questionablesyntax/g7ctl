@@ -156,5 +156,69 @@ class MotionFastPathTest(unittest.TestCase):
         self.assertEqual(window._motion_draft.edit_count, 0)
 
 
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class MotionKeycodeFastPathTest(unittest.TestCase):
+    """activate_button through the real fast path, including an
+    Intent.CLEAR (unbind) write -- the first keycode field exercised end
+    to end through MainWindow's draft/execute wiring."""
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+
+        window = MainWindow()
+        window._state["controller_slot"] = 2
+        window._state.setdefault("motion", {"aim": {}, "tilt": {}})
+        window._state["motion"]["aim"]["activate_button"] = "native_a"
+        window._state_confirmed = True
+        window._connection_state = "connected"
+        window._reset_motion_draft()
+        window.motion_view.load_state(window._state)
+        return window
+
+    def test_picking_a_clear_emits_execute_requested_with_Intent_CLEAR(self):
+        from pyg7.field_spec import Intent
+
+        window = self._window()
+        side = window.motion_view.sides["aim"]
+        side._open_picker(side.activate_button)
+        side._on_code_chosen(None)  # the picker's own "(Default)" choice
+        calls = []
+        window.execute_requested.connect(lambda intents, baseline, gen: calls.append((intents, baseline, gen)))
+
+        window._on_write_motion_clicked()
+
+        self.assertEqual(len(calls), 1)
+        intents, baseline, _gen = calls[0]
+        self.assertEqual(intents[0].path, ("motion", "aim", "activate_button"))
+        self.assertIs(intents[0].desired, Intent.CLEAR)
+        self.assertEqual(baseline["motion"]["aim"]["activate_button"], "native_a")
+
+    def test_successful_clear_write_updates_state_and_view_to_unbound(self):
+        from pyg7.field_spec import Intent
+
+        window = self._window()
+        side = window.motion_view.sides["aim"]
+        side._open_picker(side.activate_button)
+        side._on_code_chosen(None)
+        window._on_write_motion_clicked()
+
+        outcome = FieldOutcome(
+            ApprovedIntent(("motion", "aim", "activate_button"), Intent.CLEAR,
+                           MOTION_FIELDS["aim"]["activate_button"], profile=2),
+            Classification.CLEAN, baseline_value=None, fresh_value="native_a")
+        result = ExecutionResult(job_id="t", executed=(outcome,))
+        rb = read_back(result, post_write_state={"motion": {"aim": {"activate_button": None}}})
+        window.set_execute_finished(True, "Written.", rb)
+
+        self.assertEqual(window._motion_draft.edit_count, 0)
+        self.assertIsNone(window._state["motion"]["aim"]["activate_button"])
+        self.assertIsNone(side.activate_button.value())
+
+
 if __name__ == "__main__":
     unittest.main()

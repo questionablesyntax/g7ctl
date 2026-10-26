@@ -192,6 +192,21 @@ class SticksFieldTouchedTest(unittest.TestCase):
         view.sides["left"].trajectory.set_value("raw")
         self.assertFalse(view.sides["right"].trajectory.is_edited())
 
+    def test_manually_dialing_back_to_the_loaded_value_acts_as_an_implicit_revert(self):
+        """Same real bug as vibration_view.py's identical test -- see its
+        own comment."""
+        view, state = self._view_with_state("left")
+        side = view.sides["left"]
+        side.dz_initial.setValue(40)
+        reverted = []
+        view.fieldReverted.connect(lambda path: reverted.append(path))
+
+        side.dz_initial.setValue(0)  # back to the loaded value, not Revert
+
+        self.assertEqual(reverted, [("sticks", "left", "deadzone", "initial")])
+        self.assertTrue(side._was_labels["deadzone_initial"].isHidden())
+        self.assertFalse(side.dz_initial.is_edited())
+
 
 if __name__ == "__main__":
     unittest.main()

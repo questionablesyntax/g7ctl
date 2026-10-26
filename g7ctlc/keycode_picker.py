@@ -20,6 +20,16 @@ binding is already being edited rather than keep a second, separate
 surface for it). Sticks' and Motion's own direction pickers never pass
 either, so they keep getting no Latch row at all -- it was never
 applicable there.
+
+The optional "was X"/Revert row (`open_for`'s `was_text`), added for
+Buttons' own S6 slice (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md,
+Track S): the same "second optional row, shown conditionally" shape the
+Latch row already established, not a new mechanism. Buttons has no
+per-button widget to attach a "was X%" row to the way every other
+page's form-row fields do (see buttons_view.py's own module docstring
+for why that's a deliberate, hard-won design decision) -- this popover
+is the one per-button editing surface that exists, so the touch/revert
+affordance lives here instead.
 """
 
 from __future__ import annotations
@@ -31,6 +41,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -52,6 +63,12 @@ class KeycodePicker(QWidget):
     # may want to toggle it and still pick a different key, or vice versa,
     # in the same visit.
     latchToggled = pyqtSignal(bool)
+    # Unlike codeChosen, this carries no value -- the caller already knows
+    # which field is open (the same thing codeChosen's own caller tracks)
+    # and what its own loaded baseline is. Closes the popover, same as
+    # choosing a code (not latchToggled's "stays open" behaviour): a revert
+    # is a complete, decided edit, not a value you'd keep adjusting.
+    revertRequested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent, Qt.WindowType.Popup)
@@ -67,6 +84,20 @@ class KeycodePicker(QWidget):
         self.search.textChanged.connect(self._apply_filter)
         self.search.installEventFilter(self)
         layout.addWidget(self.search)
+
+        self.was_row = QWidget(self)
+        was_row_layout = QHBoxLayout(self.was_row)
+        was_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.was_label = QLabel(self.was_row)
+        self.was_label.setProperty("role", "muted")
+        was_row_layout.addWidget(self.was_label)
+        self.revert_btn = QPushButton("Revert", self.was_row)
+        self.revert_btn.setProperty("role", "link")
+        self.revert_btn.clicked.connect(self._on_revert_clicked)
+        was_row_layout.addWidget(self.revert_btn)
+        was_row_layout.addStretch(1)
+        layout.addWidget(self.was_row)
+        self.was_row.setVisible(False)
 
         self.latch_row = QWidget(self)
         latch_row_layout = QHBoxLayout(self.latch_row)
@@ -152,6 +183,17 @@ class KeycodePicker(QWidget):
         query = getattr(self, "_empty_query", None)
         return f'No key matches "{query}".' if query else None
 
+    # -- was/revert row -----------------------------------------------------
+
+    def _on_revert_clicked(self) -> None:
+        self.revertRequested.emit()
+        self.close()
+
+    def _set_was_row(self, was_text: str | None) -> None:
+        self.was_row.setVisible(was_text is not None)
+        if was_text is not None:
+            self.was_label.setText(was_text)
+
     # -- latch row ----------------------------------------------------------
 
     def _set_latch_row(self, latch: bool | None, latch_reason: str | None) -> None:
@@ -198,6 +240,7 @@ class KeycodePicker(QWidget):
         known: bool,
         latch: bool | None = None,
         latch_reason: str | None = None,
+        was_text: str | None = None,
     ) -> None:
         """Show the popover anchored below `anchor`. `known=False` means
         `current_value` isn't in `KNOWN_KEYCODES` -- it gets its own
@@ -210,9 +253,16 @@ class KeycodePicker(QWidget):
         instead of a checkbox -- LT/RT, which have no Latch byte at all.
         Passing `latch` (a bool) shows a real, checked-to-match checkbox;
         toggling it emits `latchToggled`, not `codeChosen` -- the two are
-        independent edits that happen to share one popover now."""
+        independent edits that happen to share one popover now.
+
+        `was_text` is `None` by default, which hides the was/Revert row --
+        the caller passes a real string (already formatted, e.g.
+        `keycode_display_text()`'s own wording) only when the field being
+        opened has an outstanding, unwritten touch; this widget has no
+        opinion of its own on what "touched" means or how to word it."""
         self._current_value = current_value
         self._raw_value = current_value if not known and current_value is not None else None
+        self._set_was_row(was_text)
         self._set_latch_row(latch, latch_reason)
         self.search.clear()
         self._populate()

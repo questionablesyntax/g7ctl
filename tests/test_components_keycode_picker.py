@@ -258,5 +258,79 @@ class KeycodePickerSizingTest(unittest.TestCase):
         self.assertEqual(picker.width(), anchor.width())
 
 
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class KeycodePickerWasRevertRowTest(unittest.TestCase):
+    """The was/Revert row (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md,
+    Track S -- Buttons' own slice): same "second optional row" shape the
+    Latch row already established. Buttons-specific wiring (what text
+    gets passed, what a real revert restores) lives in
+    test_gui_views.py's ButtonsView tests instead, same split Latch's
+    own tests already use."""
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_was_row_hidden_by_default(self):
+        from PyQt6.QtWidgets import QPushButton
+
+        from g7ctlc.keycode_picker import KeycodePicker
+
+        anchor = QPushButton("Pick")
+        picker = KeycodePicker()
+        picker.open_for(anchor, "native_a", known=True)
+        self.assertTrue(picker.was_row.isHidden())
+
+    def test_was_row_shows_the_given_text(self):
+        from PyQt6.QtWidgets import QPushButton
+
+        from g7ctlc.keycode_picker import KeycodePicker
+
+        anchor = QPushButton("Pick")
+        picker = KeycodePicker()
+        picker.open_for(anchor, "native_b", known=True, was_text="was A")
+        self.assertFalse(picker.was_row.isHidden())
+        self.assertEqual(picker.was_label.text(), "was A")
+
+    def test_reopening_without_was_text_hides_the_row_again(self):
+        from PyQt6.QtWidgets import QPushButton
+
+        from g7ctlc.keycode_picker import KeycodePicker
+
+        anchor = QPushButton("Pick")
+        picker = KeycodePicker()
+        picker.open_for(anchor, "native_b", known=True, was_text="was A")
+        picker.open_for(anchor, "native_c", known=True)
+        self.assertTrue(picker.was_row.isHidden())
+
+    def test_clicking_revert_emits_revertRequested_and_closes(self):
+        from PyQt6.QtWidgets import QPushButton
+
+        from g7ctlc.keycode_picker import KeycodePicker
+
+        anchor = QPushButton("Pick")
+        picker = KeycodePicker()
+        picker.open_for(anchor, "native_b", known=True, was_text="was A")
+        requests = []
+        picker.revertRequested.connect(lambda: requests.append(True))
+        picker.revert_btn.click()
+        self.assertEqual(requests, [True])
+        self.assertTrue(picker.isHidden())
+
+    def test_clicking_revert_does_not_emit_codeChosen(self):
+        from PyQt6.QtWidgets import QPushButton
+
+        from g7ctlc.keycode_picker import KeycodePicker
+
+        anchor = QPushButton("Pick")
+        picker = KeycodePicker()
+        picker.open_for(anchor, "native_b", known=True, was_text="was A")
+        chosen = []
+        picker.codeChosen.connect(chosen.append)
+        picker.revert_btn.click()
+        self.assertEqual(chosen, [])
+
+
 if __name__ == "__main__":
     unittest.main()
