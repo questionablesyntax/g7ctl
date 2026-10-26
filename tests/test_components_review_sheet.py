@@ -12,7 +12,7 @@ try:
 except ImportError:  # pragma: no cover - depends on the environment
     QApplication = None
 
-from pyg7.field_spec import REPORT_RATE_FIELD, VIBRATION_LEVEL_FIELDS, Intent
+from pyg7.field_spec import DOCK_FIELDS, REPORT_RATE_FIELD, VIBRATION_LEVEL_FIELDS, Intent
 from pyg7.workflow import ApprovedIntent, Classification, DraftRevision, prepare
 
 
@@ -265,6 +265,92 @@ class ReviewSheetRowRevertTest(unittest.TestCase):
         sheet._row_widgets[("report_rate_hz",)][3].click()
 
         self.assertTrue(sheet._conflict_notice.isHidden())
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class ScopeForPathTest(unittest.TestCase):
+    """scope_for_path() -- S7's path->scope classifier, used for
+    ReviewSheet's own row grouping and MainWindow's multi-scope write
+    dispatch alike."""
+
+    def test_every_scope_shape(self):
+        from g7ctlc.review_sheet import scope_for_path
+
+        self.assertEqual(scope_for_path(("vibration", "left_grip")), "vibration")
+        self.assertEqual(scope_for_path(("dock_led_brightness",)), "dock")
+        self.assertEqual(scope_for_path(("dock_auto_on_off",)), "dock")
+        self.assertEqual(scope_for_path(("triggers", "left", "deadzone", "initial")), "triggers")
+        self.assertEqual(scope_for_path(("sticks", "right", "trajectory")), "sticks")
+        self.assertEqual(scope_for_path(("motion", "aim", "activate_button")), "motion")
+        self.assertEqual(scope_for_path(("buttons", "default", "a")), "buttons")
+        self.assertEqual(scope_for_path(("dpad_diagonal_lock",)), "buttons")
+        self.assertEqual(scope_for_path(("swap_stick_dpad",)), "buttons")
+        self.assertEqual(scope_for_path(("report_rate_hz",)), "profile_settings")
+
+    def test_unknown_or_empty_path_is_none(self):
+        from g7ctlc.review_sheet import scope_for_path
+
+        self.assertIsNone(scope_for_path(("something_unrecognised",)))
+        self.assertIsNone(scope_for_path(()))
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class ReviewSheetGroupingTest(unittest.TestCase):
+    """S7's "Write all changes" can batch rows from several scopes into
+    one job -- ReviewSheet groups them under per-scope headers so a
+    reader can tell which page each row came from. A single-scope job
+    (still the overwhelming common case) renders exactly as before."""
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        from g7ctlc.fonts import load_fonts
+        from g7ctlc.palette import DARK_PALETTE
+
+        self.palette = DARK_PALETTE
+        self.font_load = load_fonts()
+
+    def _two_scope_job(self):
+        intents = [
+            ApprovedIntent(("vibration", "left_grip"), 75, VIBRATION_LEVEL_FIELDS["left_grip"], profile=2),
+            ApprovedIntent(("dock_led_brightness",), 100, DOCK_FIELDS["dock_led_brightness"], profile=1),
+        ]
+        fresh = {"vibration": {"left_grip": 25}, "dock_led_brightness": 25}
+        return prepare("t", DraftRevision("t", 1), 1, intents, baseline_state=fresh, fresh_state=fresh)
+
+    def test_a_single_scope_job_gets_no_section_headers(self):
+        from g7ctlc.review_sheet import ReviewSheet
+
+        job = _report_rate_job()
+        sheet = ReviewSheet(job, "Profile 2", self.palette, self.font_load)
+        self.assertEqual(sheet._section_widgets, {})
+
+    def test_a_two_scope_job_gets_one_header_per_scope(self):
+        from g7ctlc.review_sheet import ReviewSheet
+
+        sheet = ReviewSheet(self._two_scope_job(), "Vibration and Dock", self.palette, self.font_load)
+        self.assertEqual(set(sheet._section_widgets), {"vibration", "dock"})
+        self.assertEqual(sheet._section_widgets["vibration"].text(), "Vibration")
+        self.assertEqual(sheet._section_widgets["dock"].text(), "Dock (shared by every profile)")
+
+    def test_reverting_every_row_of_a_section_hides_its_header(self):
+        from g7ctlc.review_sheet import ReviewSheet
+
+        sheet = ReviewSheet(self._two_scope_job(), "Vibration and Dock", self.palette, self.font_load)
+        dock_header = sheet._section_widgets["dock"]
+        vibration_header = sheet._section_widgets["vibration"]
+        self.assertFalse(dock_header.isHidden())  # sanity
+
+        sheet._row_widgets[("dock_led_brightness",)][3].click()
+
+        self.assertTrue(dock_header.isHidden())
+        self.assertNotIn("dock", sheet._section_widgets)
+        # The other section is untouched.
+        self.assertFalse(vibration_header.isHidden())
+        self.assertIn("vibration", sheet._section_widgets)
 
 
 if __name__ == "__main__":

@@ -20,20 +20,22 @@ own words: "Escape = Keep editing").
 **Per-row revert** (added 2026-10-26, IMPLEMENTATION-PLAN.md's "Not
 started" list item 3 -- CRITIC.md #12's own mockup shows one): each
 row's own small Revert link emits `rowReverted(path)` so the CALLER can
-revert that field for real, on whichever page actually owns it -- this
-class has no path-to-view dispatch of its own, and doesn't need one,
-since a single-scope sheet's caller already knows which one view that
-is (`set_needs_review()`'s own `self._pending_execute_scope`). The row
-is then dropped from `self.job` itself (`dataclasses.replace()` with a
-narrower `outcomes` tuple -- `execute()` only ever reads `job.outcomes`/
-`job.writable`, both computed properties, so this is a real, sound
-narrowing, not a cosmetic one) and hidden from the grid; **Write N
-changes** re-labels itself to match what's actually left and, reaching
-zero, disables itself with a "Nothing left to write" notice rather than
-auto-closing -- CRITIC.md #12's own complaint about the review sheet
-"clos[ing] itself under the pointer when the last row is reverted".
-Closing is still one click away (**Keep editing**), just never a
-surprise.
+revert that field for real, on whichever page actually owns it. This
+class has no path-to-view dispatch of its own -- the caller resolves
+that itself, via `scope_for_path()` below (added alongside S7's
+cross-scope batching, so a caller handling a sheet whose rows span more
+than one page can dispatch each reverted row to the right one without
+needing to track "which scope is this sheet for" as a single value).
+The row is then dropped from `self.job` itself (`dataclasses.replace()`
+with a narrower `outcomes` tuple -- `execute()` only ever reads
+`job.outcomes`/`job.writable`, both computed properties, so this is a
+real, sound narrowing, not a cosmetic one) and hidden from the grid;
+**Write N changes** re-labels itself to match what's actually left and,
+reaching zero, disables itself with a "Nothing left to write" notice
+rather than auto-closing -- CRITIC.md #12's own complaint about the
+review sheet "clos[ing] itself under the pointer when the last row is
+reverted". Closing is still one click away (**Keep editing**), just
+never a surprise.
 
 **Write N changes** writes every remaining row, `force_conflicts=True`
 -- reaching this sheet at all means the user has already SEEN any
@@ -42,6 +44,19 @@ informed consent `execute()`'s own `force_conflicts` flag exists to
 require. Keep editing closes the sheet with nothing written; any field
 never reverted in-sheet stays exactly as drafted, revertable the normal
 way on its own page.
+
+**Scope grouping** (added 2026-10-26, S7 -- "Mixed-scope integration"):
+when a job's rows span more than one scope (a single "Write all N
+changes" batch can now touch Vibration, Dock, Triggers, etc. all at
+once -- `MainWindow._on_write_all_clicked()`), rows are grouped under a
+per-scope section heading instead of one flat list, so a reader can
+tell which page each row came from. A job whose rows all belong to one
+scope -- still the overwhelming common case, since escalation itself
+has no "more than one scope" trigger of its own (dropped the same day
+it was proposed: the read was that the sheet is a soft-
+error surface, "something's weird, take a look," not a toll gate on
+touching more than one page) -- renders exactly as before, no grouping
+visible at all.
 """
 from __future__ import annotations
 
@@ -67,6 +82,52 @@ from .fonts import FontLoadResult, font_for
 from .modal_overlay import ModalOverlayBase
 from .palette import Palette
 from .widgets import keycode_display_text
+
+# Human scope labels -- the one place a scope string needs a
+# reader-facing name rather than a dict key. Shared by ReviewSheet's own
+# subtitle/section headers and MainWindow's write-action row/tooltips.
+SCOPE_LABELS = {
+    "vibration": "Vibration", "dock": "Dock (shared by every profile)",
+    "triggers": "Triggers", "sticks": "Sticks", "motion": "Motion",
+    "buttons": "Buttons", "profile_settings": "Profile Settings",
+}
+
+
+def scope_for_path(path: tuple) -> str | None:
+    """Which S6 scope (one of MainWindow's own per-page `DesiredDraft`
+    ledgers) a field path belongs to. Needed wherever code must dispatch
+    on a bare path without already knowing which page it came from --
+    this sheet's own row grouping, and (since S7's "Write all changes"
+    can batch several scopes into one job) MainWindow's per-row revert
+    and multi-scope write-finish dispatch.
+
+    Mirrors the exact path shapes each view's own `revert_path()`
+    already guards on -- kept in sync with those by hand, same as the
+    `_SETTING_FOR_SUFFIX`-style reverse maps in triggers_view.py/
+    sticks_view.py/motion_view.py; there is no single registry a path's
+    owning scope could be looked up from instead. Returns `None` for a
+    path that doesn't match anything -- callers treat that as "nothing
+    to do" rather than raising, same as every `revert_path()`'s own
+    not-found case.
+    """
+    if not path:
+        return None
+    head = path[0]
+    if head == "vibration":
+        return "vibration"
+    if head in ("dock_led_brightness", "dock_auto_on_off"):
+        return "dock"
+    if head == "triggers":
+        return "triggers"
+    if head == "sticks":
+        return "sticks"
+    if head == "motion":
+        return "motion"
+    if head == "buttons" or head in ("dpad_diagonal_lock", "swap_stick_dpad"):
+        return "buttons"
+    if head == "report_rate_hz":
+        return "profile_settings"
+    return None
 
 
 def format_field_label(path: tuple) -> str:
@@ -130,6 +191,8 @@ class ReviewSheet(ModalOverlayBase):
         self.job = job
         self._font_load = font_load
         self._row_widgets: dict[tuple, list[QWidget]] = {}
+        self._section_widgets: dict[str, QWidget] = {}
+        self._row_scope: dict[tuple, str | None] = {}
 
         self._title_label = QLabel(self)
         self._title_label.setFont(font_for("title", font_load))
@@ -163,8 +226,24 @@ class ReviewSheet(ModalOverlayBase):
             grid.addWidget(header, 0, header_col)
 
         self._grid_row = 1
+        # Group by scope only when more than one is actually present --
+        # a flat list (today's overwhelmingly common case, see the class
+        # docstring) gets no section headers at all, unchanged from
+        # before S7.
+        scopes_present: list[str | None] = []
         for outcome in job.writable:
-            self._add_row(rows_widget, outcome)
+            s = scope_for_path(outcome.intent.path)
+            if s not in scopes_present:
+                scopes_present.append(s)
+        if len(scopes_present) > 1:
+            for scope in scopes_present:
+                self._add_section_header(rows_widget, scope)
+                for outcome in job.writable:
+                    if scope_for_path(outcome.intent.path) == scope:
+                        self._add_row(rows_widget, outcome, scope=scope)
+        else:
+            for outcome in job.writable:
+                self._add_row(rows_widget, outcome, scope=scopes_present[0] if scopes_present else None)
 
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
@@ -211,7 +290,15 @@ class ReviewSheet(ModalOverlayBase):
         self.setMinimumWidth(520)
         self._refresh_header()
 
-    def _add_row(self, rows_widget: QWidget, outcome) -> None:
+    def _add_section_header(self, rows_widget: QWidget, scope: str | None) -> None:
+        label = QLabel(SCOPE_LABELS.get(scope, scope or "Other"), rows_widget)
+        label.setFont(font_for("label", self._font_load))
+        label.setProperty("role", "secondary")
+        self._grid.addWidget(label, self._grid_row, 0, 1, 4)
+        self._section_widgets[scope] = label
+        self._grid_row += 1
+
+    def _add_row(self, rows_widget: QWidget, outcome, *, scope: str | None = None) -> None:
         font_load = self._font_load
         grid = self._grid
         row = self._grid_row
@@ -256,6 +343,7 @@ class ReviewSheet(ModalOverlayBase):
             row += 1
 
         self._row_widgets[path] = widgets
+        self._row_scope[path] = scope
         self._grid_row = row
 
     def _on_row_revert_clicked(self, path: tuple) -> None:
@@ -265,6 +353,9 @@ class ReviewSheet(ModalOverlayBase):
         field; this class only ever reflects what's left to write."""
         for widget in self._row_widgets.pop(path, ()):
             widget.setVisible(False)
+        scope = self._row_scope.pop(path, None)
+        if scope in self._section_widgets and scope not in self._row_scope.values():
+            self._section_widgets.pop(scope).setVisible(False)
         self.job = dataclasses.replace(
             self.job, outcomes=tuple(o for o in self.job.outcomes if o.intent.path != path))
         self._refresh_header()

@@ -47,7 +47,7 @@ from .modal_overlay import ModalOverlayBase
 from .ownership_bar import OwnershipBar
 from .qss import generate_stylesheet
 from .rail import PROFILE_PAGE_KEYS, SHARED_PAGE_KEYS, Rail
-from .review_sheet import ReviewSheet
+from .review_sheet import SCOPE_LABELS, ReviewSheet, scope_for_path
 from .segmented_control import SegmentedControl
 from .theme_runtime import ThemeController
 from .views.buttons_view import ButtonsView
@@ -82,13 +82,25 @@ _LEGACY_PROFILES_DIR = (
 # alt-tab-and-back from costing a full release/reconnect cycle.
 _AUTO_RELEASE_DELAY_MS = 400
 
-# Human scope labels for ReviewSheet's own subtitle line -- the one
-# place a scope string needs a reader-facing name rather than a dict key.
-_SCOPE_LABELS = {
-    "vibration": "Vibration", "dock": "Dock (shared by every profile)",
-    "triggers": "Triggers", "sticks": "Sticks", "motion": "Motion",
-    "buttons": "Buttons", "profile_settings": "Profile Settings",
-}
+# S7: the fixed order every "which scopes are dirty" sweep walks in --
+# _dirty_scopes(), the "Write all changes" batch, the on-failure refresh
+# in set_execute_finished(). Matches the write-action row's own left-to-
+# right order so "Write all" reads the same scopes in the same sequence
+# a user would see if they wrote each one by hand.
+_SCOPE_ORDER = ("vibration", "dock", "triggers", "sticks", "motion", "buttons", "profile_settings")
+
+
+def _combined_scope_label(scopes: list) -> str:
+    """SCOPE_LABELS joined into one reader-facing sentence fragment for
+    ReviewSheet's subtitle -- "Vibration", "Vibration and Dock",
+    "Vibration, Dock, and Triggers". A single scope is the overwhelming
+    common case and reads exactly as it always has."""
+    names = [SCOPE_LABELS.get(s, s) for s in scopes]
+    if len(names) <= 1:
+        return names[0] if names else "This change"
+    if len(names) == 2:
+        return f"{names[0]} and {names[1]}"
+    return ", ".join(names[:-1]) + f", and {names[-1]}"
 
 
 class MainWindow(QMainWindow):
@@ -210,6 +222,13 @@ class MainWindow(QMainWindow):
         # needs to know which draft's bookkeeping to update when the
         # response comes back.
         self._pending_execute_scope: Optional[str] = None
+        # S7's "Write all changes": set instead of self._pending_execute_
+        # scope (never both) when a single write batches more than one
+        # scope's draft together. Every reader of self._pending_execute_
+        # scope goes through _pending_scopes() below, which falls back to
+        # [self._pending_execute_scope] when this is None -- one scope or
+        # several, same dispatch code either way.
+        self._pending_execute_scopes: Optional[list] = None
         # Bumped by DeviceWatcher.connection_generation_changed every time a
         # connection is freshly (re-)established -- captured into any
         # execute_requested emission so _do_execute() can refuse to write
@@ -688,6 +707,24 @@ class MainWindow(QMainWindow):
         )
         self.profile_write_btn.clicked.connect(self._on_write_profile_clicked)
         row.addWidget(self.profile_write_btn)
+        # S7: a combined write across every scope with an outstanding
+        # draft, shown only once a second scope goes dirty -- with just
+        # one, the per-scope button above already covers it. No scope-
+        # count escalation rule of its own; see _on_write_all_clicked()'s
+        # own docstring.
+        self.write_all_btn = QPushButton("Write all changes")
+        self.write_all_btn.setProperty("role", "write")
+        self.write_all_btn.setVisible(False)
+        self.write_all_btn.setToolTip(
+            "Write every changed field across every page in one go -- "
+            "re-reads the controller first and refuses if something "
+            "else changed there since. Opens a review sheet exactly "
+            "like any other write would, for a real conflict or more "
+            "than three rows total -- never just for spanning more "
+            "than one page."
+        )
+        self.write_all_btn.clicked.connect(self._on_write_all_clicked)
+        row.addWidget(self.write_all_btn)
         self.sync_btn = QPushButton("Sync Now")
         self.sync_btn.setProperty("role", "write")
         self.sync_btn.setEnabled(False)
@@ -1046,6 +1083,7 @@ class MainWindow(QMainWindow):
         self.vibration_discard_btn.setVisible(count > 0)
         self.vibration_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
         self.vibration_discard_btn.setEnabled(count > 0 and not self._syncing)
+        self._refresh_write_all_btn()
 
     def _reset_vibration_draft(self, imported: bool = False) -> None:
         """A fresh ObservedSnapshot -- a real Read from Device, an Import,
@@ -1087,6 +1125,7 @@ class MainWindow(QMainWindow):
         self.dock_discard_btn.setVisible(count > 0)
         self.dock_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
         self.dock_discard_btn.setEnabled(count > 0 and not self._syncing)
+        self._refresh_write_all_btn()
 
     def _reset_dock_draft(self, imported: bool = False) -> None:
         """Same shape as `_reset_vibration_draft()`, but called from fewer
@@ -1118,6 +1157,7 @@ class MainWindow(QMainWindow):
         self.triggers_discard_btn.setVisible(count > 0)
         self.triggers_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
         self.triggers_discard_btn.setEnabled(count > 0 and not self._syncing)
+        self._refresh_write_all_btn()
 
     def _reset_triggers_draft(self, imported: bool = False) -> None:
         """Same shape/reasoning as `_reset_vibration_draft()` -- Triggers
@@ -1145,6 +1185,7 @@ class MainWindow(QMainWindow):
         self.sticks_discard_btn.setVisible(count > 0)
         self.sticks_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
         self.sticks_discard_btn.setEnabled(count > 0 and not self._syncing)
+        self._refresh_write_all_btn()
 
     def _reset_sticks_draft(self, imported: bool = False) -> None:
         """Same shape/reasoning as `_reset_triggers_draft()` -- Sticks is
@@ -1171,6 +1212,7 @@ class MainWindow(QMainWindow):
         self.motion_discard_btn.setVisible(count > 0)
         self.motion_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
         self.motion_discard_btn.setEnabled(count > 0 and not self._syncing)
+        self._refresh_write_all_btn()
 
     def _reset_motion_draft(self, imported: bool = False) -> None:
         """Same shape/reasoning as `_reset_sticks_draft()` -- Motion is
@@ -1197,6 +1239,7 @@ class MainWindow(QMainWindow):
         self.buttons_discard_btn.setVisible(count > 0)
         self.buttons_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
         self.buttons_discard_btn.setEnabled(count > 0 and not self._syncing)
+        self._refresh_write_all_btn()
 
     def _reset_buttons_draft(self, imported: bool = False) -> None:
         """Same shape/reasoning as `_reset_motion_draft()` -- Buttons is
@@ -1249,6 +1292,7 @@ class MainWindow(QMainWindow):
         self.profile_discard_btn.setVisible(count > 0)
         self.profile_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
         self.profile_discard_btn.setEnabled(count > 0 and not self._syncing)
+        self._refresh_write_all_btn()
 
     def _reset_profile_draft(self, imported: bool = False) -> None:
         """Same shape/reasoning as `_reset_buttons_draft()` -- Profile
@@ -1372,6 +1416,62 @@ class MainWindow(QMainWindow):
         baseline = self._profile_draft.observed.state or {}
         self._start_execute(intents, baseline)
 
+    def _draft_for_scope(self, scope: str) -> DesiredDraft:
+        return {
+            "vibration": self._vibration_draft, "dock": self._dock_draft,
+            "triggers": self._triggers_draft, "sticks": self._sticks_draft,
+            "motion": self._motion_draft, "buttons": self._buttons_draft,
+            "profile_settings": self._profile_draft,
+        }[scope]
+
+    def _dirty_scopes(self) -> list:
+        return [s for s in _SCOPE_ORDER if self._draft_for_scope(s).edit_count > 0]
+
+    def _refresh_write_all_btn(self) -> None:
+        """Called from the end of every one of the seven
+        `_refresh_*_draft_ui()` methods -- any of their edit counts
+        crossing the one-vs-two-or-more-scopes line is exactly what
+        should show or hide this button."""
+        scopes = self._dirty_scopes()
+        visible = len(scopes) >= 2
+        self.write_all_btn.setVisible(visible)
+        if visible:
+            n = sum(self._draft_for_scope(s).edit_count for s in scopes)
+            self.write_all_btn.setText(f"Write all {n} changes")
+            self.write_all_btn.setEnabled(self._connection_state == "connected" and not self._syncing)
+
+    def _on_write_all_clicked(self) -> None:
+        """S7's cross-scope batch: every scope with an outstanding draft,
+        in one write. No special escalation rule of its own -- the same
+        conflict-or->3-rows test every other write already uses decides
+        whether this needs the review sheet (dropped the "more than one
+        scope always escalates" idea the same day it was proposed: the
+        sheet is a soft-error surface, "something's weird here, take a
+        look," not a toll gate for touching more than one page at once).
+
+        Builds one combined baseline dict from each scope's OWN
+        ObservedSnapshot, not a merge of the whole-state snapshots
+        themselves -- two scopes' snapshots were taken at different
+        reset times and can legitimately disagree on fields neither one
+        actually owns, so only the specific paths each scope's own
+        intents touch are copied across (_get_path()/_apply_path()),
+        never a shallow or deep dict merge of the snapshots wholesale.
+        """
+        scopes = self._dirty_scopes()
+        if len(scopes) < 2 or self._syncing:
+            return
+        self._pending_execute_scopes = scopes
+        self._pending_execute_scope = None
+        intents: list = []
+        baseline: dict = {}
+        for scope in scopes:
+            draft = self._draft_for_scope(scope)
+            snapshot = draft.observed.state or {}
+            for intent in draft.to_approved_intents():
+                intents.append(intent)
+                self._apply_path(baseline, intent.path, self._get_path(snapshot, intent.path))
+        self._start_execute(intents, baseline)
+
     # --- Scope-level "Discard changes" (IMPLEMENTATION-PLAN.md's "Not
     # started" list, item 2) -- each delegates to the owning view's own
     # revert_all(), which reverts every currently-touched field through
@@ -1436,6 +1536,7 @@ class MainWindow(QMainWindow):
         self.buttons_discard_btn.setEnabled(False)
         self.profile_write_btn.setEnabled(False)
         self.profile_discard_btn.setEnabled(False)
+        self.write_all_btn.setEnabled(False)
         self.rail.read_button.setEnabled(False)
         self.rail.set_nav_enabled(False)
         self.ownership_bar.set_release_enabled(False)
@@ -1463,69 +1564,103 @@ class MainWindow(QMainWindow):
         self.sync_status_label.setText("Writing…")
         self.execute_requested.emit(intents, baseline, self._connection_generation)
 
+    def _pending_scopes(self) -> list:
+        """The scope(s) a currently-in-flight (or just-finished) execute
+        belongs to -- `self._pending_execute_scopes` (S7's "Write all",
+        several at once) when set, else the single ordinary
+        `self._pending_execute_scope` as a one-element list. Every reader
+        that used to branch on the single scope string goes through this
+        instead, so one-scope and several-scope writes share one
+        dispatch loop rather than two separate code paths."""
+        if self._pending_execute_scopes is not None:
+            return self._pending_execute_scopes
+        if self._pending_execute_scope is not None:
+            return [self._pending_execute_scope]
+        return []
+
+    def _finish_write_for_scope(self, scope: str, ok_outcomes: tuple) -> None:
+        """One scope's own share of a (possibly multi-scope) successful
+        write: rebuild its draft snapshot, untouch exactly the paths
+        THIS scope's own outcomes confirmed (not every outcome in the
+        batch -- see set_execute_finished()'s own filtering), reload its
+        view, refresh its UI. Identical to what used to be inlined once
+        per scope directly in set_execute_finished()'s own if/elif
+        chain; factored out so a multi-scope write can call it once per
+        involved scope instead of duplicating the chain a second time."""
+        if scope == "vibration":
+            self._vibration_draft = self._rebuild_draft_snapshot(self._vibration_draft)
+            for outcome in ok_outcomes:
+                self._vibration_draft.untouch(outcome.intent.path)
+            self.vibration_view.load_state(self._state)
+            self._refresh_vibration_draft_ui()
+        elif scope == "dock":
+            self._dock_draft = self._rebuild_draft_snapshot(self._dock_draft)
+            for outcome in ok_outcomes:
+                self._dock_draft.untouch(outcome.intent.path)
+            self.settings_view.load_state(self._state)
+            self._refresh_dock_draft_ui()
+        elif scope == "triggers":
+            self._triggers_draft = self._rebuild_draft_snapshot(self._triggers_draft)
+            for outcome in ok_outcomes:
+                self._triggers_draft.untouch(outcome.intent.path)
+            self.triggers_view.load_state(self._state)
+            self._refresh_triggers_draft_ui()
+        elif scope == "sticks":
+            self._sticks_draft = self._rebuild_draft_snapshot(self._sticks_draft)
+            for outcome in ok_outcomes:
+                self._sticks_draft.untouch(outcome.intent.path)
+            self.sticks_view.load_state(self._state)
+            self._refresh_sticks_draft_ui()
+        elif scope == "motion":
+            self._motion_draft = self._rebuild_draft_snapshot(self._motion_draft)
+            for outcome in ok_outcomes:
+                self._motion_draft.untouch(outcome.intent.path)
+            self.motion_view.load_state(self._state)
+            self._refresh_motion_draft_ui()
+        elif scope == "buttons":
+            self._buttons_draft = self._rebuild_draft_snapshot(self._buttons_draft)
+            for outcome in ok_outcomes:
+                self._buttons_draft.untouch(outcome.intent.path)
+            self.buttons_view.load_state(self._state)
+            self._refresh_buttons_draft_ui()
+        elif scope == "profile_settings":
+            self._profile_draft = self._rebuild_draft_snapshot(self._profile_draft)
+            for outcome in ok_outcomes:
+                self._profile_draft.untouch(outcome.intent.path)
+            self._sync_report_rate_combo()
+            if self._profile_draft.edit_count == 0:
+                self.report_rate_combo.set_edited(False)
+                self._report_rate_was_label.setVisible(False)
+                self._report_rate_revert_btn.setVisible(False)
+            self._refresh_profile_draft_ui()
+
     def set_execute_finished(self, success: bool, message: str, read_back: Optional[object]) -> None:
-        scope = self._pending_execute_scope
+        scopes = self._pending_scopes()
         self._pending_execute_scope = None
+        self._pending_execute_scopes = None
         self._unlock_write_ui()
         self.sync_status_label.setText(message)
         if success and read_back is not None:
             # Update self._state with every confirmed value FIRST, then
-            # rebuild the draft's own baseline from it -- the fix
-            # _rebuild_draft_snapshot()'s own docstring describes. Only
-            # after that do already-satisfied paths get dropped from the
-            # draft; a read-back mismatch keeps its field touched/marked
-            # rather than being silently accepted as written
-            # (FEASIBILITY.md M1: "read-back mismatch => draft retained").
+            # rebuild each involved draft's own baseline from it -- the
+            # fix _rebuild_draft_snapshot()'s own docstring describes.
+            # Only after that do already-satisfied paths get dropped
+            # from the draft; a read-back mismatch keeps its field
+            # touched/marked rather than being silently accepted as
+            # written (FEASIBILITY.md M1: "read-back mismatch => draft
+            # retained").
             for outcome in read_back.ok:
                 path = outcome.intent.path
                 written = None if outcome.intent.desired is Intent.CLEAR else outcome.intent.desired
                 self._apply_path(self._state, path, written)
-            if scope == "vibration":
-                self._vibration_draft = self._rebuild_draft_snapshot(self._vibration_draft)
-                for outcome in read_back.ok:
-                    self._vibration_draft.untouch(outcome.intent.path)
-                self.vibration_view.load_state(self._state)
-                self._refresh_vibration_draft_ui()
-            elif scope == "dock":
-                self._dock_draft = self._rebuild_draft_snapshot(self._dock_draft)
-                for outcome in read_back.ok:
-                    self._dock_draft.untouch(outcome.intent.path)
-                self.settings_view.load_state(self._state)
-                self._refresh_dock_draft_ui()
-            elif scope == "triggers":
-                self._triggers_draft = self._rebuild_draft_snapshot(self._triggers_draft)
-                for outcome in read_back.ok:
-                    self._triggers_draft.untouch(outcome.intent.path)
-                self.triggers_view.load_state(self._state)
-                self._refresh_triggers_draft_ui()
-            elif scope == "sticks":
-                self._sticks_draft = self._rebuild_draft_snapshot(self._sticks_draft)
-                for outcome in read_back.ok:
-                    self._sticks_draft.untouch(outcome.intent.path)
-                self.sticks_view.load_state(self._state)
-                self._refresh_sticks_draft_ui()
-            elif scope == "motion":
-                self._motion_draft = self._rebuild_draft_snapshot(self._motion_draft)
-                for outcome in read_back.ok:
-                    self._motion_draft.untouch(outcome.intent.path)
-                self.motion_view.load_state(self._state)
-                self._refresh_motion_draft_ui()
-            elif scope == "buttons":
-                self._buttons_draft = self._rebuild_draft_snapshot(self._buttons_draft)
-                for outcome in read_back.ok:
-                    self._buttons_draft.untouch(outcome.intent.path)
-                self.buttons_view.load_state(self._state)
-                self._refresh_buttons_draft_ui()
-            elif scope == "profile_settings":
-                self._profile_draft = self._rebuild_draft_snapshot(self._profile_draft)
-                for outcome in read_back.ok:
-                    self._profile_draft.untouch(outcome.intent.path)
-                self._sync_report_rate_combo()
-                if self._profile_draft.edit_count == 0:
-                    self.report_rate_combo.set_edited(False)
-                    self._report_rate_was_label.setVisible(False)
-                    self._report_rate_revert_btn.setVisible(False)
-                self._refresh_profile_draft_ui()
+            for scope in scopes:
+                # A multi-scope write's read_back.ok mixes every scope's
+                # outcomes together -- each scope's draft must only
+                # untouch the paths actually its own, not the whole
+                # batch (scope_for_path() is the same path->scope
+                # classifier ReviewSheet's own row grouping uses).
+                ok_for_scope = tuple(o for o in read_back.ok if scope_for_path(o.intent.path) == scope)
+                self._finish_write_for_scope(scope, ok_for_scope)
         elif not success:
             self._refresh_vibration_draft_ui()
             self._refresh_dock_draft_ui()
@@ -1549,14 +1684,31 @@ class MainWindow(QMainWindow):
             d = d.setdefault(key, {})
         d[path[-1]] = value
 
+    @staticmethod
+    def _get_path(state: dict, path: tuple) -> object:
+        """`_apply_path()`'s own read-side counterpart -- S7's
+        `_on_write_all_clicked()` uses it to copy exactly the paths a
+        combined batch's intents touch out of each scope's OWN snapshot,
+        never the whole snapshot dict itself (see that method's own
+        docstring for why a wholesale merge isn't safe here)."""
+        d = state
+        for key in path:
+            if not isinstance(d, dict) or key not in d:
+                return None
+            d = d[key]
+        return d
+
     def set_needs_review(self, job: object, fresh_state: dict) -> None:
         """DeviceWatcher.needs_review() -- fires when `_do_execute()`
         finds a real conflict or more than three rows (see its own
         docstring for why shared scope alone no longer escalates on its
-        own, dropped 2026-10-26). `self._pending_execute_scope`
-        (set by whichever `_on_write_*_clicked()` started this job) is
-        still valid here -- only `set_execute_finished()` clears it, and
-        only once this method decides NOT to proceed to an actual write.
+        own, dropped 2026-10-26; a multi-scope "Write all changes" batch
+        follows the exact same rule, no "more than one scope" trigger of
+        its own, see `_on_write_all_clicked()`'s own docstring).
+        `self._pending_scopes()` (set by whichever `_on_write_*_clicked()`
+        started this job) is still valid here -- only
+        `set_execute_finished()` clears it, and only once this method
+        decides NOT to proceed to an actual write.
 
         Unlocks the UI chrome `_start_execute()` locked (same as
         `set_execute_finished()` would) while the sheet is open -- a
@@ -1565,22 +1717,22 @@ class MainWindow(QMainWindow):
         mid-review," it's "the rail/Sync/Read buttons don't sit visibly
         disabled behind the sheet for no reason."
         """
-        scope = self._pending_execute_scope
+        scopes = self._pending_scopes()
         self._unlock_write_ui()
         self.sync_status_label.setText("Reviewing…")
 
-        scope_label = _SCOPE_LABELS.get(scope, scope or "This change")
+        scope_label = _combined_scope_label(scopes)
         sheet = ReviewSheet(job, scope_label, self._theme.palette, self._theme.fonts, self)
         # A row's own Revert link narrows sheet.job in place (see
         # review_sheet.py's class docstring) -- this makes the revert
-        # real on whichever page owns the field, via the same
-        # path-dispatch set_execute_finished()'s own scope branch
-        # already uses.
+        # real on whichever page owns the field, via scope_for_path()
+        # rather than self._pending_execute_scope, since a multi-scope
+        # sheet's own rows don't all belong to one view.
         sheet.rowReverted.connect(self._revert_review_sheet_path)
         result = sheet.exec()
 
         if result == QDialog.DialogCode.Accepted and sheet.job.writable:
-            # Keep self._pending_execute_scope set -- the eventual
+            # Keep self._pending_execute_scope(s) set -- the eventual
             # set_execute_finished() for THIS write still needs it.
             self._lock_write_ui()
             self.sync_status_label.setText("Writing…")
@@ -1594,17 +1746,19 @@ class MainWindow(QMainWindow):
             self.execute_reviewed_requested.emit(sheet.job, self._connection_generation, True)
         else:
             self._pending_execute_scope = None
+            self._pending_execute_scopes = None
             self.sync_status_label.setText("Kept editing." if result != QDialog.DialogCode.Accepted
                                             else "Nothing left to write.")
 
     def _revert_review_sheet_path(self, path: tuple) -> None:
         """ReviewSheet.rowReverted's one connection -- makes an in-sheet
         row revert real on whichever page actually owns it. Dispatches
-        on self._pending_execute_scope, same as set_execute_finished()'s
-        own scope branch, because a single-scope sheet's rows all belong
-        to that one already-known view -- no generic path-to-view lookup
-        needed across different scopes."""
-        scope = self._pending_execute_scope
+        via scope_for_path(path) rather than self._pending_execute_scope:
+        a multi-scope "Write all changes" sheet's rows don't all belong
+        to one view, but each row's own path still says exactly which
+        one it came from, so no pending-scope state is actually needed
+        here at all."""
+        scope = scope_for_path(path)
         if scope == "vibration":
             self.vibration_view.revert_path(path)
         elif scope == "dock":
