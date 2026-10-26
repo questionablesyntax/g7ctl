@@ -20,6 +20,7 @@ from PyQt6.QtCore import QByteArray, QEvent, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QCloseEvent, QDesktopServices, QHideEvent, QShowEvent
 from PyQt6.QtWidgets import (
     QApplication,
+    QDialog,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
@@ -35,7 +36,7 @@ from PyQt6.QtWidgets import (
 )
 
 from pyg7 import state as state_mod
-from pyg7.field_spec import Intent
+from pyg7.field_spec import REPORT_RATE_FIELD, Intent
 
 from . import help_content
 from .draft import DesiredDraft, ObservedSnapshot
@@ -46,6 +47,7 @@ from .modal_overlay import ModalOverlayBase
 from .ownership_bar import OwnershipBar
 from .qss import generate_stylesheet
 from .rail import PROFILE_PAGE_KEYS, SHARED_PAGE_KEYS, Rail
+from .review_sheet import ReviewSheet
 from .segmented_control import SegmentedControl
 from .theme_runtime import ThemeController
 from .views.buttons_view import ButtonsView
@@ -80,6 +82,14 @@ _LEGACY_PROFILES_DIR = (
 # alt-tab-and-back from costing a full release/reconnect cycle.
 _AUTO_RELEASE_DELAY_MS = 400
 
+# Human scope labels for ReviewSheet's own subtitle line -- the one
+# place a scope string needs a reader-facing name rather than a dict key.
+_SCOPE_LABELS = {
+    "vibration": "Vibration", "dock": "Dock (shared by every profile)",
+    "triggers": "Triggers", "sticks": "Sticks", "motion": "Motion",
+    "buttons": "Buttons", "profile_settings": "Profile Settings",
+}
+
 
 class MainWindow(QMainWindow):
     release_toggled = pyqtSignal(bool)  # True = release to XInput, False = reconnect
@@ -99,6 +109,13 @@ class MainWindow(QMainWindow):
     # connection (app.py) -- same "plain closure, not a bound method"
     # reasoning as sync_requested/read_requested.
     execute_requested = pyqtSignal(list, dict, int)
+    # The ReviewSheet's own Write action, after needs_review() escalated
+    # -- DeviceWatcher.request_execute_reviewed() is this signal's one
+    # connection, same reasoning as execute_requested above. Carries the
+    # (possibly narrower, if rows were reverted on their own page while
+    # the sheet was open) PreparedJob straight through -- no second
+    # read/prepare.
+    execute_reviewed_requested = pyqtSignal(object, int, bool)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -168,13 +185,20 @@ class MainWindow(QMainWindow):
         # lives inside KeycodePicker's own was/Revert row instead of a
         # wrapped form field.
         self._buttons_draft = DesiredDraft(ObservedSnapshot(None, confirmed=False))
+        # Profile Settings' draft -- the eighth and last S6 page, per-
+        # profile scope too, one field (report_rate_hz). No view class of
+        # its own holds this one -- _build_profile_settings_page() builds
+        # the whole page inline, so the mark/revert row and touch
+        # tracking live directly on MainWindow (see that method's own
+        # docstring).
+        self._profile_draft = DesiredDraft(ObservedSnapshot(None, confirmed=False))
         # Which draft a currently-in-flight execute_requested belongs to --
-        # "vibration", "dock", "triggers", "sticks", "motion", or
-        # "buttons". All six write buttons are disabled while
-        # self._syncing is true (same as Sync Now/Read), so only one job
-        # is ever in flight, but set_execute_finished() still needs to
-        # know which draft's bookkeeping to update when the response comes
-        # back.
+        # "vibration", "dock", "triggers", "sticks", "motion", "buttons",
+        # or "profile_settings". All seven write buttons are disabled
+        # while self._syncing is true (same as Sync Now/Read), so only
+        # one job is ever in flight, but set_execute_finished() still
+        # needs to know which draft's bookkeeping to update when the
+        # response comes back.
         self._pending_execute_scope: Optional[str] = None
         # Bumped by DeviceWatcher.connection_generation_changed every time a
         # connection is freshly (re-)established -- captured into any
@@ -467,6 +491,18 @@ class MainWindow(QMainWindow):
         2026-09-17). Wrapped in a QScrollArea like every other page, so it
         is now reached by that same generic sweep instead of needing its
         own special-cased line.
+
+        S6 (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md, Track S): the
+        eighth and last S6 page, and the shortest -- one field, already a
+        plain `FieldSpec` since S3 (`REPORT_RATE_FIELD`), with no view
+        class of its own to hold a `fieldTouched` signal (this whole page
+        is built inline here), so the mark/revert row and the touch
+        tracking both live directly on MainWindow instead of being
+        forwarded through a view. Overview's own independent report-rate
+        combo (D2, 2026-10-22) is unaffected -- it's a convenience mirror
+        of the same value, not a second editing surface with its own
+        revert affordance; `_sync_report_rate_combo()` already keeps it
+        showing whatever this page's own draft/state currently holds.
         """
         content = QWidget()
         form = QFormLayout(content)
@@ -486,7 +522,22 @@ class MainWindow(QMainWindow):
         self.report_rate_combo.set_value("1000")
         self.report_rate_combo.blockSignals(False)
         self.report_rate_combo.selectionChanged.connect(self._on_report_rate_changed)
-        form.addRow("Report Rate:", self.report_rate_combo)
+        row_widget = QWidget()
+        row = QHBoxLayout(row_widget)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        row.addWidget(self.report_rate_combo)
+        self._report_rate_was_label = QLabel("")
+        self._report_rate_was_label.setProperty("role", "muted")
+        self._report_rate_was_label.setVisible(False)
+        row.addWidget(self._report_rate_was_label)
+        self._report_rate_revert_btn = QPushButton("Revert")
+        self._report_rate_revert_btn.setProperty("role", "link")
+        self._report_rate_revert_btn.setVisible(False)
+        self._report_rate_revert_btn.clicked.connect(self._revert_report_rate)
+        row.addWidget(self._report_rate_revert_btn)
+        row.addStretch(1)
+        form.addRow("Report Rate:", row_widget)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(content)
@@ -568,6 +619,16 @@ class MainWindow(QMainWindow):
         )
         self.buttons_write_btn.clicked.connect(self._on_write_buttons_clicked)
         row.addWidget(self.buttons_write_btn)
+        self.profile_write_btn = QPushButton("Write 1 change")
+        self.profile_write_btn.setProperty("role", "write")
+        self.profile_write_btn.setVisible(False)
+        self.profile_write_btn.setToolTip(
+            "Write only the Report Rate change since the last read -- "
+            "re-reads the controller first and refuses if something else "
+            "changed there since."
+        )
+        self.profile_write_btn.clicked.connect(self._on_write_profile_clicked)
+        row.addWidget(self.profile_write_btn)
         self.sync_btn = QPushButton("Sync Now")
         self.sync_btn.setProperty("role", "write")
         self.sync_btn.setEnabled(False)
@@ -893,6 +954,7 @@ class MainWindow(QMainWindow):
             self._reset_sticks_draft()
             self._reset_motion_draft()
             self._reset_buttons_draft()
+            self._reset_profile_draft()
         else:
             QMessageBox.warning(self, "Sync failed", message)
 
@@ -1057,6 +1119,59 @@ class MainWindow(QMainWindow):
             ObservedSnapshot(copy.deepcopy(self._state), self._state_confirmed, imported=imported))
         self._refresh_buttons_draft_ui()
 
+    def _mark_report_rate_touched(self, value: int) -> None:
+        baseline = self._profile_draft.observed.get(("report_rate_hz",))
+        if baseline is not None and value == baseline:
+            # Same implicit-revert fix every other S6 slice needed
+            # (2026-10-26, the hardware test): manually
+            # dialing this back to its loaded value, not clicking
+            # Revert, must act exactly like a real revert.
+            self._profile_draft.untouch(("report_rate_hz",))
+            self.report_rate_combo.set_edited(False)
+            self._report_rate_was_label.setVisible(False)
+            self._report_rate_revert_btn.setVisible(False)
+            self._refresh_profile_draft_ui()
+            return
+        profile = self._state.get("controller_slot") or 1
+        self._profile_draft.touch(("report_rate_hz",), REPORT_RATE_FIELD, value, profile)
+        self.report_rate_combo.set_edited(True)
+        self._report_rate_was_label.setText("was Unknown" if baseline is None else f"was {baseline} Hz")
+        self._report_rate_was_label.setVisible(True)
+        self._report_rate_revert_btn.setVisible(True)
+        self._refresh_profile_draft_ui()
+
+    def _revert_report_rate(self) -> None:
+        baseline = self._profile_draft.observed.get(("report_rate_hz",))
+        if baseline is None:
+            return
+        self._profile_draft.untouch(("report_rate_hz",))
+        self._state["report_rate_hz"] = baseline
+        self._sync_report_rate_combo()  # guarded by _loading_report_rate_combo -- won't re-mark touched
+        self.report_rate_combo.set_edited(False)
+        self._report_rate_was_label.setVisible(False)
+        self._report_rate_revert_btn.setVisible(False)
+        self._refresh_profile_draft_ui()
+        self._on_dirty()
+
+    def _refresh_profile_draft_ui(self) -> None:
+        count = self._profile_draft.edit_count
+        self.rail.set_edit_count("profile_settings", count)
+        self.profile_write_btn.setVisible(count > 0)
+        self.profile_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
+        self.profile_write_btn.setEnabled(
+            count > 0 and self._connection_state == "connected" and not self._syncing)
+
+    def _reset_profile_draft(self, imported: bool = False) -> None:
+        """Same shape/reasoning as `_reset_buttons_draft()` -- Profile
+        Settings is per-profile scope too, discarded on a profile
+        switch."""
+        self._profile_draft = DesiredDraft(
+            ObservedSnapshot(copy.deepcopy(self._state), self._state_confirmed, imported=imported))
+        self.report_rate_combo.set_edited(False)
+        self._report_rate_was_label.setVisible(False)
+        self._report_rate_revert_btn.setVisible(False)
+        self._refresh_profile_draft_ui()
+
     def _rebuild_draft_snapshot(self, draft: DesiredDraft) -> DesiredDraft:
         """Refresh a draft's own `ObservedSnapshot` to the current
         `self._state`, re-touching whatever marks still remain against it
@@ -1106,6 +1221,7 @@ class MainWindow(QMainWindow):
         self._reset_sticks_draft()
         self._reset_motion_draft()
         self._reset_buttons_draft()
+        self._reset_profile_draft()
 
     def _on_write_vibration_clicked(self) -> None:
         if self._vibration_draft.edit_count == 0 or self._syncing:
@@ -1121,6 +1237,10 @@ class MainWindow(QMainWindow):
         self._pending_execute_scope = "dock"
         intents = self._dock_draft.to_approved_intents()
         baseline = self._dock_draft.observed.state or {}
+        # Dock is shared scope, but that alone no longer forces the
+        # sheet (tried 2026-10-26, dropped the same day -- see
+        # watcher._do_execute()'s own docstring): same escalation rule
+        # as every other page, conflict or >3 rows only.
         self._start_execute(intents, baseline)
 
     def _on_write_triggers_clicked(self) -> None:
@@ -1155,7 +1275,18 @@ class MainWindow(QMainWindow):
         baseline = self._buttons_draft.observed.state or {}
         self._start_execute(intents, baseline)
 
-    def _start_execute(self, intents: list, baseline: dict) -> None:
+    def _on_write_profile_clicked(self) -> None:
+        if self._profile_draft.edit_count == 0 or self._syncing:
+            return
+        self._pending_execute_scope = "profile_settings"
+        intents = self._profile_draft.to_approved_intents()
+        baseline = self._profile_draft.observed.state or {}
+        self._start_execute(intents, baseline)
+
+    def _lock_write_ui(self) -> None:
+        """Disables everything a write/review must not race against --
+        shared by `_start_execute()` and `set_needs_review()`'s own
+        re-lock once the sheet is approved."""
         self._syncing = True
         self.syncing_changed.emit(True)
         self.sync_btn.setEnabled(False)
@@ -1165,26 +1296,39 @@ class MainWindow(QMainWindow):
         self.sticks_write_btn.setEnabled(False)
         self.motion_write_btn.setEnabled(False)
         self.buttons_write_btn.setEnabled(False)
+        self.profile_write_btn.setEnabled(False)
         self.rail.read_button.setEnabled(False)
         self.rail.set_nav_enabled(False)
         self.ownership_bar.set_release_enabled(False)
         self.import_export_btn.setEnabled(False)
         self._refresh_confirmed_display()
-        self.sync_status_label.setText("Writing…")
-        self.execute_requested.emit(intents, baseline, self._connection_generation)
 
-    def set_execute_finished(self, success: bool, message: str, read_back: Optional[object]) -> None:
-        scope = self._pending_execute_scope
-        self._pending_execute_scope = None
+    def _unlock_write_ui(self) -> None:
+        """The other half of `_lock_write_ui()` -- shared by
+        `set_execute_finished()` and `set_needs_review()`'s own unlock
+        while the sheet is open (a modal `exec()` already blocks input
+        to the rest of the app, so this isn't a new race, just not
+        leaving the chrome visibly disabled behind the sheet for no
+        reason)."""
         self._syncing = False
         self.syncing_changed.emit(False)
-        self.sync_status_label.setText(message)
         self._refresh_sync_btn()
         self._refresh_confirmed_display()
         self.rail.read_button.setEnabled(self._connection_state == "connected")
         self.ownership_bar.set_release_enabled(self._connection_state == "connected")
         self.rail.set_nav_enabled(True)
         self.import_export_btn.setEnabled(True)
+
+    def _start_execute(self, intents: list, baseline: dict) -> None:
+        self._lock_write_ui()
+        self.sync_status_label.setText("Writing…")
+        self.execute_requested.emit(intents, baseline, self._connection_generation)
+
+    def set_execute_finished(self, success: bool, message: str, read_back: Optional[object]) -> None:
+        scope = self._pending_execute_scope
+        self._pending_execute_scope = None
+        self._unlock_write_ui()
+        self.sync_status_label.setText(message)
         if success and read_back is not None:
             # Update self._state with every confirmed value FIRST, then
             # rebuild the draft's own baseline from it -- the fix
@@ -1233,6 +1377,16 @@ class MainWindow(QMainWindow):
                     self._buttons_draft.untouch(outcome.intent.path)
                 self.buttons_view.load_state(self._state)
                 self._refresh_buttons_draft_ui()
+            elif scope == "profile_settings":
+                self._profile_draft = self._rebuild_draft_snapshot(self._profile_draft)
+                for outcome in read_back.ok:
+                    self._profile_draft.untouch(outcome.intent.path)
+                self._sync_report_rate_combo()
+                if self._profile_draft.edit_count == 0:
+                    self.report_rate_combo.set_edited(False)
+                    self._report_rate_was_label.setVisible(False)
+                    self._report_rate_revert_btn.setVisible(False)
+                self._refresh_profile_draft_ui()
         elif not success:
             self._refresh_vibration_draft_ui()
             self._refresh_dock_draft_ui()
@@ -1240,6 +1394,7 @@ class MainWindow(QMainWindow):
             self._refresh_sticks_draft_ui()
             self._refresh_motion_draft_ui()
             self._refresh_buttons_draft_ui()
+            self._refresh_profile_draft_ui()
             QMessageBox.warning(self, "Write failed", message)
 
     @staticmethod
@@ -1254,6 +1409,46 @@ class MainWindow(QMainWindow):
         for key in path[:-1]:
             d = d.setdefault(key, {})
         d[path[-1]] = value
+
+    def set_needs_review(self, job: object, fresh_state: dict) -> None:
+        """DeviceWatcher.needs_review() -- fires when `_do_execute()`
+        finds a real conflict or more than three rows (see its own
+        docstring for why shared scope alone no longer escalates on its
+        own, dropped 2026-10-26). `self._pending_execute_scope`
+        (set by whichever `_on_write_*_clicked()` started this job) is
+        still valid here -- only `set_execute_finished()` clears it, and
+        only once this method decides NOT to proceed to an actual write.
+
+        Unlocks the UI chrome `_start_execute()` locked (same as
+        `set_execute_finished()` would) while the sheet is open -- a
+        modal `exec()` call already blocks input to the rest of the app,
+        so this isn't "the user can click Write on a different page
+        mid-review," it's "the rail/Sync/Read buttons don't sit visibly
+        disabled behind the sheet for no reason."
+        """
+        scope = self._pending_execute_scope
+        self._unlock_write_ui()
+        self.sync_status_label.setText("Reviewing…")
+
+        scope_label = _SCOPE_LABELS.get(scope, scope or "This change")
+        sheet = ReviewSheet(job, scope_label, self._theme.palette, self._theme.fonts, self)
+        result = sheet.exec()
+
+        if result == QDialog.DialogCode.Accepted and job.writable:
+            # Keep self._pending_execute_scope set -- the eventual
+            # set_execute_finished() for THIS write still needs it.
+            self._lock_write_ui()
+            self.sync_status_label.setText("Writing…")
+            # force_conflicts=True: reaching this sheet at all means the
+            # user has already seen any conflicting row clearly (this
+            # pass has no per-row revert -- see review_sheet.py's own
+            # module docstring), so an explicit Write click here is the
+            # informed consent execute()'s own flag exists to require.
+            self.execute_reviewed_requested.emit(job, self._connection_generation, True)
+        else:
+            self._pending_execute_scope = None
+            self.sync_status_label.setText("Kept editing." if result != QDialog.DialogCode.Accepted
+                                            else "Nothing left to write.")
 
     def request_read_from_device(self, force_dock_read: bool = False) -> None:
         """`force_dock_read`: DeviceWatcher skips the dock-settings blob
@@ -1353,6 +1548,7 @@ class MainWindow(QMainWindow):
         self._reset_sticks_draft()
         self._reset_motion_draft()
         self._reset_buttons_draft()
+        self._reset_profile_draft()
 
         self._set_dirty(False)  # local state now matches the device, not a pending change
 
@@ -1372,6 +1568,7 @@ class MainWindow(QMainWindow):
         self._reset_sticks_draft(imported=imported)
         self._reset_motion_draft(imported=imported)
         self._reset_buttons_draft(imported=imported)
+        self._reset_profile_draft(imported=imported)
         self._set_dirty(False)
 
     def _sync_profile_switch(self) -> None:
@@ -1404,15 +1601,17 @@ class MainWindow(QMainWindow):
         # read from leaving the previous profile's real values on screen
         # looking exactly like a confirmed reading of the new selection.
         self._state_confirmed = False
-        # Vibration's, Triggers', Sticks', Motion's, and Buttons' drafts
-        # are all per-profile scope, not shared (DESIGN-SPEC.md 10.1 #5)
-        # -- a switch discards them, same as every other page's unsynced
-        # edits, until scoped intents exist to do better.
+        # Vibration's, Triggers', Sticks', Motion's, Buttons', and
+        # Profile Settings' drafts are all per-profile scope, not shared
+        # (DESIGN-SPEC.md 10.1 #5) -- a switch discards them, same as
+        # every other page's unsynced edits, until scoped intents exist
+        # to do better.
         self._reset_vibration_draft()
         self._reset_triggers_draft()
         self._reset_sticks_draft()
         self._reset_motion_draft()
         self._reset_buttons_draft()
+        self._reset_profile_draft()
         self._refresh_confirmed_display()
         self._refresh_sync_btn()
         if self._connection_state == "connected" and not self._syncing:
@@ -1499,6 +1698,7 @@ class MainWindow(QMainWindow):
         # (Settings page, Overview), not one.
         self._sync_report_rate_combo()
         self._on_dirty()
+        self._mark_report_rate_touched(int(value))
 
     def _default_snapshot_dir(self) -> str:
         return str(_LEGACY_PROFILES_DIR if _LEGACY_PROFILES_DIR.is_dir() else Path.home())

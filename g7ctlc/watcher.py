@@ -87,6 +87,19 @@ class DeviceWatcher(QObject):
     # or None (nothing was attempted -- an empty draft, a stale connection
     # generation, or a conflict found on the fresh re-read).
     execute_finished = pyqtSignal(bool, str, object)
+    # The review-sheet escalation path (DESIGN-SPEC.md 10.3: "If it finds
+    # a conflict... it escalates to the full review sheet. Any change...
+    # more than three rows, always uses the sheet."). Emitted from
+    # _do_execute() in place of execute_finished(False, ...) whenever the
+    # fresh prepare() it already ran finds a real conflict, or the draft
+    # has more than three rows -- carries the pyg7.workflow.PreparedJob
+    # and the fresh_state it was prepared against, so the GUI's
+    # ReviewSheet can show real Was/Will-be/Now-on-controller values
+    # without a second read. The GUI answers via
+    # request_execute_reviewed(), never request_execute() again (that
+    # would re-read and re-classify for no reason -- the job already
+    # has what it needs).
+    needs_review = pyqtSignal(object, dict)
     # Bumped every time a connection is freshly established -- the
     # "connection generation" pyg7.workflow.execute()'s staleness guard
     # compares against (FEASIBILITY.md: "reject stale preparation after
@@ -163,6 +176,18 @@ class DeviceWatcher(QObject):
         10.3's own fast-path condition); the caller (DesiredDraft's owner)
         is responsible for only ever building one of these per scope."""
         self._jobs.put(("execute", (approved_intents, baseline_state, connection_generation)))
+
+    def request_execute_reviewed(self, job: "workflow_mod.PreparedJob", connection_generation: int,
+                                  *, force_conflicts: bool = False) -> None:
+        """Thread-safe: call from the GUI thread, after the ReviewSheet
+        needs_review() opened is approved. Runs execute() directly against
+        the ALREADY-prepared `job` -- no second read, no second prepare()
+        -- bound to `job`'s own draft_revision and to `connection_generation`
+        as captured when needs_review() fired. `force_conflicts=True` is
+        what an explicit Write click in the sheet means: the user has seen
+        the conflicting row(s) (or reverted them -- then there are none
+        left) and approved writing anyway."""
+        self._jobs.put(("execute_reviewed", (job, connection_generation, force_conflicts)))
 
     def pause(self) -> None:
         """Thread-safe: call from the GUI thread. Releases the session and
@@ -435,6 +460,9 @@ class DeviceWatcher(QObject):
         elif kind == "execute":
             approved_intents, baseline_state, connection_generation = payload
             self._do_execute(session, approved_intents, baseline_state, connection_generation)
+        elif kind == "execute_reviewed":
+            job, connection_generation, force_conflicts = payload
+            self._do_execute_reviewed(session, job, connection_generation, force_conflicts)
 
     def _do_sync(self, session: VendorSession, state: dict) -> None:
         """Reads a fresh baseline from the device first (rsync-style: diff
@@ -523,15 +551,17 @@ class DeviceWatcher(QObject):
         the actual fix pyg7.workflow was built for (B2: "Sync Now can
         revert changes made on the controller").
 
-        Unlike _do_sync(), a failed prepare (a stale connection
-        generation, or a real conflict on the fresh re-read) writes
-        nothing and is reported as a plain failure, not escalated to a
-        review sheet -- wave 2's full review-sheet escalation
-        (DESIGN-SPEC.md 10.3's "If it finds a conflict... it escalates to
-        the full review sheet") is not built yet; S6's vertical slice (one
-        page, Vibration's four levels) only has the fast path, so a
-        conflict here means "nothing was written, try again" rather than
-        silently falling back to the single-field case.
+        Escalates to needs_review() -- the review-sheet path -- instead
+        of executing directly whenever there's a real conflict or more
+        than three rows. DESIGN-SPEC.md 10.3 also names "any change
+        touching shared scope" as always escalating; that was tried for
+        Dock (2026-10-26) and dropped the same day after seeing it force
+        the sheet on hardware for a single-field, no-conflict Dock write
+        -- Shift, the design doc's other named shared scope, never grew
+        the same treatment, so the two drifted apart instead of the
+        safety net actually meaning anything. Row-count and conflicts are
+        shared-scope's real risk anyway (one write reaching every
+        profile silently), not scope membership on its own.
         """
         if not approved_intents:
             self.execute_finished.emit(True, "Nothing to write.", None)
@@ -560,10 +590,8 @@ class DeviceWatcher(QObject):
         job = workflow_mod.prepare(
             "fastpath", revision, connection_generation, approved_intents,
             baseline_state=baseline_state, fresh_state=fresh_state)
-        if job.conflicts:
-            self.execute_finished.emit(
-                False, "Something changed on the controller since this was reviewed -- "
-                       "re-check the current values and try again.", None)
+        if job.conflicts or len(job.outcomes) > 3:
+            self.needs_review.emit(job, fresh_state)
             return
         if not job.writable:
             self.execute_finished.emit(True, "Already matches the controller -- nothing to write.", None)
@@ -579,6 +607,58 @@ class DeviceWatcher(QObject):
             self.execute_finished.emit(False, f"The connection changed since this was reviewed: {exc}", None)
             return
 
+        self._finish_write(session, profile, result, on_progress)
+
+    def _do_execute_reviewed(self, session: VendorSession, job: "workflow_mod.PreparedJob",
+                              connection_generation: int, force_conflicts: bool) -> None:
+        """The ReviewSheet's own Write action -- runs execute() directly
+        against the ALREADY-prepared `job` from needs_review(), no second
+        read or prepare(). `force_conflicts=True` is what an explicit
+        Write click in the sheet means: the user has seen (or reverted)
+        any conflicting row and approved writing the rest anyway.
+
+        Checks `connection_generation` against this thread's own live
+        counter FIRST, same as _do_execute() -- execute()'s own internal
+        `job.connection_generation != current_connection_generation`
+        check alone only catches the job disagreeing with what the
+        caller claims is current; it can't catch the caller's claim
+        itself being stale (a reconnect between needs_review() firing and
+        the sheet's Write click, which this thread would know about and
+        the GUI might not yet)."""
+        if connection_generation != self._connection_generation:
+            self.execute_finished.emit(
+                False, "The connection changed since this was reviewed -- please try again.", None)
+            return
+
+        def on_progress(i, total, label):
+            self.sync_progress.emit(i, total, label)
+
+        try:
+            on_progress(1, 2, "Writing…")
+            result = workflow_mod.execute(
+                session, job, job.draft_revision, connection_generation, force_conflicts=force_conflicts)
+        except usb.core.USBError as exc:
+            self.execute_finished.emit(False, f"Lost connection while writing: {exc}", None)
+            raise
+        except workflow_mod.StaleJobError as exc:
+            self.execute_finished.emit(False, f"The connection changed since this was reviewed: {exc}", None)
+            return
+        except ValueError as exc:
+            # job.conflicts still non-empty and force_conflicts was False --
+            # defensive; the sheet's own Write button should never reach
+            # here without either reverting those rows or setting the flag.
+            self.execute_finished.emit(False, str(exc), None)
+            return
+
+        profile = job.outcomes[0].intent.profile if job.outcomes else 1
+        self._finish_write(session, profile, result, on_progress)
+
+    def _finish_write(self, session: VendorSession, profile: int,
+                       result: "workflow_mod.ExecutionResult", on_progress) -> None:
+        """The read-back tail shared by _do_execute()'s own fast path and
+        _do_execute_reviewed()'s sheet-approved write -- one place that
+        decides what "Written" actually means (FEASIBILITY.md M1: a
+        mismatch keeps the draft, never silently accepted)."""
         try:
             on_progress(2, 2, "Reading back…")
             post_write_state = state_mod.read_state(session, slot=profile)

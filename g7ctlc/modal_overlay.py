@@ -55,6 +55,17 @@ QDialog {{
 
     def exec(self) -> int:  # noqa: A003 - matching QDialog's own name
         self._focus_before_open = QApplication.focusWidget()
+        # Settle the real geometry (word-wrapped label heights included)
+        # *before* the fade starts, not after. Qt computes a word-wrapped
+        # QLabel's height from whatever width it has at the moment -- if
+        # that resolves for the first time mid-animation (the dialog's
+        # first show(), inside super().exec() below, is otherwise the
+        # first point anything forces a layout pass), windowOpacity
+        # blends the pre- and post-relayout paints together into the
+        # kind of doubled/overlapping text a screenshot mid-fade showed
+        # on 2026-10-26. adjustSize() forces that settling up front so
+        # the fade animates one stable frame, not a resize in progress.
+        self.adjustSize()
         if self._animate:
             self._fade(0.0, 1.0, MOTION_BASE.duration_ms)
         else:
