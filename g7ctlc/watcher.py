@@ -407,15 +407,27 @@ class DeviceWatcher(QObject):
         """Reads a fresh baseline from the device first (rsync-style: diff
         against live destination state, not a stale cache) and only writes
         Buttons bindings that actually differ from it -- see
-        state_mod.write_state()'s `baseline` param. If the read itself
-        fails for a reason short of losing the connection outright (e.g. a
-        read_chunk() timeout), falls back to a full write rather than
-        aborting the sync -- a real USBError is treated as connection loss
-        either way and aborts, matching every other write path here."""
+        state_mod.write_state()'s `baseline` param.
+
+        S2 (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md, Track S): a
+        failed baseline read now fails the sync outright and writes
+        nothing, rather than falling back to a full write. That fallback
+        used to mean a flaky read (plan section 7's own finding: "Sync Now
+        can revert changes made on the controller") silently turned into
+        the single most dangerous write this app can make -- the whole
+        displayed state overwriting the device, including anything
+        changed on the controller itself (another tool, an on-device
+        combo) since the last read. A real USBError is still treated as
+        connection loss and aborts the same way it always did -- this only
+        changes the *other* read-failure branch, the one that used to
+        quietly substitute `baseline=None` for a real answer. The
+        library's own explicit `baseline=None` mode (a deliberate
+        caller choice, e.g. the CLI's `write-state`, which never reads a
+        baseline at all) is untouched -- this function just stops
+        manufacturing that same value out of a failure."""
         def on_progress(i, total, label):
             self.sync_progress.emit(i, total, label)
 
-        baseline = None
         slot = state.get("controller_slot") or 1
         try:
             self.sync_progress.emit(0, 0, "Reading current device state…")
@@ -424,20 +436,14 @@ class DeviceWatcher(QObject):
             self.sync_finished.emit(False, f"Lost connection during sync: {exc}")
             raise  # let the caller's disconnect handling tear the session down
         except Exception as exc:
-            # No baseline -- write_state() below just writes everything. Print
-            # rather than stay fully silent: a read failure here is usually a
-            # flaky connection (seen in practice: a bad cable/port producing
-            # USB protocol errors and dropped packets, not a code bug),
-            # and it's worth a trace to tell the two apart.
-            log.warning("baseline read failed, falling back to full write: %r", exc)
-            baseline = None
+            log.warning("baseline read failed, aborting sync without writing: %r", exc)
+            self.sync_finished.emit(
+                False, f"Sync aborted: could not read the device's current state first ({exc}).")
+            return
 
         try:
             skipped = state_mod.write_state(session, state, on_progress=on_progress, baseline=baseline)
-            if baseline is None:
-                self.sync_finished.emit(True, "State applied (full write -- no baseline read).")
-            else:
-                self.sync_finished.emit(True, f"State applied ({skipped} binding(s) already matched, skipped).")
+            self.sync_finished.emit(True, f"State applied ({skipped} binding(s) already matched, skipped).")
         except usb.core.USBError as exc:
             self.sync_finished.emit(False, f"Lost connection during sync: {exc}")
             raise  # let the caller's disconnect handling tear the session down

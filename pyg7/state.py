@@ -59,6 +59,20 @@ from . import buttons, dock_settings, dpad_options, motion, report_rate, sticks,
 from .constants import DOCK_READ_CATEGORY, FULL_BLOB_LENGTH
 from .curves import CURVE_PRESETS as _CURVE_PRESETS
 from .curves import parse_points as _parse_points
+from .field_spec import (
+    BUTTON_FIELDS,
+    CT_FIELDS,
+    DOCK_FIELDS,
+    DPAD_FIELDS,
+    MOTION_FIELDS,
+    REPORT_RATE_FIELD,
+    STICK_FIELDS,
+    TRIGGER_FIELDS,
+    VIBRATION_FLAGS_FIELDS,
+    VIBRATION_LEVEL_FIELDS,
+    Intent,
+)
+from .operations import Operation
 from .session import VendorSession, profile_layer_byte
 
 log = logging.getLogger(__name__)
@@ -779,10 +793,14 @@ def _points_key(points) -> Optional[str]:
 
 
 ProgressCallback = Optional[Callable[[int, int, str], None]]
+
+
 # One entry in the list _build_steps()/the *_steps() helpers return: a
-# human-readable label paired with the write itself, deferred as a closure
-# so write_state() can pace it with heartbeats before actually calling it.
-Step = tuple[str, Callable[[VendorSession], bytes]]
+# human-readable label paired with the Operation itself (see
+# operations.py's own docstring for why Operation moved out of this
+# file: field_spec.py needs it too, and keeping it here would cycle
+# back through state.py).
+Step = tuple[str, Operation]
 
 
 def write_state(
@@ -824,9 +842,9 @@ def write_state(
         session.heartbeat()
         time.sleep(interval)
 
-    for i, (label, write_fn) in enumerate(steps, start=1):
+    for i, (label, op) in enumerate(steps, start=1):
         _report(i, label)
-        write_fn(session)
+        op.execute(session)
         time.sleep(interval)
         session.heartbeat()
         time.sleep(interval)
@@ -839,7 +857,7 @@ def write_state(
 
 
 def _build_steps(state: dict, baseline: Optional[dict] = None) -> tuple[list[Step], int]:
-    """Returns (steps, skipped): a list of (label, fn(session)) pairs in
+    """Returns (steps, skipped): a list of (label, Operation) pairs in
     application order, and a count of Buttons writes skipped via baseline
     diffing (always 0 if `baseline` is None)."""
     steps = []
@@ -847,21 +865,24 @@ def _build_steps(state: dict, baseline: Optional[dict] = None) -> tuple[list[Ste
     slot = state.get("controller_slot") or 1
     baseline_buttons = (baseline or {}).get("buttons", {})
 
+    # S3's last FieldSpec migration (Projects/g7ctl/redesign/
+    # IMPLEMENTATION-PLAN.md, Track S) -- see ButtonFieldSpec's own
+    # docstring for why buttons never needed the has_baseline
+    # disambiguation Motion did: an undeclared button is structurally
+    # absent from this dict, never iterated at all, so the skip-vs-write
+    # decision below is unchanged from before this migration.
     for layer_name in ("default", "shift"):
-        shift = layer_name == "shift"
         baseline_layer = baseline_buttons.get(layer_name, {})
         for btn, keycode_name in state["buttons"].get(layer_name, {}).items():
             if baseline is not None and baseline_layer.get(btn) == keycode_name:
                 skipped += 1
                 continue  # already matches live device state -- see baseline diffing above
-            btn_id = buttons.resolve_button_id(btn)
-            if keycode_name is None:
-                steps.append((f"Button {btn} ({layer_name}): unbind",
-                              lambda s, b=btn_id, sh=shift: buttons.unbind(s, b, profile=slot, shift=sh)))
-            else:
-                kc = buttons.resolve_keycode(keycode_name)
-                steps.append((f"Button {btn} ({layer_name}) -> {keycode_name}",
-                              lambda s, b=btn_id, k=kc, sh=shift: buttons.remap(s, b, k, profile=slot, shift=sh)))
+            field = BUTTON_FIELDS[layer_name][btn]
+            desired = Intent.CLEAR if keycode_name is None else keycode_name
+            op = field.plan_operation(desired, slot)
+            label = (f"Button {btn} ({layer_name}): unbind" if keycode_name is None
+                     else f"Button {btn} ({layer_name}) -> {keycode_name}")
+            steps.append((label, op))
 
     # Count binding writes before anything else is appended. The diff
     # summary below exists to tell "sync did nothing because everything
@@ -879,27 +900,40 @@ def _build_steps(state: dict, baseline: Optional[dict] = None) -> tuple[list[Ste
     for btn, enabled in (state.get("continuous_trigger") or {}).items():
         if enabled is None:
             continue
-        if baseline is not None and baseline_ct.get(btn) == enabled:
+        op = CT_FIELDS[btn].plan_operation(enabled, baseline_ct.get(btn) if baseline is not None else None, slot)
+        if op is None:
             skipped += 1
             continue
-        steps.append((f"Continuous Trigger {btn}={enabled}",
-                       lambda s, b=btn, v=enabled: buttons.set_continuous_trigger(s, b, v, profile=slot)))
+        steps.append((f"Continuous Trigger {btn}={enabled}", op))
 
     total_button_entries = sum(len(state["buttons"].get(layer, {})) for layer in ("default", "shift"))
 
+    # S3's first FieldSpec migration (Projects/g7ctl/redesign/
+    # IMPLEMENTATION-PLAN.md, Track S) -- report rate has no clear
+    # semantics (always some rate, never "unset"), so an undeclared
+    # value maps to Intent.PRESERVE, never Intent.CLEAR. plan_operation()
+    # is the one place this field's "declared and differs from baseline"
+    # decision is made now, not inlined here.
     rate = state.get("report_rate_hz")
     baseline_rate = (baseline or {}).get("report_rate_hz")
-    if rate is not None and baseline_rate != rate:
-        steps.append((f"Report rate={rate}Hz",
-                       lambda sess, v=rate: report_rate.set_value(sess, v, profile=slot)))
+    rate_op = REPORT_RATE_FIELD.plan_operation(
+        Intent.PRESERVE if rate is None else rate, baseline_rate, slot)
+    if rate_op is not None:
+        steps.append((f"Report rate={rate}Hz", rate_op))
     elif rate is not None:
         skipped += 1
 
+    # S3 (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md, Track S):
+    # DPAD_FIELDS/DOCK_FIELDS now own the declared-vs-baseline decision;
+    # this function still owns the undeclared-is-None-not-PRESERVE
+    # translation and the `skipped` counter, same split as every other
+    # migrated field above.
     diag = state.get("dpad_diagonal_lock")
     baseline_diag = (baseline or {}).get("dpad_diagonal_lock")
-    if diag is not None and baseline_diag != diag:
-        steps.append((f"D-Pad Diagonal Lock={diag}",
-                       lambda sess, v=diag: dpad_options.set_value(sess, "diagonal_lock", v, profile=slot)))
+    diag_op = DPAD_FIELDS["dpad_diagonal_lock"].plan_operation(
+        Intent.PRESERVE if diag is None else diag, baseline_diag, slot)
+    if diag_op is not None:
+        steps.append((f"D-Pad Diagonal Lock={diag}", diag_op))
     elif diag is not None:
         skipped += 1
 
@@ -909,27 +943,32 @@ def _build_steps(state: dict, baseline: Optional[dict] = None) -> tuple[list[Ste
     # PROTOCOL.md "Sticks".
     swap = state.get("swap_stick_dpad")
     baseline_swap = (baseline or {}).get("swap_stick_dpad")
-    if swap is not None and baseline_swap != swap:
-        steps.append((f"Swap Left Stick and D-pad={swap}",
-                       lambda sess, v=swap: dpad_options.set_value(sess, "swap_stick_dpad", v, profile=slot)))
+    swap_op = DPAD_FIELDS["swap_stick_dpad"].plan_operation(
+        Intent.PRESERVE if swap is None else swap, baseline_swap, slot)
+    if swap_op is not None:
+        steps.append((f"Swap Left Stick and D-pad={swap}", swap_op))
     elif swap is not None:
         skipped += 1
 
     # Dock settings are genuinely global (see dock_settings.py) -- no
-    # `profile=` argument, unlike everything else here.
+    # `profile=` argument, unlike everything else here. DOCK_FIELDS'
+    # own build_kwargs already knows this; `slot` is still passed through
+    # plan_operation()'s signature uniformly but DOCK_FIELDS ignores it.
     brightness = state.get("dock_led_brightness")
     baseline_brightness = (baseline or {}).get("dock_led_brightness")
-    if brightness is not None and baseline_brightness != brightness:
-        steps.append((f"Dock LED Brightness={brightness}%",
-                       lambda sess, v=brightness: dock_settings.set_value(sess, "brightness", v)))
+    brightness_op = DOCK_FIELDS["dock_led_brightness"].plan_operation(
+        Intent.PRESERVE if brightness is None else brightness, baseline_brightness, slot)
+    if brightness_op is not None:
+        steps.append((f"Dock LED Brightness={brightness}%", brightness_op))
     elif brightness is not None:
         skipped += 1
 
     dock_auto = state.get("dock_auto_on_off")
     baseline_dock_auto = (baseline or {}).get("dock_auto_on_off")
-    if dock_auto is not None and baseline_dock_auto != dock_auto:
-        steps.append((f"Dock Auto On/Off={dock_auto}",
-                       lambda sess, v=dock_auto: dock_settings.set_value(sess, "auto_on_off", v)))
+    dock_auto_op = DOCK_FIELDS["dock_auto_on_off"].plan_operation(
+        Intent.PRESERVE if dock_auto is None else dock_auto, baseline_dock_auto, slot)
+    if dock_auto_op is not None:
+        steps.append((f"Dock Auto On/Off={dock_auto}", dock_auto_op))
     elif dock_auto is not None:
         skipped += 1
 
@@ -1010,33 +1049,31 @@ def _stick_steps(side: str, s: dict, baseline: Optional[dict] = None, profile: i
     skipped = 0
     label = f"{side.capitalize()} Stick"
 
-    def _add(value, baseline_value, write_label, fn):
-        """fn: Callable[[VendorSession, Any], bytes], called as fn(session, value).
+    fields = STICK_FIELDS[side]
 
-        `value` is bound into the deferred closure here, once it's already
-        known non-None -- not via a `lambda sess, v=whatever["key"]: ...`
-        default at each call site below. A default-argument expression is
-        evaluated eagerly, at lambda-construction time, so a call site of
-        that shape crashed with KeyError on a state dict missing the
-        sub-section entirely (e.g. no "curve" key), even though `value` was
-        already None and this function was about to skip the write anyway.
-        """
+    def _add(value, baseline_value, write_label, field_spec):
+        """S3 migration (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md,
+        Track S): `field_spec` now does the declared-vs-baseline decision
+        `FieldSpec.plan_operation()` owns; this wrapper only still
+        translates this function's own None-means-undeclared convention
+        into `Intent.PRESERVE` and keeps the `skipped` counter, which is
+        local to this call (`nonlocal`), not something FieldSpec tracks
+        itself."""
         nonlocal skipped
-        if value is None:
+        desired = Intent.PRESERVE if value is None else value
+        op = field_spec.plan_operation(desired, baseline_value, profile)
+        if op is None:
+            if value is not None:
+                skipped += 1
             return
-        if baseline_value == value:
-            skipped += 1
-            return
-        steps.append((write_label, lambda sess, _fn=fn, _v=value: _fn(sess, _v)))
+        steps.append((write_label, op))
 
     _add(s.get("trajectory"), baseline.get("trajectory"),
-         f"{label}: trajectory={s.get('trajectory')}",
-         lambda sess, v: sticks.set_value(sess, side, "trajectory", v, profile=profile))
+         f"{label}: trajectory={s.get('trajectory')}", fields["trajectory"])
     curve = s.get("curve") or {}
     baseline_curve = baseline.get("curve") or {}
     _add(curve.get("preset"), baseline_curve.get("preset"),
-         f"{label}: curve={curve.get('preset')}",
-         lambda sess, v: sticks.set_value(sess, side, "curve", v, profile=profile))
+         f"{label}: curve={curve.get('preset')}", fields["curve"])
     # Points go after the preset deliberately: selecting a preset rewrites
     # the whole block including the points, so writing them first would be
     # undone by the preset write that follows.
@@ -1059,9 +1096,8 @@ def _stick_steps(side: str, s: dict, baseline: Optional[dict] = None, profile: i
     # this write for a genuinely Custom curve; a named preset's own write
     # already fully defines the block, points included.
     if curve.get("preset") == "custom":
-        _add(_points_key(curve.get("points")), _points_key(baseline_curve.get("points")),
-             f"{label}: curve points={_points_key(curve.get('points'))}",
-             lambda sess, v: sticks.set_value(sess, side, "curve_points", v, profile=profile))
+        _add(curve.get("points"), baseline_curve.get("points"),
+             f"{label}: curve points={_points_key(curve.get('points'))}", fields["curve_points"])
     # Deadzone/anti-deadzone: re-enabled 2026-07-28 now that sticks.set_value()
     # builds the write's trailing suffix from a live read of the device's own
     # current state (see VendorSession.read_live_suffix()) instead of a stale captured
@@ -1070,41 +1106,30 @@ def _stick_steps(side: str, s: dict, baseline: Optional[dict] = None, profile: i
     deadzone = s.get("deadzone") or {}
     baseline_dz = baseline.get("deadzone") or {}
     _add(deadzone.get("initial"), baseline_dz.get("initial"),
-         f"{label}: deadzone.initial={deadzone.get('initial')}",
-         lambda sess, v: sticks.set_value(sess, side, "deadzone_initial", v, profile=profile))
+         f"{label}: deadzone.initial={deadzone.get('initial')}", fields["deadzone_initial"])
     _add(deadzone.get("max"), baseline_dz.get("max"),
-         f"{label}: deadzone.max={deadzone.get('max')}",
-         lambda sess, v: sticks.set_value(sess, side, "deadzone_max", v, profile=profile))
+         f"{label}: deadzone.max={deadzone.get('max')}", fields["deadzone_max"])
     anti_deadzone = s.get("anti_deadzone") or {}
     baseline_adz = baseline.get("anti_deadzone") or {}
     _add(anti_deadzone.get("initial"), baseline_adz.get("initial"),
-         f"{label}: anti_deadzone.initial={anti_deadzone.get('initial')}",
-         lambda sess, v: sticks.set_value(sess, side, "anti_deadzone_initial", v, profile=profile))
+         f"{label}: anti_deadzone.initial={anti_deadzone.get('initial')}", fields["anti_deadzone_initial"])
     _add(anti_deadzone.get("max"), baseline_adz.get("max"),
-         f"{label}: anti_deadzone.max={anti_deadzone.get('max')}",
-         lambda sess, v: sticks.set_value(sess, side, "anti_deadzone_max", v, profile=profile))
+         f"{label}: anti_deadzone.max={anti_deadzone.get('max')}", fields["anti_deadzone_max"])
     _add(s.get("resolution_bits"), baseline.get("resolution_bits"),
-         f"{label}: resolution_bits={s.get('resolution_bits')}",
-         lambda sess, v: sticks.set_value(sess, side, "resolution_bits", v, profile=profile))
+         f"{label}: resolution_bits={s.get('resolution_bits')}", fields["resolution_bits"])
     am = s.get("advanced_mapping") or {}
     _add(am.get("output_mode"), baseline_am.get("output_mode"),
-         f"{label}: output_mode={am.get('output_mode')}",
-         lambda sess, v: sticks.set_value(sess, side, "output_mode", v, profile=profile))
+         f"{label}: output_mode={am.get('output_mode')}", fields["output_mode"])
     _add(am.get("invert_x"), baseline_am.get("invert_x"),
-         f"{label}: invert_x={am.get('invert_x')}",
-         lambda sess, v: sticks.set_value(sess, side, "invert_x", v, profile=profile))
+         f"{label}: invert_x={am.get('invert_x')}", fields["invert_x"])
     _add(am.get("invert_y"), baseline_am.get("invert_y"),
-         f"{label}: invert_y={am.get('invert_y')}",
-         lambda sess, v: sticks.set_value(sess, side, "invert_y", v, profile=profile))
+         f"{label}: invert_y={am.get('invert_y')}", fields["invert_y"])
     _add(am.get("sensitivity"), baseline_am.get("sensitivity"),
-         f"{label}: sensitivity={am.get('sensitivity')}",
-         lambda sess, v: sticks.set_value(sess, side, "sensitivity", v, profile=profile))
+         f"{label}: sensitivity={am.get('sensitivity')}", fields["sensitivity"])
     _add(am.get("overlap_area"), baseline_am.get("overlap_area"),
-         f"{label}: overlap_area={am.get('overlap_area')}",
-         lambda sess, v: sticks.set_value(sess, side, "overlap_area", v, profile=profile))
+         f"{label}: overlap_area={am.get('overlap_area')}", fields["overlap_area"])
     _add(am.get("dpi"), baseline_am.get("dpi"),
-         f"{label}: dpi={am.get('dpi')}",
-         lambda sess, v: sticks.set_value(sess, side, "dpi", v, profile=profile))
+         f"{label}: dpi={am.get('dpi')}", fields["dpi"])
     db = am.get("direction_bindings")
     if db is not None:
         value_str = ",".join(db[z] or "ff" for z in ("up", "down", "left", "right", "ring"))
@@ -1112,8 +1137,7 @@ def _stick_steps(side: str, s: dict, baseline: Optional[dict] = None, profile: i
         baseline_value_str = (",".join(baseline_db[z] or "ff" for z in ("up", "down", "left", "right", "ring"))
                                if baseline_db else None)
         _add(value_str, baseline_value_str,
-             f"{label}: direction_bindings={value_str}",
-             lambda sess, v: sticks.set_value(sess, side, "direction_bindings", v, profile=profile))
+             f"{label}: direction_bindings={value_str}", fields["direction_bindings"])
     return steps, skipped
 
 
@@ -1125,26 +1149,26 @@ def _trigger_steps(side: str, t: dict, baseline: Optional[dict] = None, profile:
     skipped = 0
     label = f"{side.capitalize()} Trigger"
 
-    def _add(value, baseline_value, write_label, fn):
-        """See _stick_steps()'s `_add()` docstring -- same fix, same reason:
-        `value` is bound into the deferred closure here, not via a
-        `lambda sess, v=whatever["key"]: ...` default at each call site."""
+    fields = TRIGGER_FIELDS[side]
+
+    def _add(value, baseline_value, write_label, field_spec):
+        """See _stick_steps()'s `_add()` docstring -- same migration,
+        same reason."""
         nonlocal skipped
-        if value is None:
+        desired = Intent.PRESERVE if value is None else value
+        op = field_spec.plan_operation(desired, baseline_value, profile)
+        if op is None:
+            if value is not None:
+                skipped += 1
             return
-        if baseline_value == value:
-            skipped += 1
-            return
-        steps.append((write_label, lambda sess, _fn=fn, _v=value: _fn(sess, _v)))
+        steps.append((write_label, op))
 
     _add(t.get("hair_trigger_mode"), baseline.get("hair_trigger_mode"),
-         f"{label}: hair_trigger_mode={t.get('hair_trigger_mode')}",
-         lambda sess, v: triggers.set_value(sess, side, "hair_trigger_mode", v, profile=profile))
+         f"{label}: hair_trigger_mode={t.get('hair_trigger_mode')}", fields["hair_trigger_mode"])
     curve = t.get("curve") or {}
     baseline_curve = baseline.get("curve") or {}
     _add(curve.get("preset"), baseline_curve.get("preset"),
-         f"{label}: curve={curve.get('preset')}",
-         lambda sess, v: triggers.set_value(sess, side, "curve", v, profile=profile))
+         f"{label}: curve={curve.get('preset')}", fields["curve"])
     # After the preset, for the same reason as _stick_steps() -- including
     # the same real bug and fix, see its own comment: only ever schedule
     # this for a genuinely Custom curve, since a named preset's own write
@@ -1152,9 +1176,8 @@ def _trigger_steps(side: str, t: dict, baseline: Optional[dict] = None, profile:
     # points write would silently overwrite that preset index back to
     # Custom.
     if curve.get("preset") == "custom":
-        _add(_points_key(curve.get("points")), _points_key(baseline_curve.get("points")),
-             f"{label}: curve points={_points_key(curve.get('points'))}",
-             lambda sess, v: triggers.set_value(sess, side, "curve_points", v, profile=profile))
+        _add(curve.get("points"), baseline_curve.get("points"),
+             f"{label}: curve points={_points_key(curve.get('points'))}", fields["curve_points"])
     # Deadzone/anti-deadzone: re-enabled 2026-07-28 now that triggers.set_value()
     # builds the write's trailing suffix from a live, side-aware read of the
     # device's own current state (see VendorSession.read_live_suffix()) instead of a
@@ -1165,19 +1188,15 @@ def _trigger_steps(side: str, t: dict, baseline: Optional[dict] = None, profile:
     deadzone = t.get("deadzone") or {}
     baseline_dz = baseline.get("deadzone") or {}
     _add(deadzone.get("initial"), baseline_dz.get("initial"),
-         f"{label}: deadzone.initial={deadzone.get('initial')}",
-         lambda sess, v: triggers.set_value(sess, side, "deadzone_initial", v, profile=profile))
+         f"{label}: deadzone.initial={deadzone.get('initial')}", fields["deadzone_initial"])
     _add(deadzone.get("max"), baseline_dz.get("max"),
-         f"{label}: deadzone.max={deadzone.get('max')}",
-         lambda sess, v: triggers.set_value(sess, side, "deadzone_max", v, profile=profile))
+         f"{label}: deadzone.max={deadzone.get('max')}", fields["deadzone_max"])
     anti_deadzone = t.get("anti_deadzone") or {}
     baseline_adz = baseline.get("anti_deadzone") or {}
     _add(anti_deadzone.get("initial"), baseline_adz.get("initial"),
-         f"{label}: anti_deadzone.initial={anti_deadzone.get('initial')}",
-         lambda sess, v: triggers.set_value(sess, side, "anti_deadzone_initial", v, profile=profile))
+         f"{label}: anti_deadzone.initial={anti_deadzone.get('initial')}", fields["anti_deadzone_initial"])
     _add(anti_deadzone.get("max"), baseline_adz.get("max"),
-         f"{label}: anti_deadzone.max={anti_deadzone.get('max')}",
-         lambda sess, v: triggers.set_value(sess, side, "anti_deadzone_max", v, profile=profile))
+         f"{label}: anti_deadzone.max={anti_deadzone.get('max')}", fields["anti_deadzone_max"])
     return steps, skipped
 
 
@@ -1194,107 +1213,101 @@ def _motion_steps(side: str, s: dict, baseline: Optional[dict] = None, profile: 
     skipped = 0
     label = f"Motion {side.capitalize()}"
 
-    def _add(value, baseline_value, write_label, fn, allow_none=False):
-        """See _stick_steps()'s `_add()` docstring -- same fix, same reason.
+    fields = MOTION_FIELDS[side]
 
-        `allow_none`, added 2026-09-17 (real bug, found by Astra and Sol's
-        bug-sweeps independently): every OTHER field here genuinely has no
-        meaningful None-as-a-real-value case (an unconfigured
-        activate_method/output/etc. is a real, distinct value on the
-        wire), so skipping None unconditionally was correct for them. But
-        clearing an activate_button or a direction binding is a real user
-        action with a real wire encoding (0xFF, see
-        motion.py's _resolve_keycode_or_unbound()) -- the OLD blanket skip
-        meant motion.set_value() never even got called for that case, so
-        clearing a binding in the GUI updated the in-memory state but
-        scheduled no write at all. Only the two call sites that actually
-        need this pass allow_none=True; every other field's behavior here
-        is unchanged.
-
-        Real regression, caught by this project's own existing
-        test_without_baseline_everything_is_written before it shipped:
-        activate_button's genuine default IS None (_default_motion_
-        settings()), and a missing baseline ALSO reads as None via
-        baseline.get(...) -- so a naive `baseline_value == value` check
-        would count a truly-baseline-less "still at its own default"
-        state as a matched-baseline skip, breaking the declared-state
-        model's own invariant that nothing is silently skipped when there
-        is nothing real to diff against. `has_baseline` (captured before
-        baseline collapses to {}) distinguishes the two: no real baseline
-        at all means "declare it," matching every other field's behavior
-        in that case.
+    def _add(value, baseline_value, write_label, field_spec, allow_none=False):
+        """S3 migration (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md,
+        Track S): `field_spec` now owns the declared-vs-baseline decision
+        for the plain case. `allow_none` fields (activate_button, each
+        direction zone) keep their own resolution here rather than
+        inside `FieldSpec.plan_operation()` -- see `field_spec.py`'s own
+        comment on `MOTION_FIELDS` for why: `baseline=None` means "no
+        known baseline, write unconditionally" for every other field,
+        but these fields' real "unbound" state also decodes to `None`,
+        indistinguishable from "unknown" at the single-value level.
+        `has_baseline` (the OUTER dict's presence, not this one field's
+        value) is the signal `plan_operation()` doesn't have access to.
         """
         nonlocal skipped
         if value is None and not allow_none:
             return
-        if allow_none and value is None and not has_baseline:
-            steps.append((write_label, lambda sess, _fn=fn, _v=value: _fn(sess, _v)))
+        if allow_none and value is None:
+            if not has_baseline:
+                steps.append((write_label, field_spec.plan_operation(Intent.CLEAR, None, profile)))
+                return
+            if baseline_value is None:
+                skipped += 1
+                return
+            steps.append((write_label, field_spec.plan_operation(Intent.CLEAR, baseline_value, profile)))
             return
-        if baseline_value == value:
+        op = field_spec.plan_operation(value, baseline_value, profile)
+        if op is None:
             skipped += 1
             return
-        steps.append((write_label, lambda sess, _fn=fn, _v=value: _fn(sess, _v)))
+        steps.append((write_label, op))
 
     _add(s.get("activate_method"), baseline.get("activate_method"),
-         f"{label}: activate_method={s.get('activate_method')}",
-         lambda sess, v: motion.set_value(sess, side, "activate_method", v, profile=profile))
-    _add(s.get("activate_button"), baseline.get("activate_button"),
-         f"{label}: activate_button={s.get('activate_button')}",
-         lambda sess, v: motion.set_value(sess, side, "activate_button", v, profile=profile),
-         allow_none=True)
+         f"{label}: activate_method={s.get('activate_method')}", fields["activate_method"])
+    # S2 (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md), the
+    # absent-vs-null decision DESIGN-SPEC.md 10.4 asked for: a key
+    # genuinely ABSENT from `s` (a hand-edited partial state JSON that
+    # never mentions this field) means "not declared, leave it alone" --
+    # same as every other field's None. Only a key PRESENT with an
+    # explicit `None` value is a real clear, matching buttons.py's own
+    # sparse-dict convention (an unmentioned button is never touched; a
+    # button present with value None is unbound). `dict.get()` alone
+    # can't tell the two apart, which is exactly the real bug this
+    # closes (plan section 7: "Partial state JSON clears Motion
+    # bindings"). Guarding the call, not `_add()`'s own allow_none
+    # branch, keeps every other field's behaviour untouched.
+    if "activate_button" in s:
+        _add(s.get("activate_button"), baseline.get("activate_button"),
+             f"{label}: activate_button={s.get('activate_button')}",
+             fields["activate_button"], allow_none=True)
     _add(s.get("x_axis_output_mode"), baseline.get("x_axis_output_mode"),
-         f"{label}: x_axis_output_mode={s.get('x_axis_output_mode')}",
-         lambda sess, v: motion.set_value(sess, side, "x_axis_output_mode", v, profile=profile))
+         f"{label}: x_axis_output_mode={s.get('x_axis_output_mode')}", fields["x_axis_output_mode"])
     curve = s.get("curve") or {}
     baseline_curve = baseline.get("curve") or {}
     _add(curve.get("preset"), baseline_curve.get("preset"),
-         f"{label}: curve={curve.get('preset')}",
-         lambda sess, v: motion.set_value(sess, side, "curve", v, profile=profile))
+         f"{label}: curve={curve.get('preset')}", fields["curve"])
     # Deadzone/anti-deadzone after the curve preset, same reasoning as
     # _stick_steps(): a preset selection rewrites the whole curve block.
     deadzone = s.get("deadzone") or {}
     baseline_dz = baseline.get("deadzone") or {}
     _add(deadzone.get("initial"), baseline_dz.get("initial"),
-         f"{label}: deadzone.initial={deadzone.get('initial')}",
-         lambda sess, v: motion.set_value(sess, side, "deadzone_initial", v, profile=profile))
+         f"{label}: deadzone.initial={deadzone.get('initial')}", fields["deadzone_initial"])
     _add(deadzone.get("max"), baseline_dz.get("max"),
-         f"{label}: deadzone.max={deadzone.get('max')}",
-         lambda sess, v: motion.set_value(sess, side, "deadzone_max", v, profile=profile))
+         f"{label}: deadzone.max={deadzone.get('max')}", fields["deadzone_max"])
     anti_deadzone = s.get("anti_deadzone") or {}
     baseline_adz = baseline.get("anti_deadzone") or {}
     _add(anti_deadzone.get("initial"), baseline_adz.get("initial"),
-         f"{label}: anti_deadzone.initial={anti_deadzone.get('initial')}",
-         lambda sess, v: motion.set_value(sess, side, "anti_deadzone_initial", v, profile=profile))
+         f"{label}: anti_deadzone.initial={anti_deadzone.get('initial')}", fields["anti_deadzone_initial"])
     _add(anti_deadzone.get("max"), baseline_adz.get("max"),
-         f"{label}: anti_deadzone.max={anti_deadzone.get('max')}",
-         lambda sess, v: motion.set_value(sess, side, "anti_deadzone_max", v, profile=profile))
+         f"{label}: anti_deadzone.max={anti_deadzone.get('max')}", fields["anti_deadzone_max"])
     if side == "aim":
         _add(s.get("invert_roll"), baseline.get("invert_roll"),
-             f"{label}: invert_roll={s.get('invert_roll')}",
-             lambda sess, v: motion.set_value(sess, side, "invert_roll", v, profile=profile))
+             f"{label}: invert_roll={s.get('invert_roll')}", fields["invert_roll"])
     _add(s.get("invert_y"), baseline.get("invert_y"),
-         f"{label}: invert_y={s.get('invert_y')}",
-         lambda sess, v: motion.set_value(sess, side, "invert_y", v, profile=profile))
+         f"{label}: invert_y={s.get('invert_y')}", fields["invert_y"])
     _add(s.get("invert_yaw"), baseline.get("invert_yaw"),
-         f"{label}: invert_yaw={s.get('invert_yaw')}",
-         lambda sess, v: motion.set_value(sess, side, "invert_yaw", v, profile=profile))
+         f"{label}: invert_yaw={s.get('invert_yaw')}", fields["invert_yaw"])
     _add(s.get("sensitivity_scale"), baseline.get("sensitivity_scale"),
-         f"{label}: sensitivity_scale={s.get('sensitivity_scale')}",
-         lambda sess, v: motion.set_value(sess, side, "sensitivity_scale", v, profile=profile))
+         f"{label}: sensitivity_scale={s.get('sensitivity_scale')}", fields["sensitivity_scale"])
     _add(s.get("output"), baseline.get("output"),
-         f"{label}: output={s.get('output')}",
-         lambda sess, v: motion.set_value(sess, side, "output", v, profile=profile))
+         f"{label}: output={s.get('output')}", fields["output"])
     _add(s.get("overlap_area"), baseline.get("overlap_area"),
-         f"{label}: overlap_area={s.get('overlap_area')}",
-         lambda sess, v: motion.set_value(sess, side, "overlap_area", v, profile=profile))
+         f"{label}: overlap_area={s.get('overlap_area')}", fields["overlap_area"])
     db = s.get("direction_bindings") or {}
     baseline_db = baseline.get("direction_bindings") or {}
     for zone in ("up", "down", "left", "right"):
-        setting_name = f"direction_{zone}"
+        # Same absent-vs-null fix as activate_button just above, per zone:
+        # a zone genuinely missing from a partial `direction_bindings`
+        # dict is left alone, not read as a clear.
+        if zone not in db:
+            continue
         _add(db.get(zone), baseline_db.get(zone),
              f"{label}: direction_bindings.{zone}={db.get(zone)}",
-             lambda sess, v, sn=setting_name: motion.set_value(sess, side, sn, v, profile=profile),
-             allow_none=True)
+             fields[f"direction_{zone}"], allow_none=True)
     return steps, skipped
 
 
@@ -1304,47 +1317,47 @@ def _vibration_steps(v: dict, baseline: Optional[dict] = None, profile: int = 1)
     baseline = baseline or {}
     steps = []
     skipped = 0
-    for setting in ("left_grip", "right_grip", "left_trigger", "right_trigger"):
+    # S3's second FieldSpec migration (Projects/g7ctl/redesign/
+    # IMPLEMENTATION-PLAN.md, Track S): the four simple levels, not the
+    # packed force/sync pair below -- see VIBRATION_LEVEL_FIELDS's own
+    # comment for why those stay on the old inline path for now.
+    for setting, level_field in VIBRATION_LEVEL_FIELDS.items():
         value = v.get(setting)
-        if value is None:
-            continue
-        if baseline.get(setting) == value:
+        desired = Intent.PRESERVE if value is None else value
+        op = level_field.plan_operation(desired, baseline.get(setting), profile)
+        if op is not None:
+            # About to actually write this one, so now the five-value rule
+            # applies. Raising here happens during the build, before any
+            # step has run against the device -- same ordering as before
+            # this migration: validate only on the write path, not when
+            # plan_operation() is about to skip anyway.
+            _validate_vibration_level(value, f"vibration.{setting}")
+            steps.append((f"Vibration: {setting}={value}", op))
+        elif value is not None:
             skipped += 1
-            continue
-        # About to actually write this one, so now the five-value rule
-        # applies. Raising here happens during the build, before any step
-        # has run against the device.
-        _validate_vibration_level(value, f"vibration.{setting}")
-        steps.append((f"Vibration: {setting}={value}",
-                       lambda sess, s=setting, val=value: vibration.set_value(sess, s, val, profile=profile)))
+    # S3's coupled-field migration (Projects/g7ctl/redesign/
+    # IMPLEMENTATION-PLAN.md, Track S): CoupledFieldSpec now owns the
+    # "undeclared half carries forward from baseline" rule (the real
+    # 2026-09-01 bug fix) -- this loop only still decides the one thing
+    # a coupled field's own plan_operation() can't: whether BOTH halves
+    # are undeclared, which must skip without counting (continue, not
+    # skipped += 1), same as before this migration.
     for side in ("left", "right"):
         force = v.get(f"{side}_trigger_force")
         sync = v.get(f"{side}_trigger_sync")
         if force is None and sync is None:
             continue
-        baseline_force = baseline.get(f"{side}_trigger_force")
-        baseline_sync = baseline.get(f"{side}_trigger_sync")
-        # Real bug, found 2026-09-01: this is one packed two-bit byte, so a
-        # write has to specify both bits even when only one was actually
-        # asked to change -- but the UNDECLARED half must carry forward the
-        # device's own current value (from baseline), not a hardcoded
-        # "off". The old code read `force`/`sync` directly into the
-        # f-string, so None (undeclared) was silently treated as falsy --
-        # e.g. declaring only right_trigger_sync would write
-        # right_trigger_force=off regardless of what it actually was.
-        # Falls back to "off" only when baseline has no answer either (the
-        # full-write-with-no-baseline path, e.g. a failed baseline read --
-        # see write_state()'s own baseline param) -- there is no honest
-        # value to preserve there, same as every other fresh/never-read
-        # field in a from-scratch write.
-        resolved_force = force if force is not None else baseline_force
-        resolved_sync = sync if sync is not None else baseline_sync
-        val = f"{'on' if resolved_force else 'off'},{'on' if resolved_sync else 'off'}"
-        baseline_val = (f"{'on' if baseline_force else 'off'},{'on' if baseline_sync else 'off'}"
-                         if (baseline_force is not None or baseline_sync is not None) else None)
-        if baseline_val == val:
+        desired = {
+            "force": Intent.PRESERVE if force is None else force,
+            "sync": Intent.PRESERVE if sync is None else sync,
+        }
+        field_baseline = {
+            "force": baseline.get(f"{side}_trigger_force"),
+            "sync": baseline.get(f"{side}_trigger_sync"),
+        }
+        op = VIBRATION_FLAGS_FIELDS[side].plan_operation(desired, field_baseline, profile)
+        if op is None:
             skipped += 1
             continue
-        steps.append((f"Vibration: {side}_trigger_flags={val}",
-                       lambda sess, s=f"{side}_trigger_flags", val=val: vibration.set_value(sess, s, val, profile=profile)))
+        steps.append((f"Vibration: {side}_trigger_flags={op.args[1]}", op))
     return steps, skipped

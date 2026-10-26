@@ -90,6 +90,41 @@ class FakeSession:
         return self.sent[0][1]
 
 
+class TracingFakeSession(FakeSession):
+    """FakeSession plus one unified, ordered trace of every wire-level
+    event: sends, heartbeats, reads. Built for S1's parity requirement
+    (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md) -- FakeSession's own
+    `.sent`/`.heartbeats`/`.reads` are separate counters/lists, which
+    proves counts match but not that two code paths issued the exact same
+    EVENTS IN THE SAME ORDER. `time.sleep` isn't a session method, so it
+    isn't traced here -- the caller patches the module under test's own
+    `time.sleep` to append `("sleep", seconds)` into the same list this
+    class is given, interleaving cleanly since both append to one object.
+
+    Only `send_raw`/`heartbeat`/`read_chunk` are overridden, not
+    `send_addressed`/`read_blob` -- both of those are already implemented
+    on `FakeSession` purely in terms of the three primitives above (self
+    stays bound to the subclass instance), so overriding them too would
+    double-count every event they produce.
+    """
+
+    def __init__(self, blob: bytes = b"", trace: list | None = None):
+        super().__init__(blob)
+        self.trace: list = trace if trace is not None else []
+
+    def send_raw(self, cmd_byte: int, payload: bytes) -> bytes:
+        self.trace.append(("send_raw", cmd_byte, bytes(payload)))
+        return super().send_raw(cmd_byte, payload)
+
+    def heartbeat(self) -> bytes:
+        self.trace.append(("heartbeat",))
+        return super().heartbeat()
+
+    def read_chunk(self, category: int, offset: int, length: int, timeout: float = 2.0) -> bytes:
+        self.trace.append(("read_chunk", category, offset, length))
+        return super().read_chunk(category, offset, length, timeout)
+
+
 def blob_with(values: dict[int, int], size: int = 512) -> bytes:
     """Build a config blob with specific bytes at specific offsets.
 
