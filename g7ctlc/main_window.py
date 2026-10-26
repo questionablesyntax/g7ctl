@@ -153,6 +153,16 @@ class MainWindow(QMainWindow):
         # previously-synced real profile" guarantee was removed with nothing
         # in its place.
         self._state_confirmed = False
+        # DESIGN-SPEC.md section 4 item 2: "An import is labelled
+        # 'Imported, not read from this controller.' It confirms the
+        # state for editing; it never claims agreement with hardware."
+        # Set True by _on_import(), cleared by the next real Sync Now or
+        # Read from Device (set_sync_finished()/set_read_finished()'s own
+        # success branches) -- whole-state, not per-scope: an import
+        # replaces every profile/Shift/Dock value at once, so there's no
+        # narrower provenance to track here than ObservedSnapshot.imported
+        # already carries per-draft.
+        self._state_imported = False
         # S6 (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md, Track S):
         # Vibration's four levels are this app's first page on the real
         # per-field draft model -- see draft.py's own module docstring.
@@ -235,6 +245,7 @@ class MainWindow(QMainWindow):
         content_column = QVBoxLayout()
         content_column.setSpacing(8)
         content_column.addWidget(self._build_unconfirmed_banner())
+        content_column.addWidget(self._build_imported_banner())
         content_column.addWidget(self._build_content_area(), 1)
         content_column.addLayout(self._build_write_action_row())
         content_row.addLayout(content_column, 1)
@@ -372,6 +383,23 @@ class MainWindow(QMainWindow):
         )
         self.unconfirmed_banner.setProperty("role", "caution")
         return self.unconfirmed_banner
+
+    def _build_imported_banner(self) -> QLabel:
+        # DESIGN-SPEC.md section 4 item 2's own wording, expanded with
+        # the same "what to do about it" guidance _build_unconfirmed_
+        # banner() already gives -- a persistent marker, not the one-line
+        # status text _on_import() also sets (status_label's text gets
+        # overwritten by the next unrelated event; this doesn't).
+        self.imported_banner = QLabel(
+            "Imported, not read from this controller -- these values "
+            "haven't been confirmed against the device. Sync Now to "
+            "write them, or Read from Device to check against hardware "
+            "instead."
+        )
+        self.imported_banner.setProperty("role", "caution")
+        self.imported_banner.setWordWrap(True)
+        self.imported_banner.setVisible(False)
+        return self.imported_banner
 
     def _build_pages(self) -> QStackedWidget:
         """One stacked page per rail nav entry. Settings is last and
@@ -543,6 +571,23 @@ class MainWindow(QMainWindow):
         scroll.setWidget(content)
         return scroll
 
+    def _build_discard_btn(self, handler) -> QPushButton:
+        """A scope-level "Discard N changes" -- per-field Revert already
+        existed on every page; this is the "just undo the whole draft"
+        shortcut that didn't (IMPLEMENTATION-PLAN.md's "Not started"
+        list, item 2). role="link", not "write" -- CRITIC.md #1's closed
+        signal-orange list is only the held state, live input marks, and
+        the one button that actually writes; discarding never writes
+        anything, same as a field's own Revert link it's equivalent to
+        clicking N times over.
+        """
+        btn = QPushButton("Discard changes")
+        btn.setProperty("role", "link")
+        btn.setVisible(False)
+        btn.setToolTip("Discard every unwritten change on this page, reverting each field to its loaded value.")
+        btn.clicked.connect(handler)
+        return btn
+
     def _build_write_action_row(self) -> QHBoxLayout:
         """Sync Now: the one control in wave 1 that actually writes to the
         controller, so -- per CRITIC.md #1's closed list -- it is the one
@@ -559,6 +604,8 @@ class MainWindow(QMainWindow):
         # exist yet, so this is the one place a fast-path write can start.
         # role="write" is the one other button CRITIC.md #1's closed signal
         # list allows, same as Sync Now.
+        self.vibration_discard_btn = self._build_discard_btn(self._on_discard_vibration_clicked)
+        row.addWidget(self.vibration_discard_btn)
         self.vibration_write_btn = QPushButton("Write 1 change")
         self.vibration_write_btn.setProperty("role", "write")
         self.vibration_write_btn.setVisible(False)
@@ -569,6 +616,8 @@ class MainWindow(QMainWindow):
         )
         self.vibration_write_btn.clicked.connect(self._on_write_vibration_clicked)
         row.addWidget(self.vibration_write_btn)
+        self.dock_discard_btn = self._build_discard_btn(self._on_discard_dock_clicked)
+        row.addWidget(self.dock_discard_btn)
         self.dock_write_btn = QPushButton("Write 1 change")
         self.dock_write_btn.setProperty("role", "write")
         self.dock_write_btn.setVisible(False)
@@ -579,6 +628,8 @@ class MainWindow(QMainWindow):
         )
         self.dock_write_btn.clicked.connect(self._on_write_dock_clicked)
         row.addWidget(self.dock_write_btn)
+        self.triggers_discard_btn = self._build_discard_btn(self._on_discard_triggers_clicked)
+        row.addWidget(self.triggers_discard_btn)
         self.triggers_write_btn = QPushButton("Write 1 change")
         self.triggers_write_btn.setProperty("role", "write")
         self.triggers_write_btn.setVisible(False)
@@ -589,6 +640,8 @@ class MainWindow(QMainWindow):
         )
         self.triggers_write_btn.clicked.connect(self._on_write_triggers_clicked)
         row.addWidget(self.triggers_write_btn)
+        self.sticks_discard_btn = self._build_discard_btn(self._on_discard_sticks_clicked)
+        row.addWidget(self.sticks_discard_btn)
         self.sticks_write_btn = QPushButton("Write 1 change")
         self.sticks_write_btn.setProperty("role", "write")
         self.sticks_write_btn.setVisible(False)
@@ -599,6 +652,8 @@ class MainWindow(QMainWindow):
         )
         self.sticks_write_btn.clicked.connect(self._on_write_sticks_clicked)
         row.addWidget(self.sticks_write_btn)
+        self.motion_discard_btn = self._build_discard_btn(self._on_discard_motion_clicked)
+        row.addWidget(self.motion_discard_btn)
         self.motion_write_btn = QPushButton("Write 1 change")
         self.motion_write_btn.setProperty("role", "write")
         self.motion_write_btn.setVisible(False)
@@ -609,6 +664,8 @@ class MainWindow(QMainWindow):
         )
         self.motion_write_btn.clicked.connect(self._on_write_motion_clicked)
         row.addWidget(self.motion_write_btn)
+        self.buttons_discard_btn = self._build_discard_btn(self._on_discard_buttons_clicked)
+        row.addWidget(self.buttons_discard_btn)
         self.buttons_write_btn = QPushButton("Write 1 change")
         self.buttons_write_btn.setProperty("role", "write")
         self.buttons_write_btn.setVisible(False)
@@ -619,6 +676,8 @@ class MainWindow(QMainWindow):
         )
         self.buttons_write_btn.clicked.connect(self._on_write_buttons_clicked)
         row.addWidget(self.buttons_write_btn)
+        self.profile_discard_btn = self._build_discard_btn(self._on_discard_profile_clicked)
+        row.addWidget(self.profile_discard_btn)
         self.profile_write_btn = QPushButton("Write 1 change")
         self.profile_write_btn.setProperty("role", "write")
         self.profile_write_btn.setVisible(False)
@@ -858,12 +917,12 @@ class MainWindow(QMainWindow):
         still reaches every control with one flag, not a per-view "is this
         real" plumbing job.
 
-        Must be called every time self._state_confirmed OR self._syncing
-        changes: on construction, after every read attempt (success or
-        failure), on Import, on a profile switch (whose value it turns
-        False again -- see _on_profile_changed for why that has to happen
-        even before the resulting read comes back), and around every
-        sync-to/read-from-device job.
+        Must be called every time self._state_confirmed, self._syncing OR
+        self._state_imported changes: on construction, after every read
+        attempt (success or failure), on Import, on a profile switch
+        (whose value it turns False again -- see _on_profile_changed for
+        why that has to happen even before the resulting read comes
+        back), and around every sync-to/read-from-device job.
         """
         editable = self._state_confirmed and not self._syncing
         for scroll in self.pages.findChildren(QScrollArea):
@@ -871,6 +930,7 @@ class MainWindow(QMainWindow):
             if content is not None:
                 content.setEnabled(editable)
         self.unconfirmed_banner.setVisible(not self._state_confirmed)
+        self.imported_banner.setVisible(self._state_imported)
         self._hatch_overlay.set_unread(not self._state_confirmed)
         self._refresh_content_area()
 
@@ -936,6 +996,14 @@ class MainWindow(QMainWindow):
         self._syncing = False
         self.syncing_changed.emit(False)
         self.sync_status_label.setText(message)
+        if success:
+            # Whatever was imported, if anything, is now actually on the
+            # device -- the provenance gap _state_imported exists to flag
+            # is closed, same reasoning as every _reset_*_draft() call
+            # below losing its own imported=True. Set before
+            # _refresh_confirmed_display() below, which is what actually
+            # hides the banner.
+            self._state_imported = False
         self._refresh_sync_btn()
         self._refresh_confirmed_display()  # unlocks the pages request_sync_now() locked
         self.rail.read_button.setEnabled(self._connection_state == "connected")
@@ -975,6 +1043,9 @@ class MainWindow(QMainWindow):
         self.vibration_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
         self.vibration_write_btn.setEnabled(
             count > 0 and self._connection_state == "connected" and not self._syncing)
+        self.vibration_discard_btn.setVisible(count > 0)
+        self.vibration_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
+        self.vibration_discard_btn.setEnabled(count > 0 and not self._syncing)
 
     def _reset_vibration_draft(self, imported: bool = False) -> None:
         """A fresh ObservedSnapshot -- a real Read from Device, an Import,
@@ -1013,6 +1084,9 @@ class MainWindow(QMainWindow):
         self.dock_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
         self.dock_write_btn.setEnabled(
             count > 0 and self._connection_state == "connected" and not self._syncing)
+        self.dock_discard_btn.setVisible(count > 0)
+        self.dock_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
+        self.dock_discard_btn.setEnabled(count > 0 and not self._syncing)
 
     def _reset_dock_draft(self, imported: bool = False) -> None:
         """Same shape as `_reset_vibration_draft()`, but called from fewer
@@ -1041,6 +1115,9 @@ class MainWindow(QMainWindow):
         self.triggers_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
         self.triggers_write_btn.setEnabled(
             count > 0 and self._connection_state == "connected" and not self._syncing)
+        self.triggers_discard_btn.setVisible(count > 0)
+        self.triggers_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
+        self.triggers_discard_btn.setEnabled(count > 0 and not self._syncing)
 
     def _reset_triggers_draft(self, imported: bool = False) -> None:
         """Same shape/reasoning as `_reset_vibration_draft()` -- Triggers
@@ -1065,6 +1142,9 @@ class MainWindow(QMainWindow):
         self.sticks_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
         self.sticks_write_btn.setEnabled(
             count > 0 and self._connection_state == "connected" and not self._syncing)
+        self.sticks_discard_btn.setVisible(count > 0)
+        self.sticks_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
+        self.sticks_discard_btn.setEnabled(count > 0 and not self._syncing)
 
     def _reset_sticks_draft(self, imported: bool = False) -> None:
         """Same shape/reasoning as `_reset_triggers_draft()` -- Sticks is
@@ -1088,6 +1168,9 @@ class MainWindow(QMainWindow):
         self.motion_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
         self.motion_write_btn.setEnabled(
             count > 0 and self._connection_state == "connected" and not self._syncing)
+        self.motion_discard_btn.setVisible(count > 0)
+        self.motion_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
+        self.motion_discard_btn.setEnabled(count > 0 and not self._syncing)
 
     def _reset_motion_draft(self, imported: bool = False) -> None:
         """Same shape/reasoning as `_reset_sticks_draft()` -- Motion is
@@ -1111,6 +1194,9 @@ class MainWindow(QMainWindow):
         self.buttons_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
         self.buttons_write_btn.setEnabled(
             count > 0 and self._connection_state == "connected" and not self._syncing)
+        self.buttons_discard_btn.setVisible(count > 0)
+        self.buttons_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
+        self.buttons_discard_btn.setEnabled(count > 0 and not self._syncing)
 
     def _reset_buttons_draft(self, imported: bool = False) -> None:
         """Same shape/reasoning as `_reset_motion_draft()` -- Buttons is
@@ -1160,6 +1246,9 @@ class MainWindow(QMainWindow):
         self.profile_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
         self.profile_write_btn.setEnabled(
             count > 0 and self._connection_state == "connected" and not self._syncing)
+        self.profile_discard_btn.setVisible(count > 0)
+        self.profile_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
+        self.profile_discard_btn.setEnabled(count > 0 and not self._syncing)
 
     def _reset_profile_draft(self, imported: bool = False) -> None:
         """Same shape/reasoning as `_reset_buttons_draft()` -- Profile
@@ -1283,6 +1372,49 @@ class MainWindow(QMainWindow):
         baseline = self._profile_draft.observed.state or {}
         self._start_execute(intents, baseline)
 
+    # --- Scope-level "Discard changes" (IMPLEMENTATION-PLAN.md's "Not
+    # started" list, item 2) -- each delegates to the owning view's own
+    # revert_all(), which reverts every currently-touched field through
+    # the exact same path its own per-field Revert link would, so the
+    # draft ledger ends up empty with no separate bulk-discard logic
+    # here. Guarded the same way every _on_write_*_clicked() is: a
+    # no-op once there's nothing touched or while a write is in flight.
+
+    def _on_discard_vibration_clicked(self) -> None:
+        if self._vibration_draft.edit_count == 0 or self._syncing:
+            return
+        self.vibration_view.revert_all()
+
+    def _on_discard_dock_clicked(self) -> None:
+        if self._dock_draft.edit_count == 0 or self._syncing:
+            return
+        self.settings_view.revert_all()
+
+    def _on_discard_triggers_clicked(self) -> None:
+        if self._triggers_draft.edit_count == 0 or self._syncing:
+            return
+        self.triggers_view.revert_all()
+
+    def _on_discard_sticks_clicked(self) -> None:
+        if self._sticks_draft.edit_count == 0 or self._syncing:
+            return
+        self.sticks_view.revert_all()
+
+    def _on_discard_motion_clicked(self) -> None:
+        if self._motion_draft.edit_count == 0 or self._syncing:
+            return
+        self.motion_view.revert_all()
+
+    def _on_discard_buttons_clicked(self) -> None:
+        if self._buttons_draft.edit_count == 0 or self._syncing:
+            return
+        self.buttons_view.revert_all()
+
+    def _on_discard_profile_clicked(self) -> None:
+        if self._profile_draft.edit_count == 0 or self._syncing:
+            return
+        self._revert_report_rate()
+
     def _lock_write_ui(self) -> None:
         """Disables everything a write/review must not race against --
         shared by `_start_execute()` and `set_needs_review()`'s own
@@ -1291,12 +1423,19 @@ class MainWindow(QMainWindow):
         self.syncing_changed.emit(True)
         self.sync_btn.setEnabled(False)
         self.vibration_write_btn.setEnabled(False)
+        self.vibration_discard_btn.setEnabled(False)
         self.dock_write_btn.setEnabled(False)
+        self.dock_discard_btn.setEnabled(False)
         self.triggers_write_btn.setEnabled(False)
+        self.triggers_discard_btn.setEnabled(False)
         self.sticks_write_btn.setEnabled(False)
+        self.sticks_discard_btn.setEnabled(False)
         self.motion_write_btn.setEnabled(False)
+        self.motion_discard_btn.setEnabled(False)
         self.buttons_write_btn.setEnabled(False)
+        self.buttons_discard_btn.setEnabled(False)
         self.profile_write_btn.setEnabled(False)
+        self.profile_discard_btn.setEnabled(False)
         self.rail.read_button.setEnabled(False)
         self.rail.set_nav_enabled(False)
         self.ownership_bar.set_release_enabled(False)
@@ -1432,23 +1571,54 @@ class MainWindow(QMainWindow):
 
         scope_label = _SCOPE_LABELS.get(scope, scope or "This change")
         sheet = ReviewSheet(job, scope_label, self._theme.palette, self._theme.fonts, self)
+        # A row's own Revert link narrows sheet.job in place (see
+        # review_sheet.py's class docstring) -- this makes the revert
+        # real on whichever page owns the field, via the same
+        # path-dispatch set_execute_finished()'s own scope branch
+        # already uses.
+        sheet.rowReverted.connect(self._revert_review_sheet_path)
         result = sheet.exec()
 
-        if result == QDialog.DialogCode.Accepted and job.writable:
+        if result == QDialog.DialogCode.Accepted and sheet.job.writable:
             # Keep self._pending_execute_scope set -- the eventual
             # set_execute_finished() for THIS write still needs it.
             self._lock_write_ui()
             self.sync_status_label.setText("Writing…")
             # force_conflicts=True: reaching this sheet at all means the
-            # user has already seen any conflicting row clearly (this
-            # pass has no per-row revert -- see review_sheet.py's own
-            # module docstring), so an explicit Write click here is the
-            # informed consent execute()'s own flag exists to require.
-            self.execute_reviewed_requested.emit(job, self._connection_generation, True)
+            # user has already seen any conflicting row clearly, and
+            # could revert it (above) -- an explicit Write click here is
+            # the informed consent execute()'s own flag exists to
+            # require. sheet.job, not the outer `job` parameter: a
+            # per-row revert narrowed it, and execute() must only ever
+            # see what's actually still meant to be written.
+            self.execute_reviewed_requested.emit(sheet.job, self._connection_generation, True)
         else:
             self._pending_execute_scope = None
             self.sync_status_label.setText("Kept editing." if result != QDialog.DialogCode.Accepted
                                             else "Nothing left to write.")
+
+    def _revert_review_sheet_path(self, path: tuple) -> None:
+        """ReviewSheet.rowReverted's one connection -- makes an in-sheet
+        row revert real on whichever page actually owns it. Dispatches
+        on self._pending_execute_scope, same as set_execute_finished()'s
+        own scope branch, because a single-scope sheet's rows all belong
+        to that one already-known view -- no generic path-to-view lookup
+        needed across different scopes."""
+        scope = self._pending_execute_scope
+        if scope == "vibration":
+            self.vibration_view.revert_path(path)
+        elif scope == "dock":
+            self.settings_view.revert_path(path)
+        elif scope == "triggers":
+            self.triggers_view.revert_path(path)
+        elif scope == "sticks":
+            self.sticks_view.revert_path(path)
+        elif scope == "motion":
+            self.motion_view.revert_path(path)
+        elif scope == "buttons":
+            self.buttons_view.revert_path(path)
+        elif scope == "profile_settings" and path == ("report_rate_hz",):
+            self._revert_report_rate()
 
     def request_read_from_device(self, force_dock_read: bool = False) -> None:
         """`force_dock_read`: DeviceWatcher skips the dock-settings blob
@@ -1486,6 +1656,9 @@ class MainWindow(QMainWindow):
         self.sync_status_label.setText(message)
         if success and device_state is not None:
             self._state_confirmed = True
+            # A real read -- whatever was imported, if anything, is about
+            # to be overwritten below with the device's actual values.
+            self._state_imported = False
         self._refresh_sync_btn()
         self._refresh_confirmed_display()
         self.rail.read_button.setEnabled(self._connection_state == "connected")
@@ -1755,6 +1928,7 @@ class MainWindow(QMainWindow):
             return
         self._state = imported
         self._state_confirmed = True
+        self._state_imported = True
         self._load_views_from_state(imported=True)
         self._refresh_sync_btn()
         self._refresh_confirmed_display()

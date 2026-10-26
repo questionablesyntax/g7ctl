@@ -163,10 +163,63 @@ class TriggersFieldTouchedTest(unittest.TestCase):
         self.assertTrue(side._was_labels["deadzone_initial"].isHidden())
         self.assertFalse(side.dz_initial.is_edited())
 
+    def test_revert_all_discards_touches_on_both_sides(self):
+        """Scope-level "Discard changes" -- the outer TriggersView wraps
+        two independent side widgets, so this has to reach both, not
+        just whichever tab happens to be showing."""
+        from g7ctlc.views.triggers_view import TriggersView
+
+        state = state_mod.default_state_dict("test")
+        state["triggers"]["left"]["hair_trigger_mode"] = "off"
+        state["triggers"]["right"]["hair_trigger_mode"] = "off"
+        view = TriggersView()
+        view.load_state(state)
+        view.sides["left"].hair_trigger_mode.set_value("fixed")
+        view.sides["right"].hair_trigger_mode.set_value("fixed")
+        reverted = []
+        view.fieldReverted.connect(lambda path: reverted.append(path))
+
+        view.revert_all()
+
+        self.assertEqual(set(reverted), {
+            ("triggers", "left", "hair_trigger_mode"),
+            ("triggers", "right", "hair_trigger_mode"),
+        })
+        self.assertFalse(view.sides["left"].hair_trigger_mode.is_edited())
+        self.assertFalse(view.sides["right"].hair_trigger_mode.is_edited())
+        self.assertEqual(view.sides["left"]._touched, set())
+        self.assertEqual(view.sides["right"]._touched, set())
+
     def test_touching_left_side_does_not_touch_right_side(self):
         view, state = self._view_with_state("left")
         view.sides["left"].hair_trigger_mode.set_value("fixed")
         self.assertFalse(view.sides["right"].hair_trigger_mode.is_edited())
+
+    def test_revert_path_reverts_the_right_side_setting_by_full_path(self):
+        """ReviewSheet's own per-row Revert (IMPLEMENTATION-PLAN.md's
+        "Not started" list, item 3) hands back a full field path, not
+        this view's internal setting key -- revert_path() has to
+        resolve ("triggers", "right", "deadzone", "initial") back to
+        "deadzone_initial" on the right side specifically."""
+        view, state = self._view_with_state("right")
+        view.sides["right"].dz_initial.setValue(40)
+        reverted = []
+        view.fieldReverted.connect(lambda path: reverted.append(path))
+
+        found = view.revert_path(("triggers", "right", "deadzone", "initial"))
+
+        self.assertTrue(found)
+        self.assertEqual(reverted, [("triggers", "right", "deadzone", "initial")])
+        self.assertFalse(view.sides["right"].dz_initial.is_edited())
+
+    def test_revert_path_is_a_no_op_for_an_untouched_field(self):
+        view, state = self._view_with_state("left")
+        self.assertFalse(view.revert_path(("triggers", "left", "hair_trigger_mode")))
+
+    def test_revert_path_is_a_no_op_for_a_path_this_view_does_not_own(self):
+        view, state = self._view_with_state("left")
+        view.sides["left"].hair_trigger_mode.set_value("fixed")
+        self.assertFalse(view.revert_path(("sticks", "left", "trajectory")))
 
 
 if __name__ == "__main__":

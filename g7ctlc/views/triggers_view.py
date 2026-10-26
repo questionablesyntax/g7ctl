@@ -63,6 +63,11 @@ _SIMPLE_SETTING_PATHS = {
     "anti_deadzone_initial": ("anti_deadzone", "initial"),
     "anti_deadzone_max": ("anti_deadzone", "max"),
 }
+# The reverse of the above -- ReviewSheet's per-row Revert hands back a
+# full field path, not this view's own internal setting key, so
+# TriggersView.revert_path() needs to translate. Every value above is
+# distinct, so this is a real one-to-one inverse, not a lossy one.
+_SETTING_FOR_SUFFIX = {suffix: setting for setting, suffix in _SIMPLE_SETTING_PATHS.items()}
 # "off"/"standard" are the confirmed factory defaults (same values
 # `_load_fields` already falls back to for a `None` reading) -- unlike
 # Vibration/Dock's genuine "Unknown", these settings always have a real
@@ -266,6 +271,20 @@ class _TriggerSideWidget(CategorySideWidget):
         field = TRIGGER_FIELDS[self.side][setting]
         self.fieldTouched.emit(path, field, value, self._profile)
 
+    def revert_all(self) -> None:
+        """Scope-level "Discard changes", this side's own touched
+        fields -- same reasoning as VibrationView.revert_all()."""
+        for setting in list(self._touched):
+            self._revert_setting(setting)
+
+    def revert_setting_if_touched(self, setting: str) -> bool:
+        """ReviewSheet's own per-row Revert link, already resolved to
+        this side's own internal setting key by TriggersView.revert_path()."""
+        if setting not in self._touched:
+            return False
+        self._revert_setting(setting)
+        return True
+
     def _revert_setting(self, setting: str) -> None:
         raw = self._loaded.get(setting)
         effective = raw if raw is not None else _SETTING_DEFAULTS[setting]
@@ -421,3 +440,21 @@ class TriggersView(QWidget):
         for side, widget in self.sides.items():
             widget.save_into(self._state["triggers"].setdefault(side, {}))
         self.changed.emit()
+
+    def revert_all(self) -> None:
+        """Scope-level "Discard changes" -- both sides, since a Triggers
+        draft can hold touches on either independently."""
+        for widget in self.sides.values():
+            widget.revert_all()
+
+    def revert_path(self, path: tuple) -> bool:
+        """ReviewSheet's own per-row Revert link -- see
+        VibrationView.revert_path()'s identical reasoning. `path` is
+        `("triggers", side, *suffix)`; resolves `suffix` back to this
+        side's own internal setting key via _SETTING_FOR_SUFFIX."""
+        if len(path) < 2 or path[0] != "triggers" or path[1] not in self.sides:
+            return False
+        setting = _SETTING_FOR_SUFFIX.get(path[2:])
+        if setting is None:
+            return False
+        return self.sides[path[1]].revert_setting_if_touched(setting)

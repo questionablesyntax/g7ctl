@@ -92,6 +92,9 @@ _SIMPLE_SETTING_PATHS = {
     "overlap_area": ("advanced_mapping", "overlap_area"),
     "dpi": ("advanced_mapping", "dpi"),
 }
+# The reverse of the above -- see triggers_view.py's identical
+# _SETTING_FOR_SUFFIX for why SticksView.revert_path() needs it.
+_SETTING_FOR_SUFFIX = {suffix: setting for setting, suffix in _SIMPLE_SETTING_PATHS.items()}
 # Confirmed factory defaults (same values `_load_fields` already falls
 # back to for a `None` reading) -- `output_mode` isn't here, its default
 # is side-aware (see `_StickSideWidget._effective_default`).
@@ -433,6 +436,20 @@ class _StickSideWidget(CategorySideWidget):
         field = STICK_FIELDS[self.side][setting]
         self.fieldTouched.emit(path, field, value, self._profile)
 
+    def revert_all(self) -> None:
+        """Scope-level "Discard changes", this side's own touched
+        fields -- same reasoning as VibrationView.revert_all()."""
+        for setting in list(self._touched):
+            self._revert_setting(setting)
+
+    def revert_setting_if_touched(self, setting: str) -> bool:
+        """ReviewSheet's own per-row Revert link -- see
+        triggers_view.py's identical reasoning."""
+        if setting not in self._touched:
+            return False
+        self._revert_setting(setting)
+        return True
+
     def _revert_setting(self, setting: str) -> None:
         raw = self._loaded.get(setting)
         effective = raw if raw is not None else self._effective_default(setting)
@@ -687,3 +704,19 @@ class SticksView(QWidget):
         for side, widget in self.sides.items():
             widget.save_into(self._state["sticks"].setdefault(side, {}))
         self.changed.emit()
+
+    def revert_all(self) -> None:
+        """Scope-level "Discard changes" -- both sides, since a Sticks
+        draft can hold touches on either independently."""
+        for widget in self.sides.values():
+            widget.revert_all()
+
+    def revert_path(self, path: tuple) -> bool:
+        """ReviewSheet's own per-row Revert link -- see
+        triggers_view.py's identical TriggersView.revert_path()."""
+        if len(path) < 2 or path[0] != "sticks" or path[1] not in self.sides:
+            return False
+        setting = _SETTING_FOR_SUFFIX.get(path[2:])
+        if setting is None:
+            return False
+        return self.sides[path[1]].revert_setting_if_touched(setting)

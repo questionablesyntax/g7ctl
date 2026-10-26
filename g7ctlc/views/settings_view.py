@@ -260,6 +260,25 @@ class SettingsView(QWidget):
         self.fieldTouched.emit(("dock_auto_on_off",), DOCK_FIELDS["dock_auto_on_off"],
                                 value, _DOCK_PROFILE_PLACEHOLDER)
 
+    def revert_path(self, path: tuple) -> bool:
+        """ReviewSheet's own per-row Revert link -- see
+        VibrationView.revert_path()'s identical reasoning."""
+        if path == ("dock_led_brightness",) and self._brightness_touched:
+            self._revert_brightness()
+            return True
+        if path == ("dock_auto_on_off",) and self._auto_on_off_touched:
+            self._revert_auto_on_off()
+            return True
+        return False
+
+    def revert_all(self) -> None:
+        """Scope-level "Discard changes" -- same reasoning as
+        VibrationView.revert_all()."""
+        if self._brightness_touched:
+            self._revert_brightness()
+        if self._auto_on_off_touched:
+            self._revert_auto_on_off()
+
     def _revert_brightness(self) -> None:
         if self._state is None:
             return

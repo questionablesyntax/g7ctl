@@ -108,8 +108,12 @@ class ReviewSheetTest(unittest.TestCase):
         job = _report_rate_job(desired=500, baseline=1000, fresh=500)  # fresh already matches desired
         self.assertEqual(job.outcomes[0].classification, Classification.ALREADY_SATISFIED)
         sheet = ReviewSheet(job, "Profile 2", self.palette, self.font_load)
-        self.assertEqual(sheet.windowTitle(), "Write 0 changes to the controller?")
+        # CRITIC.md #12's own disposition: zero rows shows "Nothing left
+        # to write," not a "Write 0 changes" button -- and the sheet
+        # stays open rather than auto-closing.
+        self.assertEqual(sheet.windowTitle(), "Nothing left to write.")
         self.assertFalse(sheet.write_btn.isEnabled())
+        self.assertFalse(sheet._empty_notice.isHidden())
 
     def test_conflict_row_shows_the_now_on_controller_value(self):
         """CRITIC.md #4's disposition: "row mark, 'Now 10% on the
@@ -125,14 +129,14 @@ class ReviewSheetTest(unittest.TestCase):
         self.assertTrue(any("Changed on the controller" in t and "250" in t for t in texts))
 
     def test_no_conflict_banner_when_nothing_conflicts(self):
-        from PyQt6.QtWidgets import QLabel
-
         from g7ctlc.review_sheet import ReviewSheet
 
         job = _report_rate_job()  # CLEAN, no conflict
         sheet = ReviewSheet(job, "Profile 2", self.palette, self.font_load)
-        texts = [lbl.text() for lbl in sheet.findChildren(QLabel)]
-        self.assertFalse(any("changed on the controller" in t.lower() for t in texts))
+        # The banner label always exists now (a later per-row revert can
+        # toggle it back on), so visibility -- not mere presence in the
+        # widget tree -- is what "no banner" actually means.
+        self.assertTrue(sheet._conflict_notice.isHidden())
 
     def test_clicking_write_accepts_the_dialog(self):
         from g7ctlc.review_sheet import ReviewSheet
@@ -161,6 +165,106 @@ class ReviewSheetTest(unittest.TestCase):
         job = prepare("t", DraftRevision("t", 1), 1, intents, baseline_state=fresh, fresh_state=fresh)
         sheet = ReviewSheet(job, "Profile 2", self.palette, self.font_load)
         self.assertEqual(sheet.windowTitle(), "Write 2 changes to the controller?")
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class ReviewSheetRowRevertTest(unittest.TestCase):
+    """Per-row revert (IMPLEMENTATION-PLAN.md's "Not started" list, item
+    3 -- CRITIC.md #12's own mockup shows one, and its own complaint
+    about the sheet "clos[ing] itself under the pointer when the last
+    row is reverted")."""
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        from g7ctlc.fonts import load_fonts
+        from g7ctlc.palette import DARK_PALETTE
+
+        self.palette = DARK_PALETTE
+        self.font_load = load_fonts()
+
+    def _two_row_job(self):
+        intents = [
+            ApprovedIntent(("vibration", "left_grip"), 75, VIBRATION_LEVEL_FIELDS["left_grip"], profile=2),
+            ApprovedIntent(("vibration", "right_grip"), 75, VIBRATION_LEVEL_FIELDS["right_grip"], profile=2),
+        ]
+        fresh = {"vibration": {"left_grip": 25, "right_grip": 25}}
+        return prepare("t", DraftRevision("t", 1), 1, intents, baseline_state=fresh, fresh_state=fresh)
+
+    def test_clicking_a_rows_revert_link_emits_the_rows_path(self):
+        from g7ctlc.review_sheet import ReviewSheet
+
+        sheet = ReviewSheet(self._two_row_job(), "Profile 2", self.palette, self.font_load)
+        reverted = []
+        sheet.rowReverted.connect(lambda path: reverted.append(path))
+
+        # Row widgets are [field, was, will_be, revert_btn, (conflict_label)]
+        # -- index 3, not -1, since a CONFLICT row appends a 5th widget
+        # after the button.
+        sheet._row_widgets[("vibration", "left_grip")][3].click()
+
+        self.assertEqual(reverted, [("vibration", "left_grip")])
+
+    def test_reverting_one_row_of_two_narrows_the_job_and_relabels_write(self):
+        from g7ctlc.review_sheet import ReviewSheet
+
+        job = self._two_row_job()
+        sheet = ReviewSheet(job, "Profile 2", self.palette, self.font_load)
+
+        sheet._row_widgets[("vibration", "left_grip")][-1].click()
+
+        self.assertEqual(len(sheet.job.writable), 1)
+        self.assertEqual(sheet.job.writable[0].intent.path, ("vibration", "right_grip"))
+        self.assertEqual(sheet.windowTitle(), "Write 1 change to the controller?")
+        self.assertEqual(sheet.write_btn.text(), "Write 1 change")
+        self.assertTrue(sheet.write_btn.isEnabled())
+        # The original job the caller passed in is untouched -- only
+        # this sheet's own copy narrows.
+        self.assertEqual(len(job.writable), 2)
+
+    def test_reverted_rows_widgets_are_hidden(self):
+        from g7ctlc.review_sheet import ReviewSheet
+
+        sheet = ReviewSheet(self._two_row_job(), "Profile 2", self.palette, self.font_load)
+        widgets = sheet._row_widgets[("vibration", "left_grip")]
+
+        widgets[3].click()  # that row's own Revert button
+
+        for widget in widgets:
+            self.assertTrue(widget.isHidden())
+
+    def test_reverting_the_only_row_shows_nothing_left_to_write_without_closing(self):
+        from g7ctlc.review_sheet import ReviewSheet
+
+        job = _report_rate_job()
+        sheet = ReviewSheet(job, "Profile 2", self.palette, self.font_load)
+        closed = []
+        sheet.accepted.connect(lambda: closed.append("accepted"))
+        sheet.rejected.connect(lambda: closed.append("rejected"))
+
+        sheet._row_widgets[("report_rate_hz",)][3].click()
+
+        self.assertEqual(sheet.windowTitle(), "Nothing left to write.")
+        self.assertFalse(sheet.write_btn.isEnabled())
+        self.assertFalse(sheet._empty_notice.isHidden())
+        # Still open, not auto-closed -- CRITIC.md #12's own complaint
+        # about the sheet "clos[ing] itself under the pointer when the
+        # last row is reverted".
+        self.assertEqual(closed, [])
+
+    def test_reverting_the_only_conflicting_row_hides_the_conflict_banner(self):
+        from g7ctlc.review_sheet import ReviewSheet
+
+        job = _report_rate_job(desired=1000, baseline=500, fresh=250)  # CONFLICT
+        sheet = ReviewSheet(job, "Profile 2", self.palette, self.font_load)
+        self.assertFalse(sheet._conflict_notice.isHidden())  # sanity
+
+        sheet._row_widgets[("report_rate_hz",)][3].click()
+
+        self.assertTrue(sheet._conflict_notice.isHidden())
 
 
 if __name__ == "__main__":

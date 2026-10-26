@@ -17,23 +17,38 @@ not overridden here, because closing without writing is never
 destructive and needs no extra confirmation (the component inventory's
 own words: "Escape = Keep editing").
 
-**Deliberately not built in this first pass**: per-row revert from
-inside the sheet (CRITIC.md #12's own mockup shows one). Reverting a
-field here would need to call back into whichever page's own per-field
-revert method actually owns that path -- a real path-to-view dispatch
-this app has no shared concept of yet (each view reverts its own fields
-through its own locally-named setting, not a path tuple MainWindow could
-dispatch generically). **Write N changes** instead writes every row
-shown, `force_conflicts=True` -- reaching this sheet at all means the
-user has already SEEN any conflict clearly, which is the informed
-consent `execute()`'s own `force_conflicts` flag exists to require.
-Keep editing closes the sheet with nothing written; the field stays
-exactly as drafted, revertable the normal way on its own page.
+**Per-row revert** (added 2026-10-26, IMPLEMENTATION-PLAN.md's "Not
+started" list item 3 -- CRITIC.md #12's own mockup shows one): each
+row's own small Revert link emits `rowReverted(path)` so the CALLER can
+revert that field for real, on whichever page actually owns it -- this
+class has no path-to-view dispatch of its own, and doesn't need one,
+since a single-scope sheet's caller already knows which one view that
+is (`set_needs_review()`'s own `self._pending_execute_scope`). The row
+is then dropped from `self.job` itself (`dataclasses.replace()` with a
+narrower `outcomes` tuple -- `execute()` only ever reads `job.outcomes`/
+`job.writable`, both computed properties, so this is a real, sound
+narrowing, not a cosmetic one) and hidden from the grid; **Write N
+changes** re-labels itself to match what's actually left and, reaching
+zero, disables itself with a "Nothing left to write" notice rather than
+auto-closing -- CRITIC.md #12's own complaint about the review sheet
+"clos[ing] itself under the pointer when the last row is reverted".
+Closing is still one click away (**Keep editing**), just never a
+surprise.
+
+**Write N changes** writes every remaining row, `force_conflicts=True`
+-- reaching this sheet at all means the user has already SEEN any
+conflict clearly (and could revert it, per above), which is the
+informed consent `execute()`'s own `force_conflicts` flag exists to
+require. Keep editing closes the sheet with nothing written; any field
+never reverted in-sheet stays exactly as drafted, revertable the normal
+way on its own page.
 """
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -103,28 +118,33 @@ class ReviewSheet(ModalOverlayBase):
     """`job.writable` outcomes, one row each. `exec()` returns
     `QDialog.DialogCode.Accepted` for Write, `Rejected` for Keep editing
     or Escape -- the caller is responsible for actually executing
-    (`request_execute_reviewed`) only on Accepted."""
+    (`request_execute_reviewed`) only on Accepted, and must read
+    `sheet.job` (not the `job` it originally passed in) at that point,
+    since a per-row revert narrows it in place."""
+
+    rowReverted = pyqtSignal(tuple)  # the reverted row's own field path
 
     def __init__(self, job: PreparedJob, scope_label: str, palette: Palette,
                  font_load: FontLoadResult, parent: QWidget | None = None) -> None:
         super().__init__(palette, parent)
         self.job = job
-        rows = job.writable
-        self.setWindowTitle(f"Write {len(rows)} change{'s' if len(rows) != 1 else ''} to the controller?")
+        self._font_load = font_load
+        self._row_widgets: dict[tuple, list[QWidget]] = {}
 
-        title = QLabel(self.windowTitle(), self)
-        title.setFont(font_for("title", font_load))
-        title.setWordWrap(True)
-        self.content_layout.addWidget(title)
+        self._title_label = QLabel(self)
+        self._title_label.setFont(font_for("title", font_load))
+        self._title_label.setWordWrap(True)
+        self.content_layout.addWidget(self._title_label)
 
-        subtitle = QLabel(f"{scope_label}. Compared with what the controller holds now.", self)
-        subtitle.setFont(font_for("body", font_load))
-        subtitle.setProperty("role", "secondary")
-        subtitle.setWordWrap(True)
-        self.content_layout.addWidget(subtitle)
+        self._subtitle_label = QLabel(
+            f"{scope_label}. Compared with what the controller holds now.", self)
+        self._subtitle_label.setFont(font_for("body", font_load))
+        self._subtitle_label.setProperty("role", "secondary")
+        self._subtitle_label.setWordWrap(True)
+        self.content_layout.addWidget(self._subtitle_label)
 
         rows_widget = QWidget(self)
-        grid = QGridLayout(rows_widget)
+        self._grid = grid = QGridLayout(rows_widget)
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(10)
         grid.setColumnStretch(0, 1)
@@ -136,40 +156,15 @@ class ReviewSheet(ModalOverlayBase):
         # two-row Dock sheet) rather than ever wrapping or eliding.
         grid.setColumnMinimumWidth(1, 70)
         grid.setColumnMinimumWidth(2, 110)
-        for header_col, text in enumerate(("Field", "Was", "Will be")):
+        for header_col, text in enumerate(("Field", "Was", "Will be", "")):
             header = QLabel(text, rows_widget)
             header.setFont(font_for("label", font_load))
             header.setProperty("role", "secondary")
             grid.addWidget(header, 0, header_col)
 
-        grid_row = 1
-        for outcome in rows:
-            field_label = QLabel(format_field_label(outcome.intent.path), rows_widget)
-            field_label.setFont(font_for("body", font_load))
-            field_label.setWordWrap(True)
-            grid.addWidget(field_label, grid_row, 0)
-
-            keycode_row = _is_keycode_row(outcome)
-            was_label = QLabel(format_field_value(outcome.baseline_value, keycode=keycode_row), rows_widget)
-            was_label.setFont(font_for("body", font_load))
-            was_label.setProperty("role", "secondary")
-            grid.addWidget(was_label, grid_row, 1)
-
-            will_be_label = QLabel(format_field_value(outcome.intent.desired, keycode=keycode_row), rows_widget)
-            will_be_label.setFont(font_for("body", font_load))
-            grid.addWidget(will_be_label, grid_row, 2)
-            grid_row += 1
-
-            if outcome.classification is Classification.CONFLICT:
-                conflict_label = QLabel(
-                    f"Changed on the controller -- now "
-                    f"{format_field_value(outcome.fresh_value, keycode=keycode_row)}.",
-                    rows_widget)
-                conflict_label.setFont(font_for("small", font_load))
-                conflict_label.setProperty("role", "caution")
-                conflict_label.setWordWrap(True)
-                grid.addWidget(conflict_label, grid_row, 0, 1, 3)
-                grid_row += 1
+        self._grid_row = 1
+        for outcome in job.writable:
+            self._add_row(rows_widget, outcome)
 
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
@@ -183,15 +178,19 @@ class ReviewSheet(ModalOverlayBase):
         scroll.setMinimumWidth(rows_widget.sizeHint().width())
         self.content_layout.addWidget(scroll, 1)
 
-        if any(o.classification is Classification.CONFLICT for o in rows):
-            notice = QLabel(
-                "Some values have changed on the controller since this was drafted -- "
-                "review the rows marked above. Writing will overwrite them with what's shown here.",
-                self)
-            notice.setFont(font_for("small", font_load))
-            notice.setProperty("role", "caution")
-            notice.setWordWrap(True)
-            self.content_layout.addWidget(notice)
+        self._conflict_notice = QLabel(
+            "Some values have changed on the controller since this was drafted -- "
+            "review the rows marked above. Writing will overwrite them with what's shown here.",
+            self)
+        self._conflict_notice.setFont(font_for("small", font_load))
+        self._conflict_notice.setProperty("role", "caution")
+        self._conflict_notice.setWordWrap(True)
+        self.content_layout.addWidget(self._conflict_notice)
+
+        self._empty_notice = QLabel("Nothing left to write.", self)
+        self._empty_notice.setFont(font_for("small", font_load))
+        self._empty_notice.setProperty("role", "secondary")
+        self.content_layout.addWidget(self._empty_notice)
 
         separator = QFrame(self)
         separator.setFrameShape(QFrame.Shape.HLine)
@@ -203,11 +202,83 @@ class ReviewSheet(ModalOverlayBase):
         self.keep_editing_btn = QPushButton("Keep editing", self)
         self.keep_editing_btn.clicked.connect(self.reject)
         button_row.addWidget(self.keep_editing_btn)
-        self.write_btn = QPushButton(f"Write {len(rows)} change{'s' if len(rows) != 1 else ''}", self)
+        self.write_btn = QPushButton(self)
         self.write_btn.setProperty("role", "write")
         self.write_btn.clicked.connect(self.accept)
-        self.write_btn.setEnabled(bool(rows))
         button_row.addWidget(self.write_btn)
         self.content_layout.addLayout(button_row)
 
         self.setMinimumWidth(520)
+        self._refresh_header()
+
+    def _add_row(self, rows_widget: QWidget, outcome) -> None:
+        font_load = self._font_load
+        grid = self._grid
+        row = self._grid_row
+        widgets: list[QWidget] = []
+
+        field_label = QLabel(format_field_label(outcome.intent.path), rows_widget)
+        field_label.setFont(font_for("body", font_load))
+        field_label.setWordWrap(True)
+        grid.addWidget(field_label, row, 0)
+        widgets.append(field_label)
+
+        keycode_row = _is_keycode_row(outcome)
+        was_label = QLabel(format_field_value(outcome.baseline_value, keycode=keycode_row), rows_widget)
+        was_label.setFont(font_for("body", font_load))
+        was_label.setProperty("role", "secondary")
+        grid.addWidget(was_label, row, 1)
+        widgets.append(was_label)
+
+        will_be_label = QLabel(format_field_value(outcome.intent.desired, keycode=keycode_row), rows_widget)
+        will_be_label.setFont(font_for("body", font_load))
+        grid.addWidget(will_be_label, row, 2)
+        widgets.append(will_be_label)
+
+        path = outcome.intent.path
+        revert_btn = QPushButton("Revert", rows_widget)
+        revert_btn.setProperty("role", "link")
+        revert_btn.clicked.connect(lambda _c=False, p=path: self._on_row_revert_clicked(p))
+        grid.addWidget(revert_btn, row, 3)
+        widgets.append(revert_btn)
+        row += 1
+
+        if outcome.classification is Classification.CONFLICT:
+            conflict_label = QLabel(
+                f"Changed on the controller -- now "
+                f"{format_field_value(outcome.fresh_value, keycode=keycode_row)}.",
+                rows_widget)
+            conflict_label.setFont(font_for("small", font_load))
+            conflict_label.setProperty("role", "caution")
+            conflict_label.setWordWrap(True)
+            grid.addWidget(conflict_label, row, 0, 1, 4)
+            widgets.append(conflict_label)
+            row += 1
+
+        self._row_widgets[path] = widgets
+        self._grid_row = row
+
+    def _on_row_revert_clicked(self, path: tuple) -> None:
+        """Narrows self.job in place (see the class docstring) and hides
+        the row -- the caller (connected to rowReverted) is responsible
+        for making the revert real on whichever page actually owns this
+        field; this class only ever reflects what's left to write."""
+        for widget in self._row_widgets.pop(path, ()):
+            widget.setVisible(False)
+        self.job = dataclasses.replace(
+            self.job, outcomes=tuple(o for o in self.job.outcomes if o.intent.path != path))
+        self._refresh_header()
+        self.rowReverted.emit(path)
+
+    def _refresh_header(self) -> None:
+        rows = self.job.writable
+        n = len(rows)
+        self.setWindowTitle(
+            "Nothing left to write." if n == 0
+            else f"Write {n} change{'s' if n != 1 else ''} to the controller?")
+        self._title_label.setText(self.windowTitle())
+        self.write_btn.setText(f"Write {n} change{'s' if n != 1 else ''}")
+        self.write_btn.setEnabled(n > 0)
+        has_conflicts = any(o.classification is Classification.CONFLICT for o in rows)
+        self._conflict_notice.setVisible(has_conflicts)
+        self._empty_notice.setVisible(n == 0)

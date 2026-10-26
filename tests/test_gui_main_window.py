@@ -930,6 +930,101 @@ class UnconfirmedStateDisplayTest(unittest.TestCase):
 
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class ImportedProvenanceBannerTest(unittest.TestCase):
+    """DESIGN-SPEC.md section 4 item 2: "An import is labelled 'Imported,
+    not read from this controller.'" _on_import() already set
+    self._state_confirmed = True (so the page unlocks for editing) and
+    showed a one-line status message, but nothing persistent told the
+    user the values hadn't actually come from the connected controller
+    -- the status text gets overwritten by the next unrelated event.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+        return MainWindow()
+
+    def _import(self, w):
+        with mock.patch.object(
+            state_mod, "load_state", return_value=state_mod.default_state_dict("imported")
+        ), mock.patch(
+            "g7ctlc.main_window.QFileDialog.getOpenFileName",
+            return_value=("/tmp/snapshot.json", ""),
+        ):
+            w._on_import()
+
+    def test_hidden_on_a_freshly_launched_window(self):
+        w = self._window()
+        self.assertFalse(w.imported_banner.isVisibleTo(w))
+
+    def test_shown_after_an_import(self):
+        w = self._window()
+        self._import(w)
+        self.assertTrue(w._state_imported)
+        self.assertTrue(w.imported_banner.isVisibleTo(w))
+
+    def test_a_successful_read_from_device_hides_it_and_clears_the_flag(self):
+        w = self._window()
+        self._import(w)
+        w.set_connection_state("connected")
+
+        w.set_read_finished(True, "read ok", state_mod.default_state_dict("read"))
+
+        self.assertFalse(w._state_imported)
+        self.assertFalse(w.imported_banner.isVisibleTo(w))
+
+    def test_a_successful_sync_now_hides_it_and_clears_the_flag(self):
+        w = self._window()
+        self._import(w)
+        w.set_connection_state("connected")
+
+        w.set_sync_finished(True, "State applied")
+
+        self.assertFalse(w._state_imported)
+        self.assertFalse(w.imported_banner.isVisibleTo(w))
+
+    def test_a_failed_sync_does_not_clear_it(self):
+        """An import that failed to actually land on the device must
+        keep reading as unconfirmed -- the whole point of the flag."""
+        w = self._window()
+        self._import(w)
+        w.set_connection_state("connected")
+
+        with mock.patch("g7ctlc.main_window.QMessageBox.warning"):
+            w.set_sync_finished(False, "Lost connection during sync")
+
+        self.assertTrue(w._state_imported)
+        self.assertTrue(w.imported_banner.isVisibleTo(w))
+
+    def test_a_failed_read_does_not_clear_it(self):
+        w = self._window()
+        self._import(w)
+        w.set_connection_state("connected")
+
+        with mock.patch("g7ctlc.main_window.QMessageBox.warning"):
+            w.set_read_finished(False, "Read failed: timeout", None)
+
+        self.assertTrue(w._state_imported)
+        self.assertTrue(w.imported_banner.isVisibleTo(w))
+
+    def test_switching_profile_does_not_clear_it(self):
+        """Whole-state provenance, not per-profile -- an import covers
+        every profile at once, so viewing a different one doesn't change
+        whether any of it has actually been confirmed against hardware."""
+        w = self._window()
+        self._import(w)
+
+        w.rail.profile_switch.set_value("2")
+
+        self.assertTrue(w._state_imported)
+        self.assertTrue(w.imported_banner.isVisibleTo(w))
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
 class ImportExportSyncingGuardTest(unittest.TestCase):
     """Real race, found 2026-09-01: Import/Export were never gated on
     _syncing at all, unlike every other state-affecting control

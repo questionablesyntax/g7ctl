@@ -233,6 +233,28 @@ class VibrationView(QWidget):
         profile = (self._state or {}).get("controller_slot") or 1
         self.fieldTouched.emit(("vibration", key), VIBRATION_LEVEL_FIELDS[key], value, profile)
 
+    def revert_path(self, path: tuple) -> bool:
+        """ReviewSheet's own per-row Revert link -- a no-op (returns
+        False) for a path this view doesn't own or that isn't actually
+        touched, so a caller dispatching by scope (MainWindow's
+        _revert_review_sheet_path()) doesn't need to pre-validate."""
+        if len(path) != 2 or path[0] != "vibration":
+            return False
+        key = path[1]
+        if key not in self._sliders_touched:
+            return False
+        self._revert_level(key)
+        return True
+
+    def revert_all(self) -> None:
+        """Scope-level "Discard changes": every currently-touched field,
+        reverted the same way its own Revert link would -- one
+        fieldReverted per field, through the same path, so MainWindow's
+        draft ledger ends up empty with no separate bulk-discard code on
+        its side."""
+        for key in list(self._sliders_touched):
+            self._revert_level(key)
+
     def _revert_level(self, key: str) -> None:
         if self._state is None:
             return

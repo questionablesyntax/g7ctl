@@ -107,6 +107,9 @@ _SIMPLE_SETTING_PATHS = {
     "direction_left": ("direction_bindings", "left"),
     "direction_right": ("direction_bindings", "right"),
 }
+# The reverse of the above -- see triggers_view.py's identical
+# _SETTING_FOR_SUFFIX for why MotionView.revert_path() needs it.
+_SETTING_FOR_SUFFIX = {suffix: setting for setting, suffix in _SIMPLE_SETTING_PATHS.items()}
 # A keycode field's `None` is a real, confirmed "unbound" state (motion.py's
 # own `_resolve_keycode_or_unbound()`) -- never a display fallback like
 # every other field's `None` means, so these get their own `Intent.CLEAR`
@@ -425,6 +428,20 @@ class _MotionSideWidget(CategorySideWidget):
         desired = Intent.CLEAR if (setting in _KEYCODE_SETTINGS and value is None) else value
         self.fieldTouched.emit(path, field, desired, self._profile)
 
+    def revert_all(self) -> None:
+        """Scope-level "Discard changes", this side's own touched
+        fields -- same reasoning as VibrationView.revert_all()."""
+        for setting in list(self._touched):
+            self._revert_setting(setting)
+
+    def revert_setting_if_touched(self, setting: str) -> bool:
+        """ReviewSheet's own per-row Revert link -- see
+        triggers_view.py's identical reasoning."""
+        if setting not in self._touched:
+            return False
+        self._revert_setting(setting)
+        return True
+
     def _revert_setting(self, setting: str) -> None:
         effective = self._effective(setting, self._loaded.get(setting))
         self._loading = True
@@ -597,3 +614,19 @@ class MotionView(QWidget):
         for side, widget in self.sides.items():
             widget.save_into(motion.setdefault(side, {}))
         self.changed.emit()
+
+    def revert_all(self) -> None:
+        """Scope-level "Discard changes" -- both sides, since a Motion
+        draft can hold touches on either independently."""
+        for widget in self.sides.values():
+            widget.revert_all()
+
+    def revert_path(self, path: tuple) -> bool:
+        """ReviewSheet's own per-row Revert link -- see
+        triggers_view.py's identical TriggersView.revert_path()."""
+        if len(path) < 2 or path[0] != "motion" or path[1] not in self.sides:
+            return False
+        setting = _SETTING_FOR_SUFFIX.get(path[2:])
+        if setting is None:
+            return False
+        return self.sides[path[1]].revert_setting_if_touched(setting)

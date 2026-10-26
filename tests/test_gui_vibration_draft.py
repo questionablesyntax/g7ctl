@@ -133,6 +133,40 @@ class VibrationFieldTouchedTest(unittest.TestCase):
         self.assertTrue(view._revert_buttons["left_grip"].isHidden())
         self.assertFalse(view.sliders["left_grip"].is_edited())
 
+    def test_revert_all_discards_every_touched_field(self):
+        """Scope-level "Discard changes" (IMPLEMENTATION-PLAN.md's "Not
+        started" list, item 2) -- every touched field reverts, untouched
+        fields are left alone."""
+        view, state = self._view_with_state(left_grip=25, right_grip=0)
+        view.sliders["left_grip"].set_value("75")
+        view.sliders["right_grip"].set_value("50")
+        reverted = []
+        view.fieldReverted.connect(lambda path: reverted.append(path))
+
+        view.revert_all()
+
+        self.assertEqual(set(reverted), {("vibration", "left_grip"), ("vibration", "right_grip")})
+        self.assertEqual(view.sliders["left_grip"].value(), "25")
+        self.assertEqual(view.sliders["right_grip"].value(), "0")
+        self.assertEqual(view._sliders_touched, set())
+        self.assertTrue(view._revert_buttons["left_grip"].isHidden())
+        self.assertTrue(view._revert_buttons["right_grip"].isHidden())
+
+    def test_revert_path_reverts_one_field_and_leaves_the_other_untouched(self):
+        """ReviewSheet's own per-row Revert (IMPLEMENTATION-PLAN.md's
+        "Not started" list, item 3)."""
+        view, state = self._view_with_state(left_grip=25, right_grip=0)
+        view.sliders["left_grip"].set_value("75")
+        view.sliders["right_grip"].set_value("50")
+
+        self.assertTrue(view.revert_path(("vibration", "left_grip")))
+
+        self.assertEqual(view.sliders["left_grip"].value(), "25")
+        self.assertTrue(view.sliders["right_grip"].is_edited())  # untouched by the revert
+        self.assertFalse(view.revert_path(("vibration", "left_grip")))  # already reverted
+        self.assertFalse(view.revert_path(("vibration", "unknown_key")))
+        self.assertFalse(view.revert_path(("dock_led_brightness",)))  # not this view's path
+
     def test_unknown_observed_value_shows_as_unknown_not_a_fabricated_number(self):
         from g7ctlc.views.vibration_view import VibrationView
 

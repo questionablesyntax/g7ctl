@@ -342,6 +342,47 @@ class MotionKeycodeFieldTest(unittest.TestCase):
 
         self.assertEqual(reverted, [("motion", "aim", "activate_button")])
 
+    def test_revert_all_discards_a_keycode_field_and_a_simple_field_on_different_sides(self):
+        """Scope-level "Discard changes" -- both the two-side composition
+        (see triggers_view.py's identical test) and the keycode-field
+        CLEAR-mapping path at once, since Motion is the one view with
+        both in play."""
+        from g7ctlc.views.motion_view import MotionView
+
+        state = state_mod.default_state_dict("test")
+        state.setdefault("motion", {"aim": {}, "tilt": {}})
+        state["motion"]["aim"]["activate_button"] = None
+        state["motion"]["tilt"]["invert_y"] = False
+        view = MotionView()
+        view.load_state(state)
+        aim, tilt = view.sides["aim"], view.sides["tilt"]
+        aim._open_picker(aim.activate_button)
+        aim._on_code_chosen("native_a")
+        tilt.invert_y.setChecked(True)
+        reverted = []
+        view.fieldReverted.connect(lambda path: reverted.append(path))
+
+        view.revert_all()
+
+        self.assertEqual(set(reverted), {("motion", "aim", "activate_button"), ("motion", "tilt", "invert_y")})
+        self.assertFalse(tilt.invert_y.isChecked())
+        self.assertEqual(aim._touched, set())
+        self.assertEqual(tilt._touched, set())
+
+    def test_revert_path_reverts_a_keycode_field_by_full_path(self):
+        """ReviewSheet's own per-row Revert -- see triggers_view.py's
+        identical test for the full reasoning; Motion additionally
+        proves it on a keycode field, not just a plain one."""
+        view, state = self._view_with_state("aim", activate_button=None)
+        side = view.sides["aim"]
+        side._open_picker(side.activate_button)
+        side._on_code_chosen("native_a")
+
+        found = view.revert_path(("motion", "aim", "activate_button"))
+
+        self.assertTrue(found)
+        self.assertEqual(side._touched, set())
+
 
 if __name__ == "__main__":
     unittest.main()

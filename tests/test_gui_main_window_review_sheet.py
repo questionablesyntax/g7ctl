@@ -115,6 +115,11 @@ class SetNeedsReviewTest(unittest.TestCase):
 
         with mock.patch("g7ctlc.main_window.ReviewSheet") as mock_sheet_cls:
             mock_sheet_cls.return_value.exec.return_value = QDialog.DialogCode.Accepted
+            # set_needs_review() reads sheet.job, not the outer `job`
+            # parameter, since a per-row revert narrows it in place --
+            # the mock needs to actually carry it, same as the real
+            # ReviewSheet.__init__ does (self.job = job).
+            mock_sheet_cls.return_value.job = job
             window._connection_generation = 5
             window.set_needs_review(job, {"vibration": {"left_grip": 25}})
 
@@ -177,6 +182,67 @@ class SetNeedsReviewTest(unittest.TestCase):
         self.assertEqual(window._vibration_draft.edit_count, 0)
         self.assertEqual(window._state["vibration"]["left_grip"], 75)
         self.assertTrue(window.vibration_write_btn.isHidden())
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class RevertReviewSheetPathTest(unittest.TestCase):
+    """_revert_review_sheet_path() -- ReviewSheet.rowReverted's one
+    connection, dispatching a per-row revert to whichever page actually
+    owns the field (IMPLEMENTATION-PLAN.md's "Not started" list, item
+    3). Calls it directly rather than driving a real modal sheet's
+    exec() -- same reasoning test_gui_main_window_fast_path.py's
+    discard-button tests already use for _on_discard_*_clicked()."""
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+
+        window = MainWindow()
+        window._state["controller_slot"] = 2
+        window._state_confirmed = True
+        window._connection_state = "connected"
+        return window
+
+    def test_dispatches_to_the_vibration_view_for_a_vibration_scope_review(self):
+        window = self._window()
+        window._state["vibration"]["left_grip"] = 25
+        window._reset_vibration_draft()
+        window.vibration_view.load_state(window._state)
+        window.vibration_view.sliders["left_grip"].set_value("75")
+        window._pending_execute_scope = "vibration"
+        self.assertEqual(window._vibration_draft.edit_count, 1)
+
+        window._revert_review_sheet_path(("vibration", "left_grip"))
+
+        self.assertEqual(window._vibration_draft.edit_count, 0)
+        self.assertEqual(window.vibration_view.sliders["left_grip"].value(), "25")
+
+    def test_dispatches_to_profile_settings_without_a_view_class(self):
+        window = self._window()
+        window._state["report_rate_hz"] = 500
+        window._reset_profile_draft()
+        window._sync_report_rate_combo()
+        window.report_rate_combo.set_value("1000")
+        window._pending_execute_scope = "profile_settings"
+        self.assertEqual(window._profile_draft.edit_count, 1)
+
+        window._revert_review_sheet_path(("report_rate_hz",))
+
+        self.assertEqual(window._profile_draft.edit_count, 0)
+        self.assertEqual(window._state["report_rate_hz"], 500)
+
+    def test_an_unknown_scope_is_a_silent_no_op(self):
+        """A stale/unexpected self._pending_execute_scope must not raise
+        -- there is nothing sensible to revert, so this just does
+        nothing, same as every view's own revert_path() returning False
+        for a path it doesn't own."""
+        window = self._window()
+        window._pending_execute_scope = None
+        window._revert_review_sheet_path(("vibration", "left_grip"))  # must not raise
 
 
 if __name__ == "__main__":

@@ -295,6 +295,62 @@ class ButtonsDpadOptionTest(unittest.TestCase):
         self.assertTrue(view._dpad_was_labels["dpad_diagonal_lock"].isHidden())
         self.assertFalse(view.dpad_diagonal_lock.is_edited())
 
+    def test_revert_all_discards_an_inactive_button_binding_and_a_dpad_option(self):
+        """Scope-level "Discard changes" -- deliberately touches a button
+        whose picker is NOT the currently-open one (self._active_button
+        stays on "a" throughout), since this page's own per-field
+        Revert only ever reverts _active_button -- revert_all() must
+        not share that limitation."""
+        view, state = self._view_with_state()
+        state["buttons"].setdefault("default", {})["a"] = "native_a"
+        state["buttons"]["default"]["b"] = "native_b"
+        view.load_state(state)
+        view._on_diagram_activated("a")
+        view._on_code_chosen("native_x")  # "a" becomes the active button, touched
+        state["buttons"]["default"]["b"] = "native_y"
+        view._mark_button_touched("default", "b", "native_y")  # "b" touched without ever being active
+        view.dpad_diagonal_lock.setChecked(not view.dpad_diagonal_lock.isChecked())
+        reverted = []
+        view.fieldReverted.connect(lambda path: reverted.append(path))
+
+        view.revert_all()
+
+        self.assertEqual(set(reverted), {
+            ("buttons", "default", "a"), ("buttons", "default", "b"), ("dpad_diagonal_lock",),
+        })
+        self.assertEqual(state["buttons"]["default"]["a"], "native_a")
+        self.assertEqual(state["buttons"]["default"]["b"], "native_b")
+        self.assertEqual(view._touched, set())
+        self.assertEqual(view._dpad_touched, set())
+        self.assertTrue(view._dpad_was_labels["dpad_diagonal_lock"].isHidden())
+
+    def test_revert_path_reverts_an_inactive_button_binding_by_full_path(self):
+        """ReviewSheet's own per-row Revert (IMPLEMENTATION-PLAN.md's
+        "Not started" list, item 3) -- same "doesn't need
+        self._active_button" reasoning as revert_all()'s own test."""
+        view, state = self._view_with_state()
+        state["buttons"].setdefault("default", {})["a"] = "native_a"
+        state["buttons"]["default"]["b"] = "native_b"
+        view.load_state(state)
+        state["buttons"]["default"]["b"] = "native_y"
+        view._mark_button_touched("default", "b", "native_y")
+
+        found = view.revert_path(("buttons", "default", "b"))
+
+        self.assertTrue(found)
+        self.assertEqual(state["buttons"]["default"]["b"], "native_b")
+        self.assertEqual(view._touched, set())
+        self.assertFalse(view.revert_path(("buttons", "default", "b")))  # already reverted
+
+    def test_revert_path_reverts_a_dpad_option_by_full_path(self):
+        view, state = self._view_with_state(dpad_diagonal_lock=False)
+        view.dpad_diagonal_lock.setChecked(True)
+
+        found = view.revert_path(("dpad_diagonal_lock",))
+
+        self.assertTrue(found)
+        self.assertFalse(view.dpad_diagonal_lock.isChecked())
+
 
 if __name__ == "__main__":
     unittest.main()

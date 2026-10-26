@@ -145,6 +145,22 @@ class DockFieldTouchedTest(unittest.TestCase):
         self.assertTrue(view._auto_was_label.isHidden())
         self.assertFalse(view.auto_on_off.is_edited())
 
+    def test_revert_all_discards_both_touched_fields(self):
+        """Scope-level "Discard changes" -- see vibration_view.py's
+        identical test."""
+        view, state = self._view_with_state(dock_led_brightness=25, dock_auto_on_off=False)
+        view.brightness.set_value("100")
+        view.auto_on_off.setChecked(True)
+        reverted = []
+        view.fieldReverted.connect(lambda path: reverted.append(path))
+
+        view.revert_all()
+
+        self.assertEqual(set(reverted), {("dock_led_brightness",), ("dock_auto_on_off",)})
+        self.assertFalse(view.auto_on_off.isChecked())
+        self.assertTrue(view._brightness_was_label.isHidden())
+        self.assertTrue(view._auto_was_label.isHidden())
+
     def test_moving_brightness_does_not_also_mark_auto_on_off(self):
         """Mirrors vibration_view.py's "unrelated edit" regression -- two
         independent fields sharing one _on_edit() must not cross-touch."""
@@ -152,6 +168,20 @@ class DockFieldTouchedTest(unittest.TestCase):
         view.brightness.set_value("100")
         self.assertFalse(view.auto_on_off.is_edited())
         self.assertTrue(view._auto_was_label.isHidden())
+
+    def test_revert_path_reverts_one_field_and_leaves_the_other_untouched(self):
+        """ReviewSheet's own per-row Revert (IMPLEMENTATION-PLAN.md's
+        "Not started" list, item 3)."""
+        view, state = self._view_with_state(dock_led_brightness=25, dock_auto_on_off=False)
+        view.brightness.set_value("100")
+        view.auto_on_off.setChecked(True)
+
+        self.assertTrue(view.revert_path(("dock_led_brightness",)))
+
+        self.assertFalse(view.brightness.is_edited())
+        self.assertTrue(view.auto_on_off.is_edited())  # untouched by the revert
+        self.assertFalse(view.revert_path(("dock_led_brightness",)))  # already reverted
+        self.assertFalse(view.revert_path(("vibration", "left_grip")))  # not this view's path
 
 
 if __name__ == "__main__":

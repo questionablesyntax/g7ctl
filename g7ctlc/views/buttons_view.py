@@ -291,6 +291,49 @@ class ButtonsView(QWidget):
         desired = Intent.CLEAR if value is None else value
         self.fieldTouched.emit(path, field, desired, self._profile)
 
+    def revert_path(self, path: tuple) -> bool:
+        """ReviewSheet's own per-row Revert link -- see
+        VibrationView.revert_path()'s identical reasoning. Covers both
+        ledgers this page owns: `("buttons", layer, button_id)` for a
+        binding, `(setting,)` for a D-pad option. Same "doesn't need
+        self._active_button" reasoning as revert_all()."""
+        if self._state is None:
+            return False
+        if len(path) == 3 and path[0] == "buttons":
+            _, layer, button_id = path
+            if (layer, button_id) not in self._touched:
+                return False
+            baseline = self._loaded_buttons.get(layer, {}).get(button_id)
+            self._state["buttons"].setdefault(layer, {})[button_id] = baseline
+            self._touched.discard((layer, button_id))
+            self.fieldReverted.emit(path)
+            self._refresh_diagram_bindings()
+            self.changed.emit()
+            return True
+        if len(path) == 1 and path[0] in self._dpad_touched:
+            self._revert_dpad_setting(path[0])
+            return True
+        return False
+
+    def revert_all(self) -> None:
+        """Scope-level "Discard changes": both ledgers this page owns
+        (per-button bindings and the D-pad options), same reasoning as
+        VibrationView.revert_all(). Unlike _on_revert_requested(), this
+        doesn't go through self._active_button -- a touched button whose
+        picker isn't currently open still needs reverting, and the
+        picker (a modal popover) can't be open while this runs anyway."""
+        if self._state is None:
+            return
+        for layer, button_id in list(self._touched):
+            baseline = self._loaded_buttons.get(layer, {}).get(button_id)
+            self._state["buttons"].setdefault(layer, {})[button_id] = baseline
+            self._touched.discard((layer, button_id))
+            self.fieldReverted.emit(("buttons", layer, button_id))
+        for setting in list(self._dpad_touched):
+            self._revert_dpad_setting(setting)
+        self._refresh_diagram_bindings()
+        self.changed.emit()
+
     def _on_revert_requested(self) -> None:
         if self._active_button is None or self._state is None:
             return

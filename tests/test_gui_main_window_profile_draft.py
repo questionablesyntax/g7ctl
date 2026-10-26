@@ -181,6 +181,20 @@ class ProfileSettingsFastPathTest(unittest.TestCase):
 
         self.assertEqual(window._profile_draft.edit_count, 0)
 
+    def test_discard_button_reverts_report_rate_and_hides_both_buttons(self):
+        """Scope-level "Discard changes" (IMPLEMENTATION-PLAN.md's "Not
+        started" list, item 2)."""
+        window = self._window()
+        window.report_rate_combo.set_value("1000")
+        self.assertFalse(window.profile_discard_btn.isHidden())
+
+        window._on_discard_profile_clicked()
+
+        self.assertEqual(window._profile_draft.edit_count, 0)
+        self.assertEqual(window._state["report_rate_hz"], 500)
+        self.assertTrue(window.profile_write_btn.isHidden())
+        self.assertTrue(window.profile_discard_btn.isHidden())
+
     def test_profile_switch_discards_the_per_profile_profile_draft(self):
         window = self._window()
         window.report_rate_combo.set_value("1000")

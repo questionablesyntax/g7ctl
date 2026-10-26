@@ -207,6 +207,42 @@ class SticksFieldTouchedTest(unittest.TestCase):
         self.assertTrue(side._was_labels["deadzone_initial"].isHidden())
         self.assertFalse(side.dz_initial.is_edited())
 
+    def test_revert_all_discards_touches_on_both_sides(self):
+        """Scope-level "Discard changes" -- see triggers_view.py's
+        identical test; same two-side-widget composition."""
+        from g7ctlc.views.sticks_view import SticksView
+
+        state = state_mod.default_state_dict("test")
+        view = SticksView()
+        view.load_state(state)
+        view.sides["left"].dz_initial.setValue(40)
+        view.sides["right"].dz_initial.setValue(40)
+        reverted = []
+        view.fieldReverted.connect(lambda path: reverted.append(path))
+
+        view.revert_all()
+
+        self.assertEqual(set(reverted), {
+            ("sticks", "left", "deadzone", "initial"),
+            ("sticks", "right", "deadzone", "initial"),
+        })
+        self.assertFalse(view.sides["left"].dz_initial.is_edited())
+        self.assertFalse(view.sides["right"].dz_initial.is_edited())
+        self.assertEqual(view.sides["left"]._touched, set())
+        self.assertEqual(view.sides["right"]._touched, set())
+
+    def test_revert_path_reverts_the_right_side_setting_by_full_path(self):
+        """ReviewSheet's own per-row Revert -- see triggers_view.py's
+        identical test for the full reasoning."""
+        view, state = self._view_with_state("right")
+        view.sides["right"].dz_initial.setValue(40)
+
+        found = view.revert_path(("sticks", "right", "deadzone", "initial"))
+
+        self.assertTrue(found)
+        self.assertFalse(view.sides["right"].dz_initial.is_edited())
+        self.assertFalse(view.revert_path(("sticks", "right", "deadzone", "initial")))  # already reverted
+
 
 if __name__ == "__main__":
     unittest.main()

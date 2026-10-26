@@ -62,6 +62,35 @@ class VibrationFastPathTest(unittest.TestCase):
         self.assertEqual(window.rail._nav_buttons["vibration"].text(), "Vibration")
         self.assertTrue(window.vibration_write_btn.isHidden())
 
+    def test_discard_button_reverts_the_field_through_the_view_and_clears_the_draft(self):
+        """Scope-level "Discard changes" (IMPLEMENTATION-PLAN.md's "Not
+        started" list, item 2) -- goes through the real view signal
+        chain (view.revert_all() -> fieldReverted -> untouch()), not a
+        separate MainWindow-side bulk-discard path."""
+        window = self._window()
+        window.vibration_view.sliders["left_grip"].set_value("75")
+        self.assertFalse(window.vibration_discard_btn.isHidden())
+        self.assertEqual(window.vibration_discard_btn.text(), "Discard 1 change")
+
+        window._on_discard_vibration_clicked()
+
+        self.assertEqual(window._vibration_draft.edit_count, 0)
+        self.assertEqual(window.rail._nav_buttons["vibration"].text(), "Vibration")
+        self.assertTrue(window.vibration_write_btn.isHidden())
+        self.assertTrue(window.vibration_discard_btn.isHidden())
+        self.assertEqual(window.vibration_view.sliders["left_grip"].value(), "25")
+
+    def test_discard_with_nothing_touched_is_a_no_op(self):
+        window = self._window()
+        window._on_discard_vibration_clicked()  # must not raise with an empty draft
+        self.assertEqual(window._vibration_draft.edit_count, 0)
+
+    def test_discard_button_is_disabled_while_syncing(self):
+        window = self._window()
+        window.vibration_view.sliders["left_grip"].set_value("75")
+        window._lock_write_ui()
+        self.assertFalse(window.vibration_discard_btn.isEnabled())
+
     def test_clicking_write_emits_execute_requested_with_the_right_payload(self):
         window = self._window()
         window.vibration_view.sliders["left_grip"].set_value("75")

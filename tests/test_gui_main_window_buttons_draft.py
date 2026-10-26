@@ -62,6 +62,26 @@ class ButtonsFastPathTest(unittest.TestCase):
         self.assertEqual(window.rail._nav_buttons["buttons"].text(), "Buttons")
         self.assertTrue(window.buttons_write_btn.isHidden())
 
+    def test_discard_button_reverts_a_binding_and_a_dpad_option_together(self):
+        """Scope-level "Discard changes" (IMPLEMENTATION-PLAN.md's "Not
+        started" list, item 2) -- Buttons owns two independent ledgers
+        (per-button bindings, D-pad options); one click clears both."""
+        window = self._window()
+        window.buttons_view._on_diagram_activated("a")
+        window.buttons_view._on_code_chosen("native_x")
+        window.buttons_view.dpad_diagonal_lock.setChecked(
+            not window.buttons_view.dpad_diagonal_lock.isChecked())
+        self.assertEqual(window._buttons_draft.edit_count, 2)
+        self.assertFalse(window.buttons_discard_btn.isHidden())
+
+        window._on_discard_buttons_clicked()
+
+        self.assertEqual(window._buttons_draft.edit_count, 0)
+        self.assertEqual(window.rail._nav_buttons["buttons"].text(), "Buttons")
+        self.assertTrue(window.buttons_write_btn.isHidden())
+        self.assertTrue(window.buttons_discard_btn.isHidden())
+        self.assertEqual(window._state["buttons"]["default"]["a"], "native_a")
+
     def test_clicking_write_emits_execute_requested_with_the_right_payload(self):
         window = self._window()
         window.buttons_view._on_diagram_activated("a")
