@@ -13,6 +13,23 @@ Sticks/Triggers, pyg7.motion has no `curve_points` setting (dragging a
 point was never captured on the wire for Motion, only the three named
 presets and Custom's mode-select flag -- see pyg7/motion.py). The preset
 picker still works; only the graphical point editor is absent.
+
+S6 (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md, Track S): the sixth
+S6 slice onto the real per-field draft model, one of the two categories
+Track S's own ordering flagged as most irregular. Migrated: all 11-12 of
+`pyg7.field_spec.MOTION_FIELDS`' "simple" settings per side
+(`activate_method`, `x_axis_output_mode`, `curve` preset,
+`deadzone_initial/max`, `anti_deadzone_initial/max`, `invert_y`,
+`invert_yaw`, `sensitivity_scale`, `output`, `overlap_area`, plus
+`invert_roll` on Aim only). **Deliberately not migrated**:
+`activate_button` and the four `direction_up/down/left/right` zone
+bindings -- unlike every field migrated so far, these have a REAL
+`Intent.CLEAR` ("unbound," a genuine wire value, not "unknown") that the
+touch/revert UI this slice built has no representation for yet; a real
+design question deserving its own pass. `curve_points` has no write-side
+UI at all in this view to migrate (see this docstring's own first
+paragraph). All four still write through the old whole-side Sync Now
+path only.
 """
 from typing import Optional
 
@@ -21,6 +38,9 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
     QScrollArea,
     QTabWidget,
     QVBoxLayout,
@@ -28,6 +48,7 @@ from PyQt6.QtWidgets import (
 )
 
 from pyg7.buttons import KNOWN_KEYCODES
+from pyg7.field_spec import MOTION_FIELDS
 
 from ..binding_field import BindingField
 from ..checkbox import Checkbox
@@ -50,11 +71,58 @@ ACTIVATE_METHOD_OPTIONS = [
 _CURVE_SEGMENTS = [("standard", "Standard"), ("concave", "Concave"),
                    ("s_curve", "S-curve"), ("custom", "Custom")]
 
+# Mirrors field_spec.py's own `_MOTION_SIMPLE_SETTINGS` path tuples
+# exactly (minus the leading `("motion", side)`, which this view prepends
+# itself) -- same duplication reasoning as sticks_view.py/
+# triggers_view.py's identical tables. `invert_roll` isn't here -- it's
+# Aim-only, handled separately wherever this table is used.
+_SIMPLE_SETTING_PATHS = {
+    "activate_method": ("activate_method",),
+    "x_axis_output_mode": ("x_axis_output_mode",),
+    "curve": ("curve", "preset"),
+    "deadzone_initial": ("deadzone", "initial"),
+    "deadzone_max": ("deadzone", "max"),
+    "anti_deadzone_initial": ("anti_deadzone", "initial"),
+    "anti_deadzone_max": ("anti_deadzone", "max"),
+    "invert_y": ("invert_y",),
+    "invert_yaw": ("invert_yaw",),
+    "sensitivity_scale": ("sensitivity_scale",),
+    "output": ("output",),
+    "overlap_area": ("overlap_area",),
+    "invert_roll": ("invert_roll",),
+}
+# Confirmed factory defaults (same values `_load_fields` already falls
+# back to for a `None` reading).
+_SETTING_DEFAULTS = {
+    "activate_method": "off", "x_axis_output_mode": "yaw", "curve": "standard",
+    "deadzone_initial": 0, "deadzone_max": 100,
+    "anti_deadzone_initial": 0, "anti_deadzone_max": 100,
+    "invert_y": False, "invert_yaw": False, "invert_roll": False,
+    "sensitivity_scale": 50, "output": "left_stick", "overlap_area": 50,
+}
+_ACTIVATE_METHOD_LABELS = dict(ACTIVATE_METHOD_OPTIONS)
+_X_AXIS_LABELS = dict(X_AXIS_OUTPUT_MODE_OPTIONS)
+_CURVE_LABELS = dict(_CURVE_SEGMENTS)
+_OUTPUT_MODE_LABELS = dict(OUTPUT_MODE_OPTIONS)
+
 
 class _MotionSideWidget(CategorySideWidget):
+    # path, FieldSpec, desired value, profile -- same shape as
+    # SticksView's/TriggersView's per-side signals; MainWindow's
+    # per-profile `_motion_draft` listens to this, not to `changed`.
+    fieldTouched = pyqtSignal(tuple, object, object, int)
+    fieldReverted = pyqtSignal(tuple)
+
     def __init__(self, side: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.side = side
+        self._profile = 1
+        self._side_data: dict = {}
+        self._touched: set = set()
+        self._loaded: dict = {}
+        self._was_labels: dict[str, QLabel] = {}
+        self._revert_buttons: dict[str, QPushButton] = {}
+        self._row_widgets: dict[str, QWidget] = {}
         outer = QVBoxLayout(self)
         outer.setContentsMargins(14, 12, 14, 12)
         outer.setSpacing(12)
@@ -111,19 +179,30 @@ class _MotionSideWidget(CategorySideWidget):
         self.sensitivity_scale = NumberField.percent()
         self.sensitivity_scale.setToolTip("X/Y sensitivity scale, 0-100 (50 = balanced).")
 
-        self.form.addRow("Activate Method", self.activate_method)
+        self._controls = {
+            "activate_method": self.activate_method, "x_axis_output_mode": self.x_axis_output_mode,
+            "curve": self.curve, "deadzone_initial": self.dz_initial, "deadzone_max": self.dz_max,
+            "anti_deadzone_initial": self.adz_initial, "anti_deadzone_max": self.adz_max,
+            "sensitivity_scale": self.sensitivity_scale,
+        }
+
+        self.form.addRow("Activate Method", self._wrap_with_mark_revert("activate_method", self.activate_method))
         self.form.addRow("Activate Button", self.activate_button)
-        self.form.addRow("X-Axis Output Mode", self.x_axis_output_mode)
-        self.form.addRow("Curve preset", self.curve)
-        self.form.addRow("Deadzone (initial)", self.dz_initial)
-        self.form.addRow("Deadzone (max)", self.dz_max)
-        self.form.addRow("Anti-Deadzone (initial)", self.adz_initial)
-        self.form.addRow("Anti-Deadzone (max)", self.adz_max)
-        self.form.addRow("X/Y Sensitivity Scale", self.sensitivity_scale)
+        self.form.addRow(
+            "X-Axis Output Mode", self._wrap_with_mark_revert("x_axis_output_mode", self.x_axis_output_mode))
+        self.form.addRow("Curve preset", self._wrap_with_mark_revert("curve", self.curve))
+        self.form.addRow("Deadzone (initial)", self._wrap_with_mark_revert("deadzone_initial", self.dz_initial))
+        self.form.addRow("Deadzone (max)", self._wrap_with_mark_revert("deadzone_max", self.dz_max))
+        self.form.addRow(
+            "Anti-Deadzone (initial)", self._wrap_with_mark_revert("anti_deadzone_initial", self.adz_initial))
+        self.form.addRow("Anti-Deadzone (max)", self._wrap_with_mark_revert("anti_deadzone_max", self.adz_max))
+        self.form.addRow(
+            "X/Y Sensitivity Scale", self._wrap_with_mark_revert("sensitivity_scale", self.sensitivity_scale))
 
         self.invert_y = Checkbox("Invert Y")
         self.invert_y.setToolTip("Reverses this sub-tab's Y axis.")
-        self.form.addRow("", self.invert_y)
+        self._controls["invert_y"] = self.invert_y
+        self.form.addRow("", self._wrap_with_mark_revert("invert_y", self.invert_y))
         self.invert_yaw = Checkbox("Invert Yaw")
         self.invert_yaw.setToolTip(
             "Only shown by Nexus when X-Axis Output Mode is Yaw + Roll and "
@@ -131,7 +210,8 @@ class _MotionSideWidget(CategorySideWidget):
             "whether Nexus still calls this \"Invert Yaw\" on the Tilt "
             "sub-tab specifically is not (see pyg7/motion.py)."
         )
-        self.form.addRow("", self.invert_yaw)
+        self._controls["invert_yaw"] = self.invert_yaw
+        self.form.addRow("", self._wrap_with_mark_revert("invert_yaw", self.invert_yaw))
         if side == "aim":
             self.invert_roll = Checkbox("Invert Roll")
             self.invert_roll.setToolTip(
@@ -139,7 +219,8 @@ class _MotionSideWidget(CategorySideWidget):
                 "Nexus when X-Axis Output Mode is Yaw + Roll and Output is "
                 "Button Binds."
             )
-            self.form.addRow("", self.invert_roll)
+            self._controls["invert_roll"] = self.invert_roll
+            self.form.addRow("", self._wrap_with_mark_revert("invert_roll", self.invert_roll))
         else:
             self.invert_roll = None
         outer.addWidget(basic_box)
@@ -156,8 +237,11 @@ class _MotionSideWidget(CategorySideWidget):
         self.overlap_area.setToolTip(
             "How much the diagonal zones overlap between adjacent directional buttons (Button Binds only)."
         )
-        self.adv_form.addRow("Output", self.output)
-        self.adv_form.addRow("Overlap area (Button Binds only)", self.overlap_area)
+        self._controls["output"] = self.output
+        self._controls["overlap_area"] = self.overlap_area
+        self.adv_form.addRow("Output", self._wrap_with_mark_revert("output", self.output))
+        self.adv_form.addRow(
+            "Overlap area (Button Binds only)", self._wrap_with_mark_revert("overlap_area", self.overlap_area))
 
         self.direction_combos: dict[str, BindingField] = {}
         self.direction_box = QGroupBox("Direction Bindings (Button Binds only)")
@@ -177,19 +261,123 @@ class _MotionSideWidget(CategorySideWidget):
         outer.addWidget(adv_box)
         outer.addStretch(1)
 
-        for w in (self.activate_method, self.x_axis_output_mode):
+        for setting, w in (("activate_method", self.activate_method), ("x_axis_output_mode", self.x_axis_output_mode)):
+            w.currentIndexChanged.connect(lambda _i, s=setting: self._mark_touched(s))
             w.currentIndexChanged.connect(self._emit_changed)
+        self.curve.selectionChanged.connect(lambda _v: self._mark_touched("curve"))
         self.curve.selectionChanged.connect(self._emit_changed)
-        for w in (self.dz_initial, self.dz_max, self.adz_initial, self.adz_max,
-                  self.sensitivity_scale, self.overlap_area):
+        for setting, w in (("deadzone_initial", self.dz_initial), ("deadzone_max", self.dz_max),
+                           ("anti_deadzone_initial", self.adz_initial), ("anti_deadzone_max", self.adz_max),
+                           ("sensitivity_scale", self.sensitivity_scale), ("overlap_area", self.overlap_area)):
+            w.valueChanged.connect(lambda _v, s=setting: self._mark_touched(s))
             w.valueChanged.connect(self._emit_changed)
-        for w in (self.invert_y, self.invert_yaw):
+        for setting, w in (("invert_y", self.invert_y), ("invert_yaw", self.invert_yaw)):
+            w.toggled.connect(lambda _v, s=setting: self._mark_touched(s))
             w.toggled.connect(self._emit_changed)
         if self.invert_roll is not None:
+            self.invert_roll.toggled.connect(lambda _v: self._mark_touched("invert_roll"))
             self.invert_roll.toggled.connect(self._emit_changed)
+        self.output.currentIndexChanged.connect(lambda _i: self._mark_touched("output"))
         self.output.currentIndexChanged.connect(self._update_visibility)
         self.output.currentIndexChanged.connect(self._emit_changed)
         self.x_axis_output_mode.currentIndexChanged.connect(self._update_visibility)
+
+    def _wrap_with_mark_revert(self, setting: str, control: QWidget) -> QWidget:
+        row_widget = QWidget()
+        row = QHBoxLayout(row_widget)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        row.addWidget(control)
+        was_label = QLabel("")
+        was_label.setProperty("role", "muted")
+        was_label.setVisible(False)
+        row.addWidget(was_label)
+        revert_btn = QPushButton("Revert")
+        revert_btn.setProperty("role", "link")
+        revert_btn.setVisible(False)
+        revert_btn.clicked.connect(lambda _c=False, s=setting: self._revert_setting(s))
+        row.addWidget(revert_btn)
+        row.addStretch(1)
+        self._was_labels[setting] = was_label
+        self._revert_buttons[setting] = revert_btn
+        self._row_widgets[setting] = row_widget
+        return row_widget
+
+    def set_profile(self, profile: int) -> None:
+        self._profile = profile
+
+    def _get_value(self, setting: str):
+        control = self._controls[setting]
+        if isinstance(control, QComboBox):
+            return control.currentData()
+        if isinstance(control, Checkbox):
+            return control.isChecked()
+        return control.value()  # SegmentedControl (str) / NumberField (int)
+
+    def _set_value(self, setting: str, value) -> None:
+        control = self._controls[setting]
+        if isinstance(control, QComboBox):
+            idx = control.findData(value)
+            control.setCurrentIndex(idx if idx >= 0 else 0)
+        elif isinstance(control, Checkbox):
+            control.setChecked(bool(value))
+        elif isinstance(control, SegmentedControl):
+            control.set_value(value)
+        else:
+            control.setValue(value)
+
+    def _format_was(self, setting: str, value) -> str:
+        if setting == "activate_method":
+            return f"was {_ACTIVATE_METHOD_LABELS.get(value, value)}"
+        if setting == "x_axis_output_mode":
+            return f"was {_X_AXIS_LABELS.get(value, value)}"
+        if setting == "curve":
+            return f"was {_CURVE_LABELS.get(value, value)}"
+        if setting == "output":
+            return f"was {_OUTPUT_MODE_LABELS.get(value, value)}"
+        if setting in ("invert_y", "invert_yaw", "invert_roll"):
+            return f"was {'On' if value else 'Off'}"
+        return f"was {value}%"
+
+    def _mark_touched(self, setting: str) -> None:
+        if self._loading:
+            return
+        self._touched.add(setting)
+        control = self._controls[setting]
+        if hasattr(control, "set_edited"):
+            control.set_edited(True)
+        raw = self._loaded.get(setting)
+        effective = raw if raw is not None else _SETTING_DEFAULTS[setting]
+        self._was_labels[setting].setText(self._format_was(setting, effective))
+        self._was_labels[setting].setVisible(True)
+        self._revert_buttons[setting].setVisible(True)
+        field = MOTION_FIELDS[self.side][setting]
+        path = ("motion", self.side) + _SIMPLE_SETTING_PATHS[setting]
+        self.fieldTouched.emit(path, field, self._get_value(setting), self._profile)
+
+    def _revert_setting(self, setting: str) -> None:
+        raw = self._loaded.get(setting)
+        effective = raw if raw is not None else _SETTING_DEFAULTS[setting]
+        self._loading = True
+        try:
+            self._set_value(setting, effective)
+        finally:
+            self._loading = False
+        self._touched.discard(setting)
+        control = self._controls[setting]
+        if hasattr(control, "set_edited"):
+            control.set_edited(False)
+        self._was_labels[setting].setVisible(False)
+        self._revert_buttons[setting].setVisible(False)
+        suffix = _SIMPLE_SETTING_PATHS[setting]
+        d = self._side_data
+        for key in suffix[:-1]:
+            d = d.setdefault(key, {})
+        d[suffix[-1]] = effective
+        self._update_visibility()
+        path = ("motion", self.side) + suffix
+        self.fieldReverted.emit(path)
+        self._emit_changed()
 
     def _open_picker(self, field: BindingField) -> None:
         self._active_field = field
@@ -205,13 +393,14 @@ class _MotionSideWidget(CategorySideWidget):
     def _update_visibility(self) -> None:
         directional = self.output.currentData() == "directional"
         yaw_roll = self.x_axis_output_mode.currentData() == "yaw_roll"
-        _set_row_visible(self.adv_form, self.overlap_area, directional)
+        _set_row_visible(self.adv_form, self._row_widgets["overlap_area"], directional)
         self.direction_box.setVisible(directional)
-        _set_row_visible(self.form, self.invert_yaw, yaw_roll and not directional)
+        _set_row_visible(self.form, self._row_widgets["invert_yaw"], yaw_roll and not directional)
         if self.invert_roll is not None:
-            _set_row_visible(self.form, self.invert_roll, yaw_roll and directional)
+            _set_row_visible(self.form, self._row_widgets["invert_roll"], yaw_roll and directional)
 
     def _load_fields(self, side_data: dict) -> None:
+        self._side_data = side_data
         am_idx = self.activate_method.findData(side_data.get("activate_method") or "off")
         self.activate_method.setCurrentIndex(am_idx if am_idx >= 0 else 0)
         self.activate_button.set_value(side_data.get("activate_button"))
@@ -238,6 +427,24 @@ class _MotionSideWidget(CategorySideWidget):
         db = side_data.get("direction_bindings") or {}
         for zone, field in self.direction_combos.items():
             field.set_value(db.get(zone))
+
+        self._touched = set()
+        self._loaded = {
+            "activate_method": side_data.get("activate_method"),
+            "x_axis_output_mode": side_data.get("x_axis_output_mode"),
+            "curve": curve.get("preset"),
+            "deadzone_initial": dz.get("initial"), "deadzone_max": dz.get("max"),
+            "anti_deadzone_initial": adz.get("initial"), "anti_deadzone_max": adz.get("max"),
+            "invert_y": side_data.get("invert_y"), "invert_yaw": side_data.get("invert_yaw"),
+            "invert_roll": side_data.get("invert_roll"),
+            "sensitivity_scale": side_data.get("sensitivity_scale"),
+            "output": side_data.get("output"), "overlap_area": side_data.get("overlap_area"),
+        }
+        for setting, control in self._controls.items():
+            if hasattr(control, "set_edited"):
+                control.set_edited(False)
+            self._was_labels[setting].setVisible(False)
+            self._revert_buttons[setting].setVisible(False)
 
     def _after_load(self) -> None:
         self._update_visibility()
@@ -279,6 +486,8 @@ class _MotionSideWidget(CategorySideWidget):
 
 class MotionView(QWidget):
     changed = pyqtSignal()
+    fieldTouched = pyqtSignal(tuple, object, object, int)
+    fieldReverted = pyqtSignal(tuple)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -291,6 +500,8 @@ class MotionView(QWidget):
             scroll.setWidgetResizable(True)
             scroll.setWidget(widget)
             widget.changed.connect(self._on_edit)
+            widget.fieldTouched.connect(self.fieldTouched)
+            widget.fieldReverted.connect(self.fieldReverted)
             self.tabs.addTab(scroll, side.capitalize())
         layout.addWidget(self.tabs)
 
@@ -299,7 +510,9 @@ class MotionView(QWidget):
         # Additive section (see pyg7/state.py's validate_state()) -- an
         # older imported state dict may not have "motion" at all.
         motion = state.setdefault("motion", {"aim": {}, "tilt": {}})
+        profile = state.get("controller_slot") or 1
         for side, widget in self.sides.items():
+            widget.set_profile(profile)
             widget.load(motion.setdefault(side, {}))
 
     def _on_edit(self) -> None:

@@ -2,6 +2,31 @@
 
 Right Stick shares the exact same shape as Left (see pyg7/sticks.py);
 this view just instantiates the same widget twice.
+
+S6 (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md, Track S): the fourth
+S6 slice onto the real per-field draft model, same per-side/per-profile
+shape as triggers_view.py. Migrated: all 13 of
+`pyg7.field_spec.STICK_FIELDS`' "simple" settings (`trajectory`, `curve`
+preset, `deadzone_initial/max`, `anti_deadzone_initial/max`,
+`resolution_bits`, `output_mode`, `invert_x`, `invert_y`, `sensitivity`,
+`overlap_area`, `dpi`). **Deliberately not migrated**: `curve_points`
+(same reasoning as Triggers' identical field) and `direction_bindings`
+(the five-zone Directional Buttons binding -- like `curve_points`, it's
+built from several widgets (`direction_combos`) combined into one
+comma-joined `FieldSpec` value, not one widget's own signal, and is only
+relevant in one Output mode out of four; a real design question
+deserving its own pass, same reasoning as every other deferred
+multi-widget field this track has left alone). Still writes through the
+old whole-side Sync Now path only.
+
+Output mode's `_output_mode_configured` guard (see its own long comment
+below) predates this slice and is unchanged by it: a touch on
+`output_mode` always carries a concrete value (the combo always has one
+selected), never `Intent.PRESERVE` -- that flag only matters to the OLD
+whole-side `save_into()` path, deciding whether THIS write should send a
+real value or leave the field undeclared. `_revert_setting("output_mode")`
+restores both the display and that flag together, since reverting to
+"never configured" means exactly that again.
 """
 from typing import Optional
 
@@ -10,6 +35,9 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
     QScrollArea,
     QSpinBox,
     QTabWidget,
@@ -19,6 +47,7 @@ from PyQt6.QtWidgets import (
 
 from pyg7.buttons import KNOWN_KEYCODES
 from pyg7.curves import preset_points
+from pyg7.field_spec import STICK_FIELDS
 
 from ..binding_field import BindingField
 from ..checkbox import Checkbox
@@ -44,8 +73,50 @@ OUTPUT_MODE_OPTIONS = [
     ("directional", "Directional Buttons"), ("mouse", "Simulate Mouse"),
 ]
 
+# Mirrors field_spec.py's own `_STICK_SIMPLE_SETTINGS` path tuples
+# exactly (minus the leading `("sticks", side)`, which this view
+# prepends itself) -- same duplication reasoning as triggers_view.py's
+# identical table.
+_SIMPLE_SETTING_PATHS = {
+    "trajectory": ("trajectory",),
+    "curve": ("curve", "preset"),
+    "deadzone_initial": ("deadzone", "initial"),
+    "deadzone_max": ("deadzone", "max"),
+    "anti_deadzone_initial": ("anti_deadzone", "initial"),
+    "anti_deadzone_max": ("anti_deadzone", "max"),
+    "resolution_bits": ("resolution_bits",),
+    "output_mode": ("advanced_mapping", "output_mode"),
+    "invert_x": ("advanced_mapping", "invert_x"),
+    "invert_y": ("advanced_mapping", "invert_y"),
+    "sensitivity": ("advanced_mapping", "sensitivity"),
+    "overlap_area": ("advanced_mapping", "overlap_area"),
+    "dpi": ("advanced_mapping", "dpi"),
+}
+# Confirmed factory defaults (same values `_load_fields` already falls
+# back to for a `None` reading) -- `output_mode` isn't here, its default
+# is side-aware (see `_StickSideWidget._effective_default`).
+_SETTING_DEFAULTS = {
+    "trajectory": "circle", "curve": "standard",
+    "deadzone_initial": 0, "deadzone_max": 100,
+    "anti_deadzone_initial": 0, "anti_deadzone_max": 100,
+    "resolution_bits": 12,
+    "invert_x": False, "invert_y": False,
+    "sensitivity": 50, "overlap_area": 50, "dpi": 50,
+}
+_TRAJECTORY_LABELS = dict(_TRAJECTORY_SEGMENTS)
+_CURVE_LABELS = dict(_CURVE_SEGMENTS)
+_OUTPUT_MODE_LABELS = dict(OUTPUT_MODE_OPTIONS)
+_PERCENT_SETTINGS = {"deadzone_initial", "deadzone_max", "anti_deadzone_initial",
+                     "anti_deadzone_max", "sensitivity", "overlap_area", "dpi"}
+
 
 class _StickSideWidget(CategorySideWidget):
+    # path, FieldSpec, desired value, profile -- same shape as
+    # TriggersView's per-side signals; MainWindow's per-profile
+    # `_sticks_draft` listens to this, not to `changed`.
+    fieldTouched = pyqtSignal(tuple, object, object, int)
+    fieldReverted = pyqtSignal(tuple)
+
     def __init__(
         self, side: str, palette: Palette = DARK_PALETTE, parent: Optional[QWidget] = None,
     ) -> None:
@@ -62,7 +133,14 @@ class _StickSideWidget(CategorySideWidget):
         # "Right Stick: output_mode=left_stick" write got scheduled from an
         # edit that never touched the right stick at all. `side` lets the
         # fallback be correct for whichever instance this is.
-        self._side = side
+        self.side = side
+        self._profile = 1
+        self._side_data: dict = {}
+        self._touched: set = set()
+        self._loaded: dict = {}
+        self._was_labels: dict[str, QLabel] = {}
+        self._revert_buttons: dict[str, QPushButton] = {}
+        self._row_widgets: dict[str, QWidget] = {}
         # True once the user has genuinely picked an output_mode -- see
         # save_into()'s own comment for why this can't just be "whatever
         # the combo currently shows."
@@ -126,8 +204,16 @@ class _StickSideWidget(CategorySideWidget):
             "ADC resolution the stick reports at, 8-12 bits. Lower values "
             "coarsen precision."
         )
-        form.addRow("Trajectory", self.trajectory)
-        form.addRow("Curve preset", self.curve)
+
+        self._controls = {
+            "trajectory": self.trajectory, "curve": self.curve,
+            "deadzone_initial": self.dz_initial, "deadzone_max": self.dz_max,
+            "anti_deadzone_initial": self.adz_initial, "anti_deadzone_max": self.adz_max,
+            "resolution_bits": self.resolution_bits,
+        }
+
+        form.addRow("Trajectory", self._wrap_with_mark_revert("trajectory", self.trajectory))
+        form.addRow("Curve preset", self._wrap_with_mark_revert("curve", self.curve))
         self.curve_points = CurvePointsEditor()
         self.curve_points.changed.connect(self._emit_changed)
         self.curve_points.changed.connect(self._sync_curve_editor)
@@ -151,11 +237,11 @@ class _StickSideWidget(CategorySideWidget):
         self.curve_editor.endpoints_changed.connect(self._on_editor_endpoints)
         _pts_layout.addWidget(self.curve_editor, 1)
         _pts_layout.addWidget(self.curve_points)
-        form.addRow("Deadzone (initial)", self.dz_initial)
-        form.addRow("Deadzone (max)", self.dz_max)
-        form.addRow("Anti-Deadzone (initial)", self.adz_initial)
-        form.addRow("Anti-Deadzone (max)", self.adz_max)
-        form.addRow("Resolution (bits)", self.resolution_bits)
+        form.addRow("Deadzone (initial)", self._wrap_with_mark_revert("deadzone_initial", self.dz_initial))
+        form.addRow("Deadzone (max)", self._wrap_with_mark_revert("deadzone_max", self.dz_max))
+        form.addRow("Anti-Deadzone (initial)", self._wrap_with_mark_revert("anti_deadzone_initial", self.adz_initial))
+        form.addRow("Anti-Deadzone (max)", self._wrap_with_mark_revert("anti_deadzone_max", self.adz_max))
+        form.addRow("Resolution (bits)", self._wrap_with_mark_revert("resolution_bits", self.resolution_bits))
         outer.addWidget(basic_box)
         outer.addWidget(self.curve_points_box)
 
@@ -183,12 +269,17 @@ class _StickSideWidget(CategorySideWidget):
         )
         self.dpi = NumberField.percent()
         self.dpi.setToolTip("Mouse movement speed (Simulate Mouse output mode only).")
-        self.adv_form.addRow("Output mode", self.output_mode)
-        self.adv_form.addRow("", self.invert_x)
-        self.adv_form.addRow("", self.invert_y)
-        self.adv_form.addRow("Sensitivity", self.sensitivity)
-        self.adv_form.addRow("Overlap area (Directional only)", self.overlap_area)
-        self.adv_form.addRow("DPI (Simulate Mouse only)", self.dpi)
+        self._controls.update({
+            "output_mode": self.output_mode, "invert_x": self.invert_x, "invert_y": self.invert_y,
+            "sensitivity": self.sensitivity, "overlap_area": self.overlap_area, "dpi": self.dpi,
+        })
+        self.adv_form.addRow("Output mode", self._wrap_with_mark_revert("output_mode", self.output_mode))
+        self.adv_form.addRow("", self._wrap_with_mark_revert("invert_x", self.invert_x))
+        self.adv_form.addRow("", self._wrap_with_mark_revert("invert_y", self.invert_y))
+        self.adv_form.addRow("Sensitivity", self._wrap_with_mark_revert("sensitivity", self.sensitivity))
+        self.adv_form.addRow(
+            "Overlap area (Directional only)", self._wrap_with_mark_revert("overlap_area", self.overlap_area))
+        self.adv_form.addRow("DPI (Simulate Mouse only)", self._wrap_with_mark_revert("dpi", self.dpi))
 
         # One shared KeycodePicker for this side's five direction fields,
         # same reasoning as ButtonsView's single picker -- they're never
@@ -215,6 +306,7 @@ class _StickSideWidget(CategorySideWidget):
         outer.addWidget(adv_box)
         outer.addStretch(1)
 
+        self.trajectory.selectionChanged.connect(lambda _v: self._mark_touched("trajectory"))
         self.trajectory.selectionChanged.connect(self._emit_changed)
         # Connection order matters here -- Qt fires slots in the order
         # they're connected on the same signal. _update_curve_points_enabled
@@ -226,18 +318,131 @@ class _StickSideWidget(CategorySideWidget):
         # pre-seed value (all zeros) into state, one signal-fire before the
         # seed that was supposed to replace it -- silently wrong data synced
         # or exported, never shown on screen.
+        self.curve.selectionChanged.connect(lambda _v: self._mark_touched("curve"))
         self.curve.selectionChanged.connect(self._update_curve_points_enabled)
         self.curve.selectionChanged.connect(self._emit_changed)
-        for w in (self.dz_initial, self.dz_max, self.adz_initial, self.adz_max,
-                  self.resolution_bits, self.sensitivity, self.overlap_area, self.dpi):
+        for setting, w in (("deadzone_initial", self.dz_initial), ("deadzone_max", self.dz_max),
+                           ("anti_deadzone_initial", self.adz_initial), ("anti_deadzone_max", self.adz_max),
+                           ("resolution_bits", self.resolution_bits), ("sensitivity", self.sensitivity),
+                           ("overlap_area", self.overlap_area), ("dpi", self.dpi)):
+            w.valueChanged.connect(lambda _v, s=setting: self._mark_touched(s))
             w.valueChanged.connect(self._emit_changed)
         for w in (self.dz_initial, self.dz_max, self.adz_initial, self.adz_max):
             w.valueChanged.connect(self._sync_curve_editor)
-        for w in (self.invert_x, self.invert_y):
+        for setting, w in (("invert_x", self.invert_x), ("invert_y", self.invert_y)):
+            w.toggled.connect(lambda _v, s=setting: self._mark_touched(s))
             w.toggled.connect(self._emit_changed)
         self.output_mode.currentIndexChanged.connect(self._update_visibility)
         self.output_mode.currentIndexChanged.connect(self._emit_changed)
         self.output_mode.currentIndexChanged.connect(self._mark_output_mode_configured)
+        self.output_mode.currentIndexChanged.connect(lambda _i: self._mark_touched("output_mode"))
+
+    def _wrap_with_mark_revert(self, setting: str, control: QWidget) -> QWidget:
+        row_widget = QWidget()
+        row = QHBoxLayout(row_widget)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        row.addWidget(control)
+        was_label = QLabel("")
+        was_label.setProperty("role", "muted")
+        was_label.setVisible(False)
+        row.addWidget(was_label)
+        revert_btn = QPushButton("Revert")
+        revert_btn.setProperty("role", "link")
+        revert_btn.setVisible(False)
+        revert_btn.clicked.connect(lambda _c=False, s=setting: self._revert_setting(s))
+        row.addWidget(revert_btn)
+        row.addStretch(1)
+        self._was_labels[setting] = was_label
+        self._revert_buttons[setting] = revert_btn
+        self._row_widgets[setting] = row_widget
+        return row_widget
+
+    def set_profile(self, profile: int) -> None:
+        self._profile = profile
+
+    def _get_value(self, setting: str):
+        control = self._controls[setting]
+        if isinstance(control, QComboBox):
+            return control.currentData()
+        if isinstance(control, Checkbox):
+            return control.isChecked()
+        return control.value()  # SegmentedControl (str) / NumberField, QSpinBox (int)
+
+    def _set_value(self, setting: str, value) -> None:
+        control = self._controls[setting]
+        if isinstance(control, QComboBox):
+            idx = control.findData(value)
+            control.setCurrentIndex(idx if idx >= 0 else 0)
+        elif isinstance(control, Checkbox):
+            control.setChecked(bool(value))
+        elif isinstance(control, SegmentedControl):
+            control.set_value(value)
+        else:
+            control.setValue(value)
+
+    def _effective_default(self, setting: str):
+        if setting == "output_mode":
+            # The confirmed factory default is "this stick controls
+            # itself", not universally "left_stick" -- see __init__'s own
+            # comment on `self.side` for the bug this side-awareness fixes.
+            return f"{self.side}_stick"
+        return _SETTING_DEFAULTS[setting]
+
+    def _format_was(self, setting: str, value) -> str:
+        if setting == "trajectory":
+            return f"was {_TRAJECTORY_LABELS.get(value, value)}"
+        if setting == "curve":
+            return f"was {_CURVE_LABELS.get(value, value)}"
+        if setting == "output_mode":
+            return f"was {_OUTPUT_MODE_LABELS.get(value, value)}"
+        if setting in ("invert_x", "invert_y"):
+            return f"was {'On' if value else 'Off'}"
+        if setting == "resolution_bits":
+            return f"was {value} bits"
+        return f"was {value}%"
+
+    def _mark_touched(self, setting: str) -> None:
+        if self._loading:
+            return
+        self._touched.add(setting)
+        control = self._controls[setting]
+        if hasattr(control, "set_edited"):
+            control.set_edited(True)
+        raw = self._loaded.get(setting)
+        effective = raw if raw is not None else self._effective_default(setting)
+        self._was_labels[setting].setText(self._format_was(setting, effective))
+        self._was_labels[setting].setVisible(True)
+        self._revert_buttons[setting].setVisible(True)
+        field = STICK_FIELDS[self.side][setting]
+        path = ("sticks", self.side) + _SIMPLE_SETTING_PATHS[setting]
+        self.fieldTouched.emit(path, field, self._get_value(setting), self._profile)
+
+    def _revert_setting(self, setting: str) -> None:
+        raw = self._loaded.get(setting)
+        effective = raw if raw is not None else self._effective_default(setting)
+        self._loading = True
+        try:
+            self._set_value(setting, effective)
+            if setting == "output_mode":
+                self._output_mode_configured = raw is not None
+                self._update_visibility()
+        finally:
+            self._loading = False
+        self._touched.discard(setting)
+        control = self._controls[setting]
+        if hasattr(control, "set_edited"):
+            control.set_edited(False)
+        self._was_labels[setting].setVisible(False)
+        self._revert_buttons[setting].setVisible(False)
+        suffix = _SIMPLE_SETTING_PATHS[setting]
+        d = self._side_data
+        for key in suffix[:-1]:
+            d = d.setdefault(key, {})
+        d[suffix[-1]] = effective if setting != "output_mode" else (effective if self._output_mode_configured else None)
+        path = ("sticks", self.side) + suffix
+        self.fieldReverted.emit(path)
+        self._emit_changed()
 
     def _open_direction_picker(self, zone: str) -> None:
         field = self.direction_combos[zone]
@@ -302,18 +507,25 @@ class _StickSideWidget(CategorySideWidget):
             widget.blockSignals(True)
             widget.setValue(value)
             widget.blockSignals(False)
+        # blockSignals() above means valueChanged (and therefore
+        # _mark_touched) never fires for a graphical-editor drag -- see
+        # triggers_view.py's identical fix/comment.
+        if not self._loading:
+            for setting in ("deadzone_initial", "deadzone_max", "anti_deadzone_initial", "anti_deadzone_max"):
+                self._mark_touched(setting)
         self._emit_changed()
 
 
     def _update_visibility(self) -> None:
         self._update_curve_points_enabled()
         mode = self.output_mode.currentData()
-        _set_row_visible(self.adv_form, self.sensitivity, mode in ("left_stick", "right_stick", "mouse"))
-        _set_row_visible(self.adv_form, self.overlap_area, mode == "directional")
-        _set_row_visible(self.adv_form, self.dpi, mode == "mouse")
+        _set_row_visible(self.adv_form, self._row_widgets["sensitivity"], mode in ("left_stick", "right_stick", "mouse"))
+        _set_row_visible(self.adv_form, self._row_widgets["overlap_area"], mode == "directional")
+        _set_row_visible(self.adv_form, self._row_widgets["dpi"], mode == "mouse")
         self.direction_box.setVisible(mode == "directional")
 
     def _load_fields(self, side_data: dict) -> None:
+        self._side_data = side_data
         self.trajectory.set_value(side_data.get("trajectory") or "circle")
         curve = side_data.get("curve") or {}
         self.curve.set_value(curve.get("preset") or "standard")
@@ -335,7 +547,7 @@ class _StickSideWidget(CategorySideWidget):
         # updated only by a genuine user edit via
         # _mark_output_mode_configured) is what save_into() actually
         # trusts, so this fallback never leaks into a real write on its own.
-        default_output_mode = f"{self._side}_stick"
+        default_output_mode = f"{self.side}_stick"
         idx = self.output_mode.findData(am.get("output_mode") or default_output_mode)
         self.output_mode.setCurrentIndex(idx if idx >= 0 else 0)
         self._output_mode_configured = am.get("output_mode") is not None
@@ -347,6 +559,22 @@ class _StickSideWidget(CategorySideWidget):
         db = am.get("direction_bindings") or {}
         for zone, field in self.direction_combos.items():
             field.set_value(db.get(zone))
+
+        self._touched = set()
+        self._loaded = {
+            "trajectory": side_data.get("trajectory"), "curve": curve.get("preset"),
+            "deadzone_initial": dz.get("initial"), "deadzone_max": dz.get("max"),
+            "anti_deadzone_initial": adz.get("initial"), "anti_deadzone_max": adz.get("max"),
+            "resolution_bits": side_data.get("resolution_bits"),
+            "output_mode": am.get("output_mode"),
+            "invert_x": am.get("invert_x"), "invert_y": am.get("invert_y"),
+            "sensitivity": am.get("sensitivity"), "overlap_area": am.get("overlap_area"), "dpi": am.get("dpi"),
+        }
+        for setting, control in self._controls.items():
+            if hasattr(control, "set_edited"):
+                control.set_edited(False)
+            self._was_labels[setting].setVisible(False)
+            self._revert_buttons[setting].setVisible(False)
 
     def _after_load(self) -> None:
         self._update_visibility()
@@ -403,6 +631,8 @@ class _StickSideWidget(CategorySideWidget):
 
 class SticksView(QWidget):
     changed = pyqtSignal()
+    fieldTouched = pyqtSignal(tuple, object, object, int)
+    fieldReverted = pyqtSignal(tuple)
 
     def __init__(self, palette: Palette = DARK_PALETTE, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -417,6 +647,8 @@ class SticksView(QWidget):
             scroll.setWidgetResizable(True)
             scroll.setWidget(widget)
             widget.changed.connect(self._on_edit)
+            widget.fieldTouched.connect(self.fieldTouched)
+            widget.fieldReverted.connect(self.fieldReverted)
             self.tabs.addTab(scroll, f"{side.capitalize()} Stick")
         layout.addWidget(self.tabs)
 
@@ -429,7 +661,9 @@ class SticksView(QWidget):
 
     def load_state(self, state: dict) -> None:
         self._state = state
+        profile = state.get("controller_slot") or 1
         for side, widget in self.sides.items():
+            widget.set_profile(profile)
             widget.load(state["sticks"].setdefault(side, {}))
 
     def _on_edit(self) -> None:

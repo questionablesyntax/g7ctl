@@ -105,19 +105,23 @@ class SticksViewRoundTripTest(unittest.TestCase):
         self.assertEqual(out["advanced_mapping"]["direction_bindings"], "should not be touched")
 
     def test_output_mode_switches_which_fields_are_visible(self):
+        # S6 (Track S) wraps sensitivity/overlap_area/dpi in a mark/revert
+        # row now -- _set_row_visible() hides/shows that wrapper
+        # (`_row_widgets[...]`), not the raw control directly, so that's
+        # the widget whose hidden state this test has to check.
         from g7ctlc.views.sticks_view import SticksView
         view = SticksView()
         left = view.sides["left"]
 
         left.output_mode.setCurrentIndex(left.output_mode.findData("directional"))
-        self.assertTrue(left.sensitivity.isHidden())     # only for left_stick/right_stick/mouse
-        self.assertFalse(left.overlap_area.isHidden())   # directional-only field, now visible
+        self.assertTrue(left._row_widgets["sensitivity"].isHidden())     # only for left_stick/right_stick/mouse
+        self.assertFalse(left._row_widgets["overlap_area"].isHidden())   # directional-only field, now visible
         self.assertFalse(left.direction_box.isHidden())
-        self.assertTrue(left.dpi.isHidden())
+        self.assertTrue(left._row_widgets["dpi"].isHidden())
 
         left.output_mode.setCurrentIndex(left.output_mode.findData("mouse"))
-        self.assertFalse(left.dpi.isHidden())
-        self.assertTrue(left.overlap_area.isHidden())
+        self.assertFalse(left._row_widgets["dpi"].isHidden())
+        self.assertTrue(left._row_widgets["overlap_area"].isHidden())
         self.assertTrue(left.direction_box.isHidden())
 
     def test_editing_left_stick_does_not_remap_right_stick_output(self):

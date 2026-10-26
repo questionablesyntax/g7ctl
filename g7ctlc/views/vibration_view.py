@@ -1,4 +1,23 @@
-"""Vibrations tab: grip/trigger levels and per-side trigger force/sync flags."""
+"""Vibrations tab: grip/trigger levels and per-side trigger force/sync flags.
+
+S6 (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md, Track S): the four
+levels are this page's vertical slice onto the real per-field draft
+model -- `fieldTouched`/`fieldReverted` replace this view's own private
+`_sliders_touched` set as the thing MainWindow's `DesiredDraft` ledger
+listens to, and each row gets a real "was X%" mark plus a revert
+button, not just the `SegmentedControl.set_edited()` dynamic property
+(still wired, for its accessible-name suffix and as a future paint
+hook, but on its own it isn't the visible mark DESIGN-SPEC.md section 4
+item 5 asks for). **Deliberately not migrated yet**: the Force/Sync
+flag checkboxes. They're a `CoupledFieldSpec` (one wire byte, two
+state-dict fields) and `pyg7.workflow`'s prepare/execute pair -- tested
+and committed this session -- only exercises plain `FieldSpec`/
+`ButtonFieldSpec` intents; teaching it to group two `ApprovedIntent`s
+into one coupled write is a real design question (same shape Track S's
+own S3 flagged for `CoupledFieldSpec` itself) that deserves its own
+pass, not a rushed addition on top of code that was just hardened.
+Checkboxes still write through the old whole-state Sync Now path only.
+"""
 from typing import Optional
 
 from PyQt6.QtCore import pyqtSignal
@@ -6,11 +25,14 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
+    QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
+from pyg7.field_spec import VIBRATION_LEVEL_FIELDS
 from pyg7.vibration import LEVELS
 
 from ..checkbox import Checkbox
@@ -40,6 +62,13 @@ def _nearest_level_index(value: Optional[int]) -> int:
 
 class VibrationView(QWidget):
     changed = pyqtSignal()
+    # path, FieldSpec, desired value, profile -- MainWindow's DesiredDraft
+    # ledger listens to this, not to `changed` (S6: "touched-intent ledger
+    # independent of widgets," DESIGN-SPEC.md 10.2 item 2). Only the four
+    # plain levels emit this; see the module docstring for why the flags
+    # don't yet.
+    fieldTouched = pyqtSignal(tuple, object, object, int)
+    fieldReverted = pyqtSignal(tuple)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -49,6 +78,13 @@ class VibrationView(QWidget):
         # last load_state() -- see _on_edit()'s own comment for why this
         # can't just be "whatever every control currently shows."
         self._sliders_touched: set = set()
+        # The level values as of the last load_state() -- purely for this
+        # view's own "was X%" mark text; MainWindow's DesiredDraft (built
+        # from an ObservedSnapshot) is the authoritative record, this is
+        # just display convenience local to this page.
+        self._loaded_levels: dict[str, Optional[int]] = {}
+        self._was_labels: dict[str, QLabel] = {}
+        self._revert_buttons: dict[str, QPushButton] = {}
         # Modest content today, but QTabWidget sizes the whole main window's
         # minimum height to fit the LARGEST tab page, not just whichever is
         # visible -- wrapped for consistency with every other tab so this
@@ -84,8 +120,25 @@ class VibrationView(QWidget):
             # for why the touched-marker must connect before _on_edit.
             control.selectionChanged.connect(lambda _v, k=key: self._mark_slider_touched(k))
             control.selectionChanged.connect(self._on_edit)
-            form.addRow(label, control)
+            row_widget = QWidget()
+            row = QHBoxLayout(row_widget)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(8)
+            row.addWidget(control)
+            was_label = QLabel("")
+            was_label.setProperty("role", "muted")
+            was_label.setVisible(False)
+            row.addWidget(was_label)
+            revert_btn = QPushButton("Revert")
+            revert_btn.setProperty("role", "link")
+            revert_btn.setVisible(False)
+            revert_btn.clicked.connect(lambda _c=False, k=key: self._revert_level(k))
+            row.addWidget(revert_btn)
+            row.addStretch(1)
+            form.addRow(label, row_widget)
             self.sliders[key] = control
+            self._was_labels[key] = was_label
+            self._revert_buttons[key] = revert_btn
         outer.addWidget(levels_box)
 
         flags_box = QGroupBox("Trigger Vibration Flags")
@@ -130,6 +183,9 @@ class VibrationView(QWidget):
             vib = state["vibration"]
             for key, control in self.sliders.items():
                 control.set_value(str(LEVELS[_nearest_level_index(vib.get(key))]))
+                control.set_edited(False)
+                self._was_labels[key].setVisible(False)
+                self._revert_buttons[key].setVisible(False)
             for key, check in self.checks.items():
                 check.setChecked(bool(vib.get(key)))
         finally:
@@ -137,6 +193,7 @@ class VibrationView(QWidget):
         # Reset AFTER loading, not before -- see settings_view.py's
         # identical fix/comment for the same reasoning.
         self._sliders_touched = set()
+        self._loaded_levels = {key: vib.get(key) for key in self.sliders}
 
     def _mark_slider_touched(self, key: str) -> None:
         # REAL BUG, found 2026-09-17 (Astra's bug-sweep): _on_edit() used to
@@ -150,8 +207,35 @@ class VibrationView(QWidget):
         # moved." Only the control whose own signal fires for a real
         # reason (guarded by _loading) gets marked -- matches
         # settings_view.py's identical fix for the same pattern.
-        if not self._loading:
-            self._sliders_touched.add(key)
+        if self._loading:
+            return
+        self._sliders_touched.add(key)
+        control = self.sliders[key]
+        control.set_edited(True)
+        observed = self._loaded_levels.get(key)
+        self._was_labels[key].setText("was Unknown" if observed is None else f"was {observed}%")
+        self._was_labels[key].setVisible(True)
+        self._revert_buttons[key].setVisible(True)
+        profile = (self._state or {}).get("controller_slot") or 1
+        self.fieldTouched.emit(("vibration", key), VIBRATION_LEVEL_FIELDS[key], int(control.value()), profile)
+
+    def _revert_level(self, key: str) -> None:
+        if self._state is None:
+            return
+        observed = self._loaded_levels.get(key)
+        control = self.sliders[key]
+        self._loading = True  # set_value() must not re-mark this touched
+        try:
+            control.set_value(str(LEVELS[_nearest_level_index(observed)]))
+        finally:
+            self._loading = False
+        self._sliders_touched.discard(key)
+        control.set_edited(False)
+        self._was_labels[key].setVisible(False)
+        self._revert_buttons[key].setVisible(False)
+        self._state["vibration"][key] = observed
+        self.fieldReverted.emit(("vibration", key))
+        self.changed.emit()
 
     def _on_edit(self, *_: object) -> None:
         if self._loading or self._state is None:

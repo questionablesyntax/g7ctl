@@ -195,6 +195,8 @@ def main() -> int:
     watcher.sync_progress.connect(window.set_sync_progress)
     watcher.sync_finished.connect(window.set_sync_finished)
     watcher.read_finished.connect(window.set_read_finished)
+    watcher.execute_finished.connect(window.set_execute_finished)
+    watcher.connection_generation_changed.connect(window.set_connection_generation)
     watcher.battery_changed.connect(window.set_battery)
     watcher.battery_unknown.connect(window.clear_battery)
     watcher.firmware_known.connect(window.set_firmware)
@@ -224,6 +226,12 @@ def main() -> int:
         watcher.request_read(slot, force_dock_read)
 
     window.read_requested.connect(_on_read_requested)
+
+    def _on_execute_requested(approved_intents: list, baseline_state: dict, connection_generation: int) -> None:
+        # Same reasoning as _on_sync_requested above.
+        watcher.request_execute(approved_intents, baseline_state, connection_generation)
+
+    window.execute_requested.connect(_on_execute_requested)
 
     def _shutdown() -> None:
         window.save_geometry()

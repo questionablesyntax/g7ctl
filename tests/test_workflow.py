@@ -164,6 +164,44 @@ class ExecuteTest(unittest.TestCase):
         self.assertEqual(len(sess.sent), 1)
 
 
+class ButtonFieldExecuteTest(unittest.TestCase):
+    """`ButtonFieldSpec` through the REAL prepare()/execute() path, not
+    just a direct plan_operation() call -- the actual thing the
+    `(desired, profile)` -> `(desired, baseline, profile)` signature fix
+    unblocks (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md's Track S
+    notes: execute()'s call site is one uniform `plan_operation(desired,
+    baseline, profile)` shape for every field type, and the old 2-arg
+    form raised TypeError through it)."""
+
+    def test_a_real_remap_executes_through_the_uniform_call_site(self):
+        from pyg7.field_spec import BUTTON_FIELDS
+
+        intent = _intent(("buttons", "default", "a"), "native_x",
+                          field_spec=BUTTON_FIELDS["default"]["a"], profile=2)
+        job = prepare("job1", DraftRevision("d1", 1), 1, [intent],
+                       baseline_state={"buttons": {"default": {"a": "native_b"}}},
+                       fresh_state={"buttons": {"default": {"a": "native_b"}}})
+        self.assertEqual(job.outcomes[0].classification, Classification.CLEAN)
+        sess = TracingFakeSession()
+        result = execute(sess, job, DraftRevision("d1", 1), 1)
+        self.assertEqual(len(result.executed), 1)
+        self.assertEqual(len(sess.sent), 1)
+
+    def test_a_clear_intent_executes_an_unbind_through_the_uniform_call_site(self):
+        from pyg7.field_spec import BUTTON_FIELDS
+
+        intent = _intent(("buttons", "default", "a"), Intent.CLEAR,
+                          field_spec=BUTTON_FIELDS["default"]["a"], profile=1)
+        job = prepare("job1", DraftRevision("d1", 1), 1, [intent],
+                       baseline_state={"buttons": {"default": {"a": "native_b"}}},
+                       fresh_state={"buttons": {"default": {"a": "native_b"}}})
+        self.assertEqual(job.outcomes[0].classification, Classification.CLEAN)
+        sess = TracingFakeSession()
+        result = execute(sess, job, DraftRevision("d1", 1), 1)
+        self.assertEqual(len(result.executed), 1)
+        self.assertEqual(len(sess.sent), 1)
+
+
 class ReadBackTest(unittest.TestCase):
     """read_back() -- S5's "read back" step, the one thing the vertical
     slice needs beyond draft/fast-path/prepare/execute. Additional

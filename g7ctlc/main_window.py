@@ -11,6 +11,7 @@ comments; only which widget it reaches has changed. Pages themselves
 (Buttons/Sticks/Triggers/Motion/Vibration/Dock) are still today's
 un-reskinned views -- that's A4's job.
 """
+import copy
 import os
 from pathlib import Path
 from typing import Optional
@@ -34,8 +35,10 @@ from PyQt6.QtWidgets import (
 )
 
 from pyg7 import state as state_mod
+from pyg7.field_spec import Intent
 
 from . import help_content
+from .draft import DesiredDraft, ObservedSnapshot
 from .empty_state import EmptyState
 from .hatch_overlay import HatchOverlay
 from .inline_notice import InlineNotice
@@ -89,6 +92,13 @@ class MainWindow(QMainWindow):
     # class (the tray icon's own Release Device action, currently) can stay
     # in step without reaching into a private attribute.
     syncing_changed = pyqtSignal(bool)
+    # S6's fast path (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md, Track
+    # S/DESIGN-SPEC.md 10.3): approved intents, the baseline state dict they
+    # were drafted against, and the connection generation captured when
+    # they were. DeviceWatcher.request_execute() is this signal's one
+    # connection (app.py) -- same "plain closure, not a bound method"
+    # reasoning as sync_requested/read_requested.
+    execute_requested = pyqtSignal(list, dict, int)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -126,6 +136,43 @@ class MainWindow(QMainWindow):
         # previously-synced real profile" guarantee was removed with nothing
         # in its place.
         self._state_confirmed = False
+        # S6 (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md, Track S):
+        # Vibration's four levels are this app's first page on the real
+        # per-field draft model -- see draft.py's own module docstring.
+        # One DesiredDraft here, not one per page yet; every other page
+        # still writes only through the old whole-state Sync Now path.
+        self._vibration_draft = DesiredDraft(ObservedSnapshot(None, confirmed=False))
+        # Dock's draft -- the first SHARED-scope one (not per-profile).
+        # DESIGN-SPEC.md 10.1 #5: "shared Shift and Dock draft rows survive
+        # a profile switch" -- unlike self._vibration_draft, nothing here
+        # resets this on a profile switch; only on a real read/import with
+        # nothing outstanding, or a reconnect (see set_read_finished()'s
+        # own guard and set_connection_generation()).
+        self._dock_draft = DesiredDraft(ObservedSnapshot(None, confirmed=False))
+        # Triggers' draft -- the first PER-SIDE one, but still per-profile
+        # scope like Vibration's (not shared like Dock's): a profile switch
+        # discards it, same reasoning _reset_vibration_draft() documents.
+        self._triggers_draft = DesiredDraft(ObservedSnapshot(None, confirmed=False))
+        # Sticks' draft -- same per-side/per-profile shape as Triggers'.
+        self._sticks_draft = DesiredDraft(ObservedSnapshot(None, confirmed=False))
+        # Motion's draft -- same per-side/per-profile shape as Sticks'/
+        # Triggers'. One of the two categories Track S's own ordering
+        # flagged as most irregular (see motion_view.py's module
+        # docstring for what's deliberately still deferred).
+        self._motion_draft = DesiredDraft(ObservedSnapshot(None, confirmed=False))
+        # Which draft a currently-in-flight execute_requested belongs to --
+        # "vibration", "dock", "triggers", "sticks", or "motion". All five
+        # write buttons are disabled while self._syncing is true (same as
+        # Sync Now/Read), so only one job is ever in flight, but
+        # set_execute_finished() still needs to know which draft's
+        # bookkeeping to update when the response comes back.
+        self._pending_execute_scope: Optional[str] = None
+        # Bumped by DeviceWatcher.connection_generation_changed every time a
+        # connection is freshly (re-)established -- captured into any
+        # execute_requested emission so _do_execute() can refuse to write
+        # against a connection the draft wasn't reviewed against
+        # (FEASIBILITY.md: "reject stale preparation after... reconnect").
+        self._connection_generation = 0
         self._loading_profile_switch = False
         self._loading_report_rate_combo = False
         # True only while the Shift layer's single screen is showing. The
@@ -303,10 +350,20 @@ class MainWindow(QMainWindow):
         self.overview_view.reportRateChanged.connect(self._on_report_rate_changed)
         self.buttons_view = ButtonsView(self._theme.palette)
         self.sticks_view = SticksView(self._theme.palette)
+        self.sticks_view.fieldTouched.connect(self._on_sticks_field_touched)
+        self.sticks_view.fieldReverted.connect(self._on_sticks_field_reverted)
         self.triggers_view = TriggersView(self._theme.palette)
         self.motion_view = MotionView()
+        self.motion_view.fieldTouched.connect(self._on_motion_field_touched)
+        self.motion_view.fieldReverted.connect(self._on_motion_field_reverted)
         self.vibration_view = VibrationView()
+        self.vibration_view.fieldTouched.connect(self._on_vibration_field_touched)
+        self.vibration_view.fieldReverted.connect(self._on_vibration_field_reverted)
+        self.triggers_view.fieldTouched.connect(self._on_triggers_field_touched)
+        self.triggers_view.fieldReverted.connect(self._on_triggers_field_reverted)
         self.settings_view = SettingsView()  # Dock, device-wide
+        self.settings_view.fieldTouched.connect(self._on_dock_field_touched)
+        self.settings_view.fieldReverted.connect(self._on_dock_field_reverted)
         self._profile_settings_page = self._build_profile_settings_page()
         self._page_widgets = {
             "overview": self.overview_view,
@@ -434,6 +491,62 @@ class MainWindow(QMainWindow):
         """
         row = QHBoxLayout()
         row.addStretch(1)
+        # S6's fast path (DESIGN-SPEC.md 10.3): shown only while Vibration's
+        # draft has unwritten touches, next to (not replacing) Sync Now --
+        # the full draft bar/review sheet this is a down payment on doesn't
+        # exist yet, so this is the one place a fast-path write can start.
+        # role="write" is the one other button CRITIC.md #1's closed signal
+        # list allows, same as Sync Now.
+        self.vibration_write_btn = QPushButton("Write 1 change")
+        self.vibration_write_btn.setProperty("role", "write")
+        self.vibration_write_btn.setVisible(False)
+        self.vibration_write_btn.setToolTip(
+            "Write only the Vibration levels changed since the last read -- "
+            "re-reads the controller first and refuses if something else "
+            "changed there since."
+        )
+        self.vibration_write_btn.clicked.connect(self._on_write_vibration_clicked)
+        row.addWidget(self.vibration_write_btn)
+        self.dock_write_btn = QPushButton("Write 1 change")
+        self.dock_write_btn.setProperty("role", "write")
+        self.dock_write_btn.setVisible(False)
+        self.dock_write_btn.setToolTip(
+            "Write only the Dock settings changed since the last read -- "
+            "re-reads the controller first and refuses if something else "
+            "changed there since."
+        )
+        self.dock_write_btn.clicked.connect(self._on_write_dock_clicked)
+        row.addWidget(self.dock_write_btn)
+        self.triggers_write_btn = QPushButton("Write 1 change")
+        self.triggers_write_btn.setProperty("role", "write")
+        self.triggers_write_btn.setVisible(False)
+        self.triggers_write_btn.setToolTip(
+            "Write only the Trigger settings changed since the last read -- "
+            "re-reads the controller first and refuses if something else "
+            "changed there since."
+        )
+        self.triggers_write_btn.clicked.connect(self._on_write_triggers_clicked)
+        row.addWidget(self.triggers_write_btn)
+        self.sticks_write_btn = QPushButton("Write 1 change")
+        self.sticks_write_btn.setProperty("role", "write")
+        self.sticks_write_btn.setVisible(False)
+        self.sticks_write_btn.setToolTip(
+            "Write only the Stick settings changed since the last read -- "
+            "re-reads the controller first and refuses if something else "
+            "changed there since."
+        )
+        self.sticks_write_btn.clicked.connect(self._on_write_sticks_clicked)
+        row.addWidget(self.sticks_write_btn)
+        self.motion_write_btn = QPushButton("Write 1 change")
+        self.motion_write_btn.setProperty("role", "write")
+        self.motion_write_btn.setVisible(False)
+        self.motion_write_btn.setToolTip(
+            "Write only the Motion settings changed since the last read -- "
+            "re-reads the controller first and refuses if something else "
+            "changed there since."
+        )
+        self.motion_write_btn.clicked.connect(self._on_write_motion_clicked)
+        row.addWidget(self.motion_write_btn)
         self.sync_btn = QPushButton("Sync Now")
         self.sync_btn.setProperty("role", "write")
         self.sync_btn.setEnabled(False)
@@ -749,8 +862,336 @@ class MainWindow(QMainWindow):
         self.import_export_btn.setEnabled(True)
         if success:
             self._set_dirty(False)  # the device now matches what we just pushed
+            # Sync Now just wrote the whole state, including any Vibration
+            # or Dock touches -- discard both drafts too, or the rail
+            # count/fast-path buttons would keep claiming unwritten edits
+            # that were, in fact, just written.
+            self._reset_vibration_draft()
+            self._reset_dock_draft()
+            self._reset_triggers_draft()
+            self._reset_sticks_draft()
+            self._reset_motion_draft()
         else:
             QMessageBox.warning(self, "Sync failed", message)
+
+    # --- S6's fast path (DesiredDraft / prepare-execute) --------------------
+
+    def _on_vibration_field_touched(self, path: tuple, field: object, desired: object, profile: int) -> None:
+        self._vibration_draft.touch(path, field, desired, profile)
+        self._refresh_vibration_draft_ui()
+
+    def _on_vibration_field_reverted(self, path: tuple) -> None:
+        self._vibration_draft.untouch(path)
+        self._refresh_vibration_draft_ui()
+
+    def _refresh_vibration_draft_ui(self) -> None:
+        count = self._vibration_draft.edit_count
+        self.rail.set_edit_count("vibration", count)
+        self.vibration_write_btn.setVisible(count > 0)
+        self.vibration_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
+        self.vibration_write_btn.setEnabled(
+            count > 0 and self._connection_state == "connected" and not self._syncing)
+
+    def _reset_vibration_draft(self, imported: bool = False) -> None:
+        """A fresh ObservedSnapshot -- a real Read from Device, an Import,
+        or a profile switch discarding whatever was there (DESIGN-SPEC.md
+        10.1 #5: "the switch dialog says plainly that shared edits are
+        discarded too" -- Vibration is per-profile, not shared, so unlike
+        `_dock_draft` it IS always discarded on a switch; see this
+        method's own callers).
+
+        A real `copy.deepcopy()`, not `self._state` itself -- REAL BUG,
+        caught by tests/test_gui_main_window_fast_path.py before this ever
+        ran on hardware: VibrationView's still-active old-path `_on_edit()`
+        mutates `self._state["vibration"]` in place on every edit, so an
+        `ObservedSnapshot` sharing that same dict object would silently
+        drift to show the just-drafted value as its own "baseline" the
+        moment a level was moved -- exactly the baseline-contamination
+        `prepare()` exists to compare against, defeating its own
+        three-way classification before a single write happens.
+        """
+        self._vibration_draft = DesiredDraft(
+            ObservedSnapshot(copy.deepcopy(self._state), self._state_confirmed, imported=imported))
+        self._refresh_vibration_draft_ui()
+
+    def _on_dock_field_touched(self, path: tuple, field: object, desired: object, profile: int) -> None:
+        self._dock_draft.touch(path, field, desired, profile)
+        self._refresh_dock_draft_ui()
+
+    def _on_dock_field_reverted(self, path: tuple) -> None:
+        self._dock_draft.untouch(path)
+        self._refresh_dock_draft_ui()
+
+    def _refresh_dock_draft_ui(self) -> None:
+        count = self._dock_draft.edit_count
+        self.rail.set_edit_count("dock", count)
+        self.dock_write_btn.setVisible(count > 0)
+        self.dock_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
+        self.dock_write_btn.setEnabled(
+            count > 0 and self._connection_state == "connected" and not self._syncing)
+
+    def _reset_dock_draft(self, imported: bool = False) -> None:
+        """Same shape as `_reset_vibration_draft()`, but called from fewer
+        places: a profile switch must NOT reset this one (DESIGN-SPEC.md
+        10.1 #5 -- Dock is shared scope, its draft survives a switch).
+        See `set_read_finished()`'s own guard for the other half of that:
+        a switch-triggered read must not silently overwrite a pending Dock
+        edit in `self._state` either, or there'd be nothing left for this
+        draft's own marks to mean anything about."""
+        self._dock_draft = DesiredDraft(
+            ObservedSnapshot(copy.deepcopy(self._state), self._state_confirmed, imported=imported))
+        self._refresh_dock_draft_ui()
+
+    def _on_triggers_field_touched(self, path: tuple, field: object, desired: object, profile: int) -> None:
+        self._triggers_draft.touch(path, field, desired, profile)
+        self._refresh_triggers_draft_ui()
+
+    def _on_triggers_field_reverted(self, path: tuple) -> None:
+        self._triggers_draft.untouch(path)
+        self._refresh_triggers_draft_ui()
+
+    def _refresh_triggers_draft_ui(self) -> None:
+        count = self._triggers_draft.edit_count
+        self.rail.set_edit_count("triggers", count)
+        self.triggers_write_btn.setVisible(count > 0)
+        self.triggers_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
+        self.triggers_write_btn.setEnabled(
+            count > 0 and self._connection_state == "connected" and not self._syncing)
+
+    def _reset_triggers_draft(self, imported: bool = False) -> None:
+        """Same shape/reasoning as `_reset_vibration_draft()` -- Triggers
+        is per-profile scope too, so this IS discarded on a profile
+        switch (see `_on_profile_changed()`), unlike `_dock_draft`."""
+        self._triggers_draft = DesiredDraft(
+            ObservedSnapshot(copy.deepcopy(self._state), self._state_confirmed, imported=imported))
+        self._refresh_triggers_draft_ui()
+
+    def _on_sticks_field_touched(self, path: tuple, field: object, desired: object, profile: int) -> None:
+        self._sticks_draft.touch(path, field, desired, profile)
+        self._refresh_sticks_draft_ui()
+
+    def _on_sticks_field_reverted(self, path: tuple) -> None:
+        self._sticks_draft.untouch(path)
+        self._refresh_sticks_draft_ui()
+
+    def _refresh_sticks_draft_ui(self) -> None:
+        count = self._sticks_draft.edit_count
+        self.rail.set_edit_count("sticks", count)
+        self.sticks_write_btn.setVisible(count > 0)
+        self.sticks_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
+        self.sticks_write_btn.setEnabled(
+            count > 0 and self._connection_state == "connected" and not self._syncing)
+
+    def _reset_sticks_draft(self, imported: bool = False) -> None:
+        """Same shape/reasoning as `_reset_triggers_draft()` -- Sticks is
+        per-profile scope too, discarded on a profile switch."""
+        self._sticks_draft = DesiredDraft(
+            ObservedSnapshot(copy.deepcopy(self._state), self._state_confirmed, imported=imported))
+        self._refresh_sticks_draft_ui()
+
+    def _on_motion_field_touched(self, path: tuple, field: object, desired: object, profile: int) -> None:
+        self._motion_draft.touch(path, field, desired, profile)
+        self._refresh_motion_draft_ui()
+
+    def _on_motion_field_reverted(self, path: tuple) -> None:
+        self._motion_draft.untouch(path)
+        self._refresh_motion_draft_ui()
+
+    def _refresh_motion_draft_ui(self) -> None:
+        count = self._motion_draft.edit_count
+        self.rail.set_edit_count("motion", count)
+        self.motion_write_btn.setVisible(count > 0)
+        self.motion_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
+        self.motion_write_btn.setEnabled(
+            count > 0 and self._connection_state == "connected" and not self._syncing)
+
+    def _reset_motion_draft(self, imported: bool = False) -> None:
+        """Same shape/reasoning as `_reset_sticks_draft()` -- Motion is
+        per-profile scope too, discarded on a profile switch."""
+        self._motion_draft = DesiredDraft(
+            ObservedSnapshot(copy.deepcopy(self._state), self._state_confirmed, imported=imported))
+        self._refresh_motion_draft_ui()
+
+    def _rebuild_draft_snapshot(self, draft: DesiredDraft) -> DesiredDraft:
+        """Refresh a draft's own `ObservedSnapshot` to the current
+        `self._state`, re-touching whatever marks still remain against it
+        -- called after a fast-path write, NOT a plain reset. Shared by
+        both `_vibration_draft` and `_dock_draft`.
+
+        REAL BUG, found live on hardware 2026-10-26 (hardware test): writing
+        Left Grip to 75% succeeded; moving it back to 50% and writing again
+        failed with "Something changed on the controller," even though
+        nothing external had. Cause: a successful write only called
+        `untouch()` on the written path -- the draft's `ObservedSnapshot`
+        itself, taken when the page was last loaded, still held the
+        PRE-write value. The next `prepare()` compared the real post-write
+        value (75, correct) against that stale baseline (the original
+        pre-first-write value, not 75) -- same value, different number --
+        and correctly, by its own rules, called that a conflict: it had no
+        way to know this app's own prior write was *why* they differed. The
+        fix is this app keeping its own baseline current, not loosening
+        prepare()'s own classification, which is doing exactly its job.
+
+        Marks that are NOT part of the write just finished (none exist yet,
+        single-page/single-job today, but kept general) are re-touched
+        against the fresh snapshot rather than dropped -- same desired
+        value, but now compared against a baseline that reflects reality.
+        """
+        new_draft = DesiredDraft(
+            ObservedSnapshot(copy.deepcopy(self._state), self._state_confirmed,
+                              imported=draft.observed.imported))
+        for mark in draft.marks:
+            new_draft.touch(mark.path, mark.field, mark.desired, mark.profile)
+        return new_draft
+
+    def set_connection_generation(self, generation: int) -> None:
+        """Called from DeviceWatcher.connection_generation_changed. A new
+        generation means any draft reviewed against the old connection is
+        stale (FEASIBILITY.md: "reject stale preparation after... a
+        reconnect") -- discarding here, rather than letting a fast-path
+        write proceed and rely on _do_execute()'s own generation check to
+        refuse it, keeps the rail count/button honest about what a write
+        right now would actually do. Both drafts, including the shared-
+        scope Dock one -- a reconnect, unlike a profile switch, means this
+        app genuinely doesn't know what the device has anymore."""
+        self._connection_generation = generation
+        self._reset_vibration_draft()
+        self._reset_dock_draft()
+        self._reset_triggers_draft()
+        self._reset_sticks_draft()
+        self._reset_motion_draft()
+
+    def _on_write_vibration_clicked(self) -> None:
+        if self._vibration_draft.edit_count == 0 or self._syncing:
+            return
+        self._pending_execute_scope = "vibration"
+        intents = self._vibration_draft.to_approved_intents()
+        baseline = self._vibration_draft.observed.state or {}
+        self._start_execute(intents, baseline)
+
+    def _on_write_dock_clicked(self) -> None:
+        if self._dock_draft.edit_count == 0 or self._syncing:
+            return
+        self._pending_execute_scope = "dock"
+        intents = self._dock_draft.to_approved_intents()
+        baseline = self._dock_draft.observed.state or {}
+        self._start_execute(intents, baseline)
+
+    def _on_write_triggers_clicked(self) -> None:
+        if self._triggers_draft.edit_count == 0 or self._syncing:
+            return
+        self._pending_execute_scope = "triggers"
+        intents = self._triggers_draft.to_approved_intents()
+        baseline = self._triggers_draft.observed.state or {}
+        self._start_execute(intents, baseline)
+
+    def _on_write_sticks_clicked(self) -> None:
+        if self._sticks_draft.edit_count == 0 or self._syncing:
+            return
+        self._pending_execute_scope = "sticks"
+        intents = self._sticks_draft.to_approved_intents()
+        baseline = self._sticks_draft.observed.state or {}
+        self._start_execute(intents, baseline)
+
+    def _on_write_motion_clicked(self) -> None:
+        if self._motion_draft.edit_count == 0 or self._syncing:
+            return
+        self._pending_execute_scope = "motion"
+        intents = self._motion_draft.to_approved_intents()
+        baseline = self._motion_draft.observed.state or {}
+        self._start_execute(intents, baseline)
+
+    def _start_execute(self, intents: list, baseline: dict) -> None:
+        self._syncing = True
+        self.syncing_changed.emit(True)
+        self.sync_btn.setEnabled(False)
+        self.vibration_write_btn.setEnabled(False)
+        self.dock_write_btn.setEnabled(False)
+        self.triggers_write_btn.setEnabled(False)
+        self.sticks_write_btn.setEnabled(False)
+        self.motion_write_btn.setEnabled(False)
+        self.rail.read_button.setEnabled(False)
+        self.rail.set_nav_enabled(False)
+        self.ownership_bar.set_release_enabled(False)
+        self.import_export_btn.setEnabled(False)
+        self._refresh_confirmed_display()
+        self.sync_status_label.setText("Writing…")
+        self.execute_requested.emit(intents, baseline, self._connection_generation)
+
+    def set_execute_finished(self, success: bool, message: str, read_back: Optional[object]) -> None:
+        scope = self._pending_execute_scope
+        self._pending_execute_scope = None
+        self._syncing = False
+        self.syncing_changed.emit(False)
+        self.sync_status_label.setText(message)
+        self._refresh_sync_btn()
+        self._refresh_confirmed_display()
+        self.rail.read_button.setEnabled(self._connection_state == "connected")
+        self.ownership_bar.set_release_enabled(self._connection_state == "connected")
+        self.rail.set_nav_enabled(True)
+        self.import_export_btn.setEnabled(True)
+        if success and read_back is not None:
+            # Update self._state with every confirmed value FIRST, then
+            # rebuild the draft's own baseline from it -- the fix
+            # _rebuild_draft_snapshot()'s own docstring describes. Only
+            # after that do already-satisfied paths get dropped from the
+            # draft; a read-back mismatch keeps its field touched/marked
+            # rather than being silently accepted as written
+            # (FEASIBILITY.md M1: "read-back mismatch => draft retained").
+            for outcome in read_back.ok:
+                path = outcome.intent.path
+                written = None if outcome.intent.desired is Intent.CLEAR else outcome.intent.desired
+                self._apply_path(self._state, path, written)
+            if scope == "vibration":
+                self._vibration_draft = self._rebuild_draft_snapshot(self._vibration_draft)
+                for outcome in read_back.ok:
+                    self._vibration_draft.untouch(outcome.intent.path)
+                self.vibration_view.load_state(self._state)
+                self._refresh_vibration_draft_ui()
+            elif scope == "dock":
+                self._dock_draft = self._rebuild_draft_snapshot(self._dock_draft)
+                for outcome in read_back.ok:
+                    self._dock_draft.untouch(outcome.intent.path)
+                self.settings_view.load_state(self._state)
+                self._refresh_dock_draft_ui()
+            elif scope == "triggers":
+                self._triggers_draft = self._rebuild_draft_snapshot(self._triggers_draft)
+                for outcome in read_back.ok:
+                    self._triggers_draft.untouch(outcome.intent.path)
+                self.triggers_view.load_state(self._state)
+                self._refresh_triggers_draft_ui()
+            elif scope == "sticks":
+                self._sticks_draft = self._rebuild_draft_snapshot(self._sticks_draft)
+                for outcome in read_back.ok:
+                    self._sticks_draft.untouch(outcome.intent.path)
+                self.sticks_view.load_state(self._state)
+                self._refresh_sticks_draft_ui()
+            elif scope == "motion":
+                self._motion_draft = self._rebuild_draft_snapshot(self._motion_draft)
+                for outcome in read_back.ok:
+                    self._motion_draft.untouch(outcome.intent.path)
+                self.motion_view.load_state(self._state)
+                self._refresh_motion_draft_ui()
+        elif not success:
+            self._refresh_vibration_draft_ui()
+            self._refresh_dock_draft_ui()
+            self._refresh_triggers_draft_ui()
+            self._refresh_sticks_draft_ui()
+            self._refresh_motion_draft_ui()
+            QMessageBox.warning(self, "Write failed", message)
+
+    @staticmethod
+    def _apply_path(state: dict, path: tuple, value: object) -> None:
+        """Write `value` into `state` at an arbitrary-depth path, e.g.
+        `("dock_led_brightness",)` or `("triggers", "left", "deadzone",
+        "initial")` -- generalizes the old `len(path) == 1`/`== 2`
+        branching (which only ever covered Dock's flat keys and
+        Vibration's one level of nesting) to any depth, for Triggers'
+        3-4-deep paths."""
+        d = state
+        for key in path[:-1]:
+            d = d.setdefault(key, {})
+        d[path[-1]] = value
 
     def request_read_from_device(self, force_dock_read: bool = False) -> None:
         """`force_dock_read`: DeviceWatcher skips the dock-settings blob
@@ -822,20 +1263,37 @@ class MainWindow(QMainWindow):
         # None means "not read this call" (the watcher skips this
         # device-global blob after the first read per connection), not
         # "read back empty" -- keep whatever value is already showing.
-        if device_state["dock_led_brightness"] is not None:
-            self._state["dock_led_brightness"] = device_state["dock_led_brightness"]
-        if device_state["dock_auto_on_off"] is not None:
-            self._state["dock_auto_on_off"] = device_state["dock_auto_on_off"]
+        #
+        # Also guarded on self._dock_draft having nothing outstanding --
+        # Dock is the shared-scope page (DESIGN-SPEC.md 10.1 #5: its draft
+        # survives a profile switch), and this read can be exactly that
+        # switch's own triggered read. Applying a fresh dock value over a
+        # pending, unwritten Dock edit here would silently discard it --
+        # the same class of bug B2 exists to prevent, just at the GUI
+        # layer instead of the write layer. settings_view.load_state() is
+        # skipped for the same reason: it would reset the view's own
+        # mark/revert UI for a field this app just decided NOT to
+        # overwrite.
+        if self._dock_draft.edit_count == 0:
+            if device_state["dock_led_brightness"] is not None:
+                self._state["dock_led_brightness"] = device_state["dock_led_brightness"]
+            if device_state["dock_auto_on_off"] is not None:
+                self._state["dock_auto_on_off"] = device_state["dock_auto_on_off"]
+            self.settings_view.load_state(self._state)
+            self._reset_dock_draft()
         self._sync_report_rate_combo()
         self.sticks_view.load_state(self._state)
         self.triggers_view.load_state(self._state)
         self.motion_view.load_state(self._state)
         self.vibration_view.load_state(self._state)
-        self.settings_view.load_state(self._state)
+        self._reset_vibration_draft()  # a real Read -- a fresh, confirmed ObservedSnapshot
+        self._reset_triggers_draft()
+        self._reset_sticks_draft()
+        self._reset_motion_draft()
 
         self._set_dirty(False)  # local state now matches the device, not a pending change
 
-    def _load_views_from_state(self) -> None:
+    def _load_views_from_state(self, imported: bool = False) -> None:
         self._sync_profile_switch()
         self._sync_report_rate_combo()
         self.buttons_view.load_state(self._state)
@@ -845,6 +1303,11 @@ class MainWindow(QMainWindow):
         self.motion_view.load_state(self._state)
         self.vibration_view.load_state(self._state)
         self.settings_view.load_state(self._state)
+        self._reset_vibration_draft(imported=imported)
+        self._reset_dock_draft(imported=imported)
+        self._reset_triggers_draft(imported=imported)
+        self._reset_sticks_draft(imported=imported)
+        self._reset_motion_draft(imported=imported)
         self._set_dirty(False)
 
     def _sync_profile_switch(self) -> None:
@@ -877,6 +1340,14 @@ class MainWindow(QMainWindow):
         # read from leaving the previous profile's real values on screen
         # looking exactly like a confirmed reading of the new selection.
         self._state_confirmed = False
+        # Vibration's, Triggers', Sticks', and Motion's drafts are all
+        # per-profile scope, not shared (DESIGN-SPEC.md 10.1 #5) -- a
+        # switch discards them, same as every other page's unsynced
+        # edits, until scoped intents exist to do better.
+        self._reset_vibration_draft()
+        self._reset_triggers_draft()
+        self._reset_sticks_draft()
+        self._reset_motion_draft()
         self._refresh_confirmed_display()
         self._refresh_sync_btn()
         if self._connection_state == "connected" and not self._syncing:
@@ -1019,7 +1490,7 @@ class MainWindow(QMainWindow):
             return
         self._state = imported
         self._state_confirmed = True
-        self._load_views_from_state()
+        self._load_views_from_state(imported=True)
         self._refresh_sync_btn()
         self._refresh_confirmed_display()
         self._set_dirty(True)

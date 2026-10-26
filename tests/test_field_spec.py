@@ -355,25 +355,33 @@ class ButtonFieldsTest(unittest.TestCase):
         self.assertEqual(set(BUTTON_FIELDS["shift"]), set(KNOWN_BUTTON_IDS))
 
     def test_a_real_value_builds_button_remap_not_unbind(self):
-        op = BUTTON_FIELDS["default"]["a"].plan_operation("native_x", profile=2)
+        op = BUTTON_FIELDS["default"]["a"].plan_operation("native_x", baseline=None, profile=2)
         self.assertEqual(op.kind, "button_remap")
         self.assertEqual(op.kwargs, {"profile": 2, "shift": False})
 
     def test_clear_builds_button_unbind_not_remap(self):
         from pyg7.buttons import resolve_button_id
 
-        op = BUTTON_FIELDS["default"]["a"].plan_operation(Intent.CLEAR, profile=2)
+        op = BUTTON_FIELDS["default"]["a"].plan_operation(Intent.CLEAR, baseline=None, profile=2)
         self.assertEqual(op.kind, "button_unbind")
         self.assertEqual(op.args, (resolve_button_id("a"),))
 
+    def test_baseline_is_accepted_and_ignored(self):
+        # Buttons' own skip-vs-write decision is made entirely by the
+        # caller (see the class docstring) -- plan_operation() must build
+        # the exact same Operation no matter what baseline is passed.
+        op_with_baseline = BUTTON_FIELDS["default"]["a"].plan_operation("native_x", baseline="native_y", profile=2)
+        op_without = BUTTON_FIELDS["default"]["a"].plan_operation("native_x", baseline=None, profile=2)
+        self.assertEqual(op_with_baseline, op_without)
+
     def test_shift_layer_field_always_writes_shift_true(self):
-        op = BUTTON_FIELDS["shift"]["y"].plan_operation("native_y", profile=1)
+        op = BUTTON_FIELDS["shift"]["y"].plan_operation("native_y", baseline=None, profile=1)
         self.assertEqual(op.kwargs["shift"], True)
-        op2 = BUTTON_FIELDS["shift"]["y"].plan_operation(Intent.CLEAR, profile=1)
+        op2 = BUTTON_FIELDS["shift"]["y"].plan_operation(Intent.CLEAR, baseline=None, profile=1)
         self.assertEqual(op2.kwargs["shift"], True)
 
     def test_default_layer_field_always_writes_shift_false(self):
-        op = BUTTON_FIELDS["default"]["y"].plan_operation("native_y", profile=1)
+        op = BUTTON_FIELDS["default"]["y"].plan_operation("native_y", baseline=None, profile=1)
         self.assertEqual(op.kwargs["shift"], False)
 
     def test_decode_reads_the_whole_table_and_picks_this_button(self):

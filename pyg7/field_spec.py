@@ -474,7 +474,7 @@ class ButtonFieldSpec:
     -- `buttons.py` has no per-button decode, unlike every other category
     module migrated so far.
 
-    No `baseline`/`compare` here, unlike `FieldSpec`/`CoupledFieldSpec`:
+    No real use for `baseline`, unlike `FieldSpec`/`CoupledFieldSpec`:
     buttons were ALREADY immune to the "undeclared vs. None" ambiguity
     S2/Motion both had to solve, because an undeclared button never even
     reaches this class -- `state["buttons"][layer]` is a sparse dict
@@ -482,16 +482,26 @@ class ButtonFieldSpec:
     touched; a button present with value `None` is a real unbind), so
     the caller's own dict iteration already only ever calls
     `plan_operation()` for a button that's genuinely declared. The
-    skip-vs-write decision is made entirely by the caller
-    (`_build_steps()`, unchanged from before this migration) before this
-    is ever called; this only ever builds the write once that decision
-    is already "yes".
+    skip-vs-write decision is made entirely by the caller -- originally
+    only `_build_steps()`'s own baseline-diffing loop, now also
+    `pyg7.workflow.prepare()`'s classification for the per-field draft
+    path (S6) -- before this is ever called; this only ever builds the
+    write once that decision is already "yes".
+
+    `plan_operation()` still takes a `baseline` parameter, accepted and
+    ignored, purely so `pyg7.workflow.execute()` can call every field
+    type (`FieldSpec`/`CoupledFieldSpec`/`ButtonFieldSpec`) through the
+    exact same `plan_operation(desired, baseline, profile)` shape
+    without special-casing this one -- added when Buttons' own S6 slice
+    needed `ButtonFieldSpec` to work through `prepare()`/`execute()` for
+    the first time and found the old 2-argument form incompatible with
+    `execute()`'s uniform 3-argument call.
     """
     button: str
     shift: bool
     decode: Callable[[bytes], str | None]
 
-    def plan_operation(self, desired: Desired, profile: int) -> Operation:
+    def plan_operation(self, desired: Desired, baseline: Any, profile: int) -> Operation:
         button_id = buttons.resolve_button_id(self.button)
         if desired is Intent.CLEAR:
             return Operation("button_unbind", (button_id,), {"profile": profile, "shift": self.shift})

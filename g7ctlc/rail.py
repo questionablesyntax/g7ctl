@@ -202,6 +202,18 @@ class Rail(QWidget):
         is the one that reflects `set_page_visible()`'s own explicit call."""
         return not self._nav_buttons[key].isHidden()
 
+    def set_edit_count(self, key: str, count: int) -> None:
+        """Rail edit count (S6, DESIGN-SPEC.md 10.2 item 2). Appended to
+        the nav button's own label text rather than a separate badge
+        widget -- `setAccessibleName()` at construction already mirrors
+        the same label, so updating both here keeps them in sync without
+        a second place to maintain it."""
+        label = _PROFILE_PAGE_LABELS.get(key) or _SHARED_PAGE_LABELS.get(key)
+        button = self._nav_buttons[key]
+        text = f"{label} ({count})" if count else label
+        button.setText(text)
+        button.setAccessibleName(text)
+
     def set_current_page(self, key: str) -> None:
         self._nav_buttons[key].setChecked(True)
 

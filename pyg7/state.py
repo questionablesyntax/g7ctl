@@ -879,7 +879,11 @@ def _build_steps(state: dict, baseline: Optional[dict] = None) -> tuple[list[Ste
                 continue  # already matches live device state -- see baseline diffing above
             field = BUTTON_FIELDS[layer_name][btn]
             desired = Intent.CLEAR if keycode_name is None else keycode_name
-            op = field.plan_operation(desired, slot)
+            # baseline is accepted and ignored by ButtonFieldSpec -- see
+            # its own docstring. Passed for documentation's sake even
+            # though this loop already made its own skip-vs-write call
+            # via baseline_layer above.
+            op = field.plan_operation(desired, baseline_layer.get(btn), slot)
             label = (f"Button {btn} ({layer_name}): unbind" if keycode_name is None
                      else f"Button {btn} ({layer_name}) -> {keycode_name}")
             steps.append((label, op))

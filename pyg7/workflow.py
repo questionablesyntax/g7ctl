@@ -192,7 +192,11 @@ def execute(session: VendorSession, job: PreparedJob, current_draft_revision: Dr
     from fresh state plus approved intents"). `plan_operation()`'s own
     skip-if-matches logic becomes redundant here (CLEAN/CONFLICT
     outcomes are already known to differ) but is harmless, not
-    bypassed -- one code path, not two.
+    bypassed -- one code path, not two. `ButtonFieldSpec.plan_operation()`
+    has no such logic at all (its own docstring: the skip-vs-write call
+    is made by `prepare()`'s classification instead) and simply ignores
+    the `baseline` argument -- accepted only so this call site can stay
+    one uniform shape across all three field types, not three.
     """
     if job.draft_revision != current_draft_revision:
         raise StaleJobError(

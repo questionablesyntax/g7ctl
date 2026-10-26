@@ -24,6 +24,7 @@ import usb.core
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from pyg7 import state as state_mod
+from pyg7 import workflow as workflow_mod
 from pyg7.device import (
     HANDSHAKE_MIN_INTERVAL,
     find_hid_device,
@@ -81,6 +82,21 @@ class DeviceWatcher(QObject):
     sync_progress = pyqtSignal(int, int, str)  # step, total, label
     sync_finished = pyqtSignal(bool, str)      # success, message
     read_finished = pyqtSignal(bool, str, object)  # success, message, state dict or None
+    # S6's fast path (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md, Track
+    # S/DESIGN-SPEC.md 10.3): success, message, pyg7.workflow.ReadBackResult
+    # or None (nothing was attempted -- an empty draft, a stale connection
+    # generation, or a conflict found on the fresh re-read).
+    execute_finished = pyqtSignal(bool, str, object)
+    # Bumped every time a connection is freshly established -- the
+    # "connection generation" pyg7.workflow.execute()'s staleness guard
+    # compares against (FEASIBILITY.md: "reject stale preparation after
+    # editing, release, reconnect or profile change"). MainWindow/DesiredDraft
+    # captures this at prepare time; request_execute() carries it back so
+    # _do_execute() can refuse to write against a connection that isn't the
+    # one the draft was reviewed against, without a GUI-thread/worker-thread
+    # race -- the comparison happens on this thread, against this thread's
+    # own counter, not a value read back from the GUI.
+    connection_generation_changed = pyqtSignal(int)
     # percent, charging. Emitted only when the reading changes, so the GUI
     # thread isn't woken every poll to repaint an identical label.
     battery_changed = pyqtSignal(int, bool)
@@ -115,6 +131,10 @@ class DeviceWatcher(QObject):
         self._battery_due = 0.0   # monotonic deadline for the next sample
         self._battery_last = None  # (percent, charging), for change-only emits
         self._probe_backoff_until = 0.0  # see PROBE_FAILURE_BACKOFF
+        # See connection_generation_changed's own docstring above. 0 means
+        # "never connected yet" -- request_execute()'s caller can't have
+        # captured a real generation before the first _establish() anyway.
+        self._connection_generation = 0
 
     def request_sync(self, state: dict) -> None:
         """Thread-safe: call from the GUI thread. Applied on this loop's
@@ -133,6 +153,16 @@ class DeviceWatcher(QObject):
         explicit "Read from Device" button needs this and the automatic
         callers (profile switch, auto-read-on-connect) don't."""
         self._jobs.put(("read", (slot, force_dock)))
+
+    def request_execute(self, approved_intents: list, baseline_state: dict, connection_generation: int) -> None:
+        """Thread-safe: call from the GUI thread. S6's fast path
+        (DESIGN-SPEC.md 10.3) -- prepare and execute run back-to-back on
+        this loop's session, bound to `connection_generation` as captured
+        by the caller when the draft was reviewed. `approved_intents` must
+        all share one profile (one per-profile scope, DESIGN-SPEC.md
+        10.3's own fast-path condition); the caller (DesiredDraft's owner)
+        is responsible for only ever building one of these per scope."""
+        self._jobs.put(("execute", (approved_intents, baseline_state, connection_generation)))
 
     def pause(self) -> None:
         """Thread-safe: call from the GUI thread. Releases the session and
@@ -402,6 +432,9 @@ class DeviceWatcher(QObject):
         elif kind == "read":
             slot, force_dock = payload
             self._do_read(session, slot, force_dock)
+        elif kind == "execute":
+            approved_intents, baseline_state, connection_generation = payload
+            self._do_execute(session, approved_intents, baseline_state, connection_generation)
 
     def _do_sync(self, session: VendorSession, state: dict) -> None:
         """Reads a fresh baseline from the device first (rsync-style: diff
@@ -477,6 +510,94 @@ class DeviceWatcher(QObject):
             raise  # let the caller's disconnect handling tear the session down
         except Exception as exc:
             self.read_finished.emit(False, f"Read failed: {exc}", None)
+
+    def _do_execute(self, session: VendorSession, approved_intents: list, baseline_state: dict,
+                     connection_generation: int) -> None:
+        """S6's fast path (DESIGN-SPEC.md 10.3): prepare and execute,
+        back-to-back, bound to the connection generation the caller
+        captured when the draft was reviewed -- compared against this
+        thread's own counter, not a value read back from the GUI, so a
+        reconnect racing this job can't be missed (see
+        connection_generation_changed's own docstring). Writes only the
+        fields in `approved_intents`, never the whole displayed state --
+        the actual fix pyg7.workflow was built for (B2: "Sync Now can
+        revert changes made on the controller").
+
+        Unlike _do_sync(), a failed prepare (a stale connection
+        generation, or a real conflict on the fresh re-read) writes
+        nothing and is reported as a plain failure, not escalated to a
+        review sheet -- wave 2's full review-sheet escalation
+        (DESIGN-SPEC.md 10.3's "If it finds a conflict... it escalates to
+        the full review sheet") is not built yet; S6's vertical slice (one
+        page, Vibration's four levels) only has the fast path, so a
+        conflict here means "nothing was written, try again" rather than
+        silently falling back to the single-field case.
+        """
+        if not approved_intents:
+            self.execute_finished.emit(True, "Nothing to write.", None)
+            return
+        profile = approved_intents[0].profile
+
+        def on_progress(i, total, label):
+            self.sync_progress.emit(i, total, label)
+
+        try:
+            on_progress(0, 0, "Reading current device state…")
+            fresh_state = state_mod.read_state(session, slot=profile)
+        except usb.core.USBError as exc:
+            self.execute_finished.emit(False, f"Lost connection while preparing: {exc}", None)
+            raise
+        except Exception as exc:
+            self.execute_finished.emit(False, f"Could not read the device's current state: {exc}", None)
+            return
+
+        if connection_generation != self._connection_generation:
+            self.execute_finished.emit(
+                False, "The connection changed since this was reviewed -- please try again.", None)
+            return
+
+        revision = workflow_mod.DraftRevision("fastpath", 1)
+        job = workflow_mod.prepare(
+            "fastpath", revision, connection_generation, approved_intents,
+            baseline_state=baseline_state, fresh_state=fresh_state)
+        if job.conflicts:
+            self.execute_finished.emit(
+                False, "Something changed on the controller since this was reviewed -- "
+                       "re-check the current values and try again.", None)
+            return
+        if not job.writable:
+            self.execute_finished.emit(True, "Already matches the controller -- nothing to write.", None)
+            return
+
+        try:
+            on_progress(1, 2, "Writing…")
+            result = workflow_mod.execute(session, job, revision, connection_generation)
+        except usb.core.USBError as exc:
+            self.execute_finished.emit(False, f"Lost connection while writing: {exc}", None)
+            raise
+        except workflow_mod.StaleJobError as exc:
+            self.execute_finished.emit(False, f"The connection changed since this was reviewed: {exc}", None)
+            return
+
+        try:
+            on_progress(2, 2, "Reading back…")
+            post_write_state = state_mod.read_state(session, slot=profile)
+        except usb.core.USBError as exc:
+            self.execute_finished.emit(False, f"Lost connection during read-back: {exc}", None)
+            raise
+        except Exception as exc:
+            self.execute_finished.emit(
+                False, f"Written, but the read-back to confirm it failed: {exc}", None)
+            return
+
+        read_back = workflow_mod.read_back(result, post_write_state)
+        if read_back.all_confirmed:
+            self.execute_finished.emit(
+                True, f"Written. The controller reports {len(read_back.ok)} value(s) back.", read_back)
+        else:
+            self.execute_finished.emit(
+                False, f"{len(read_back.mismatched)} field(s) read back differently than written.",
+                read_back)
 
     def _establish(self) -> Optional[VendorSession]:
         """Wraps _connect() with the warmup + liveness check every fresh
@@ -582,6 +703,8 @@ class DeviceWatcher(QObject):
 
         self._set_state("connected")
         self._last_error = None
+        self._connection_generation += 1
+        self.connection_generation_changed.emit(self._connection_generation)
         self._dock_known = False   # a fresh connection earns one real dock read
         self._firmware_done = False
         self._active_due = 0.0

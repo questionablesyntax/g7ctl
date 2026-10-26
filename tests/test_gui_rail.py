@@ -210,5 +210,40 @@ class RailPaletteTest(unittest.TestCase):
             self.assertNotEqual(b, a, "an icon did not change for a different palette")
 
 
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class RailEditCountTest(unittest.TestCase):
+    """S6 (Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md, Track S):
+    DESIGN-SPEC.md 10.2 item 2's "rail edit counts"."""
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _rail(self):
+        from g7ctlc.icon_loader import LucideIconLoader
+        from g7ctlc.palette import DARK_PALETTE
+        from g7ctlc.rail import Rail
+        return Rail(DARK_PALETTE, LucideIconLoader())
+
+    def test_a_nonzero_count_is_appended_to_the_label(self):
+        rail = self._rail()
+        rail.set_edit_count("vibration", 2)
+        self.assertEqual(rail._nav_buttons["vibration"].text(), "Vibration (2)")
+        self.assertEqual(rail._nav_buttons["vibration"].accessibleName(), "Vibration (2)")
+
+    def test_zero_restores_the_plain_label(self):
+        rail = self._rail()
+        rail.set_edit_count("vibration", 3)
+        rail.set_edit_count("vibration", 0)
+        self.assertEqual(rail._nav_buttons["vibration"].text(), "Vibration")
+        self.assertEqual(rail._nav_buttons["vibration"].accessibleName(), "Vibration")
+
+    def test_a_shared_scope_page_can_show_a_count_too(self):
+        rail = self._rail()
+        rail.set_edit_count("dock", 1)
+        self.assertEqual(rail._nav_buttons["dock"].text(), "Dock (1)")
+
+
 if __name__ == "__main__":
     unittest.main()
