@@ -102,3 +102,35 @@ def test_format_diff_renders_offsets_and_bytes_in_hex():
     assert "0x10" in out
     assert "0x00" in out
     assert "0xff" in out
+
+
+def test_save_then_load_snapshot_round_trips_exactly(tmp_path):
+    sess = _MultiCategoryFakeSession(_all_categories_blob(fill=0x33))
+    snap = ni.snapshot(sess)
+    path = tmp_path / "snapshot.json"
+
+    ni.save_snapshot(str(path), snap)
+    loaded = ni.load_snapshot(str(path))
+
+    assert loaded == snap
+
+
+def test_a_loaded_snapshot_diffs_the_same_as_the_original(tmp_path):
+    """The actual point: g7ctl noninterference-diff compares two FILES,
+    not two live snapshots -- diff() must not care which."""
+    before_blobs = _all_categories_blob(fill=0x00)
+    before = ni.snapshot(_MultiCategoryFakeSession(before_blobs))
+
+    after_blobs = {k: bytearray(v) for k, v in before_blobs.items()}
+    after_blobs[SHIFT_CATEGORY][3] = 0x9A
+    after = ni.snapshot(_MultiCategoryFakeSession({k: bytes(v) for k, v in after_blobs.items()}))
+
+    before_path = tmp_path / "before.json"
+    after_path = tmp_path / "after.json"
+    ni.save_snapshot(str(before_path), before)
+    ni.save_snapshot(str(after_path), after)
+
+    file_diff = ni.diff(ni.load_snapshot(str(before_path)), ni.load_snapshot(str(after_path)))
+
+    assert file_diff == ni.diff(before, after)
+    assert file_diff[SHIFT_CATEGORY] == [(3, 0x00, 0x9A)]

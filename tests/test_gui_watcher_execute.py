@@ -188,6 +188,65 @@ class DoExecuteTest(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertTrue(results[0][0])  # success
 
+    def _multi_scope_batch(self, dock_fresh):
+        from pyg7.field_spec import DOCK_FIELDS, VIBRATION_LEVEL_FIELDS
+
+        intents = [
+            ApprovedIntent(("vibration", key), 75, VIBRATION_LEVEL_FIELDS[key], profile=2)
+            for key in ("left_grip", "right_grip", "left_trigger")
+        ] + [ApprovedIntent(("dock_led_brightness",), 100, DOCK_FIELDS["dock_led_brightness"], profile=1)]
+        baseline = {"vibration": {"left_grip": 25, "right_grip": 25, "left_trigger": 25},
+                    "dock_led_brightness": 50}
+        fresh = {"vibration": dict(baseline["vibration"]), "dock_led_brightness": dock_fresh}
+        return intents, baseline, fresh
+
+    def test_a_multi_scope_batch_over_three_rows_writes_directly_without_the_sheet(self):
+        """2026-10-26, after the first hardware run: a 4-field
+        "Write all changes" across three pages opened the sheet purely
+        for being >3 rows. The sheet is a soft-error surface -- row count
+        alone isn't one when the batch spans more than one scope (the
+        >3-rows rule stays a single-scope concept; see the test above
+        for that)."""
+        from g7ctlc import watcher as watcher_mod
+
+        w = self._watcher()
+        w._connection_generation = 1
+        results = self._results(w)
+        reviews = []
+        w.needs_review.connect(lambda job, fresh: reviews.append(job))
+        intents, baseline, fresh = self._multi_scope_batch(dock_fresh=50)
+        post_write = {"vibration": {"left_grip": 75, "right_grip": 75, "left_trigger": 75},
+                      "dock_led_brightness": 100}
+        session = TracingFakeSession()
+
+        with mock.patch.object(watcher_mod.state_mod, "read_state", side_effect=[fresh, post_write]), \
+                mock.patch("pyg7.workflow.time.sleep"):
+            w._do_execute(session, intents, baseline_state=baseline, connection_generation=1)
+
+        self.assertEqual(reviews, [])
+        self.assertEqual(len(session.sent), 4)  # all four really written
+        self.assertTrue(results[0][0])
+
+    def test_a_multi_scope_batch_with_a_real_conflict_still_escalates(self):
+        from g7ctlc import watcher as watcher_mod
+
+        w = self._watcher()
+        w._connection_generation = 1
+        results = self._results(w)
+        reviews = []
+        w.needs_review.connect(lambda job, fresh: reviews.append(job))
+        # Dock was 50 when drafted, 100 wanted, but is 25 on the controller now.
+        intents, baseline, fresh = self._multi_scope_batch(dock_fresh=25)
+        session = TracingFakeSession()
+
+        with mock.patch.object(watcher_mod.state_mod, "read_state", return_value=fresh):
+            w._do_execute(session, intents, baseline_state=baseline, connection_generation=1)
+
+        self.assertEqual(session.sent, [])  # nothing written yet
+        self.assertEqual(results, [])
+        self.assertEqual(len(reviews), 1)
+        self.assertEqual(len(reviews[0].conflicts), 1)
+
     def test_already_satisfied_writes_nothing_and_reports_success(self):
         from g7ctlc import watcher as watcher_mod
 

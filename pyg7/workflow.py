@@ -33,6 +33,7 @@ review/reporting) and the job/revision/generation staleness guard.
 from __future__ import annotations
 
 import enum
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -40,6 +41,7 @@ from typing import Any
 from .field_spec import Intent
 from .operations import Operation
 from .session import VendorSession
+from .state import WRITE_HEARTBEAT_INTERVAL
 
 
 class Classification(enum.Enum):
@@ -176,7 +178,8 @@ def prepare(job_id: str, draft_revision: DraftRevision, connection_generation: i
 
 
 def execute(session: VendorSession, job: PreparedJob, current_draft_revision: DraftRevision,
-            current_connection_generation: int, *, force_conflicts: bool = False) -> ExecutionResult:
+            current_connection_generation: int, *, force_conflicts: bool = False,
+            interval: float = WRITE_HEARTBEAT_INTERVAL) -> ExecutionResult:
     """Write every outcome that needs one, bound to `job`'s exact
     identity -- raises StaleJobError if the draft was edited or the
     connection changed since prepare(), matching FEASIBILITY.md's own
@@ -197,6 +200,24 @@ def execute(session: VendorSession, job: PreparedJob, current_draft_revision: Dr
     is made by `prepare()`'s classification instead) and simply ignores
     the `baseline` argument -- accepted only so this call site can stay
     one uniform shape across all three field types, not three.
+
+    **Pacing between writes** (REAL BUG, found on hardware 2026-10-26):
+    this used to fire every operation back-to-back with no heartbeat
+    between them, unlike `state.write_state()` -- the proven bulk path,
+    which sends heartbeats before, between and after every step because
+    a write with no heartbeat around it is silently discarded by the
+    firmware (see PROTOCOL.md). One-field and same-page writes never hit
+    it; the first multi-scope "Write all changes" (4 fields across
+    Vibration/Dock/Sticks) landed the first two writes, silently lost the
+    rest, and the controller then dropped off USB entirely (Errno 19).
+    Reproduced in isolation against the real device: the same four
+    writes unpaced lost writes 3-4, paced at `interval` (the same
+    cadence `write_state()` uses) all four read back correctly. A gap
+    only goes BETWEEN writes -- the first op stays immediate, exactly as
+    every single-field fast-path write was already hardware-verified, so
+    that case's latency is unchanged; the heartbeats the caller's own
+    read-back (`read_state()`'s pre-heartbeats) sends cover the tail.
+    `interval=0` disables it (tests against fake sessions).
     """
     if job.draft_revision != current_draft_revision:
         raise StaleJobError(
@@ -210,13 +231,20 @@ def execute(session: VendorSession, job: PreparedJob, current_draft_revision: Dr
             f"{len(job.conflicts)} unresolved conflict(s); re-prepare or pass force_conflicts=True")
 
     executed = []
+    wrote_any = False
     for outcome in job.writable:
         if outcome.classification is Classification.CONFLICT and not force_conflicts:
             continue  # defensive; the guard above already should have raised first
         intent = outcome.intent
         op = intent.field.plan_operation(intent.desired, outcome.fresh_value, intent.profile)
         if op is not None:
+            if wrote_any and interval > 0:
+                # Same shape state.write_state() paces each step with.
+                time.sleep(interval)
+                session.heartbeat()
+                time.sleep(interval)
             op.execute(session)
+            wrote_any = True
         executed.append(outcome)
     return ExecutionResult(job_id=job.job_id, executed=tuple(executed))
 

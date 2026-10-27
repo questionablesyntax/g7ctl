@@ -164,6 +164,74 @@ class ExecuteTest(unittest.TestCase):
         self.assertEqual(len(sess.sent), 1)
 
 
+class ExecutePacingTest(unittest.TestCase):
+    """REAL BUG, found on hardware 2026-10-26: execute() fired every
+    operation back-to-back with no heartbeat between them, unlike
+    state.write_state(). The first multi-scope "Write all changes" (4
+    fields across Vibration/Dock/Sticks) landed two writes, silently lost
+    the rest ("2 field(s) read back differently than written"), and the
+    controller then dropped off USB. Reproduced against the real device:
+    unpaced lost writes 3-4, paced all read back correctly."""
+
+    def _three_vibration_job(self):
+        from pyg7.field_spec import VIBRATION_LEVEL_FIELDS
+
+        intents = [
+            _intent(("vibration", key), 75, VIBRATION_LEVEL_FIELDS[key], profile=4)
+            for key in ("left_grip", "right_grip", "left_trigger")
+        ]
+        fresh = {"vibration": {"left_grip": 25, "right_grip": 25, "left_trigger": 25}}
+        return prepare("j", DraftRevision("d", 1), 1, intents, baseline_state=fresh, fresh_state=fresh)
+
+    def _run(self, job, **kwargs):
+        from unittest import mock
+
+        trace = []
+        sess = TracingFakeSession(trace=trace)
+        with mock.patch("pyg7.workflow.time.sleep", side_effect=lambda s: trace.append(("sleep", s))):
+            execute(sess, job, DraftRevision("d", 1), 1, **kwargs)
+        return [event[0] for event in trace]
+
+    def test_a_single_write_has_no_pacing_at_all(self):
+        job = prepare("j", DraftRevision("d", 1), 1, [_intent(("report_rate_hz",), 1000)],
+                       baseline_state={"report_rate_hz": 500}, fresh_state={"report_rate_hz": 500})
+        self.assertEqual(self._run(job), ["send_raw"])
+
+    def test_a_heartbeat_gap_goes_between_every_pair_of_writes(self):
+        kinds = self._run(self._three_vibration_job())
+        self.assertEqual(kinds, [
+            "send_raw", "sleep", "heartbeat", "sleep",
+            "send_raw", "sleep", "heartbeat", "sleep",
+            "send_raw",
+        ])
+
+    def test_the_gap_uses_the_caller_supplied_interval(self):
+        from unittest import mock
+
+        trace = []
+        sess = TracingFakeSession(trace=trace)
+        with mock.patch("pyg7.workflow.time.sleep", side_effect=lambda s: trace.append(("sleep", s))):
+            execute(sess, self._three_vibration_job(), DraftRevision("d", 1), 1, interval=0.123)
+        self.assertEqual({e[1] for e in trace if e[0] == "sleep"}, {0.123})
+
+    def test_interval_zero_disables_pacing(self):
+        self.assertEqual(self._run(self._three_vibration_job(), interval=0),
+                          ["send_raw", "send_raw", "send_raw"])
+
+    def test_a_skipped_already_satisfied_intent_does_not_trigger_a_gap(self):
+        from pyg7.field_spec import VIBRATION_LEVEL_FIELDS
+
+        intents = [
+            _intent(("vibration", "left_grip"), 75, VIBRATION_LEVEL_FIELDS["left_grip"], profile=4),
+            _intent(("vibration", "right_grip"), 75, VIBRATION_LEVEL_FIELDS["right_grip"], profile=4),
+        ]
+        # left_grip already satisfied on the device, only right_grip needs a write.
+        fresh = {"vibration": {"left_grip": 75, "right_grip": 25}}
+        job = prepare("j", DraftRevision("d", 1), 1, intents,
+                       baseline_state={"vibration": {"left_grip": 25, "right_grip": 25}}, fresh_state=fresh)
+        self.assertEqual(self._run(job), ["send_raw"])
+
+
 class ButtonFieldExecuteTest(unittest.TestCase):
     """`ButtonFieldSpec` through the REAL prepare()/execute() path, not
     just a direct plan_operation() call -- the actual thing the

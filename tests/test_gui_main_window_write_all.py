@@ -212,9 +212,119 @@ class WriteAllClickTest(unittest.TestCase):
         # exactly as they were, just unlocked again.
         self.assertEqual(window._vibration_draft.edit_count, 1)
         self.assertEqual(window._dock_draft.edit_count, 1)
+        # Each page's own buttons now show only on that page once two
+        # scopes are dirty (ScopeButtonPlacementTest below) -- confirm
+        # both are still there by visiting each page.
+        window.rail._nav_buttons["vibration"].click()
         self.assertFalse(window.vibration_write_btn.isHidden())
+        window.rail._nav_buttons["dock"].click()
         self.assertFalse(window.dock_write_btn.isHidden())
         self.assertIsNone(window._pending_execute_scopes)
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class ScopeButtonPlacementTest(unittest.TestCase):
+    """2026-10-26, first hardware run: with three pages dirty the
+    write row showed "Discard 1 change / Write 1 change" three times over
+    plus "Write all 3 changes" -- read as one button duplicating itself.
+    With one dirty scope nothing changes; with two or more, each scope's
+    pair shows only on its own page and "Write all" is the global one."""
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+
+        window = MainWindow()
+        window._state["controller_slot"] = 2
+        window._state["vibration"]["left_grip"] = 25
+        window._state["dock_led_brightness"] = 50
+        window._state_confirmed = True
+        window._connection_state = "connected"
+        window._reset_vibration_draft()
+        window._reset_dock_draft()
+        window.vibration_view.load_state(window._state)
+        window.settings_view.load_state(window._state)
+        return window
+
+    def test_one_dirty_scope_shows_its_buttons_on_every_page(self):
+        window = self._window()
+        window.vibration_view.sliders["left_grip"].set_value("75")
+
+        for page in ("vibration", "sticks", "overview", "dock"):
+            window.rail._nav_buttons[page].click()
+            self.assertFalse(window.vibration_write_btn.isHidden(), page)
+            self.assertFalse(window.vibration_discard_btn.isHidden(), page)
+
+    def test_two_dirty_scopes_show_only_the_current_pages_own_pair(self):
+        window = self._window()
+        window.vibration_view.sliders["left_grip"].set_value("75")
+        window.settings_view.brightness.set_value("100")
+
+        window.rail._nav_buttons["vibration"].click()
+        self.assertFalse(window.vibration_write_btn.isHidden())
+        self.assertFalse(window.vibration_discard_btn.isHidden())
+        self.assertTrue(window.dock_write_btn.isHidden())
+        self.assertTrue(window.dock_discard_btn.isHidden())
+
+        window.rail._nav_buttons["dock"].click()
+        self.assertTrue(window.vibration_write_btn.isHidden())
+        self.assertTrue(window.vibration_discard_btn.isHidden())
+        self.assertFalse(window.dock_write_btn.isHidden())
+        self.assertFalse(window.dock_discard_btn.isHidden())
+
+    def test_write_all_is_visible_on_every_page(self):
+        window = self._window()
+        window.vibration_view.sliders["left_grip"].set_value("75")
+        window.settings_view.brightness.set_value("100")
+
+        for page in ("vibration", "dock", "sticks", "overview"):
+            window.rail._nav_buttons[page].click()
+            self.assertFalse(window.write_all_btn.isHidden(), page)
+
+    def test_a_page_with_no_dirty_scope_of_its_own_shows_only_write_all(self):
+        window = self._window()
+        window.vibration_view.sliders["left_grip"].set_value("75")
+        window.settings_view.brightness.set_value("100")
+
+        window.rail._nav_buttons["sticks"].click()
+
+        self.assertTrue(window.vibration_write_btn.isHidden())
+        self.assertTrue(window.dock_write_btn.isHidden())
+        self.assertFalse(window.write_all_btn.isHidden())
+
+    def test_overview_hosts_the_profile_settings_pair(self):
+        """Overview carries the second Report Rate control, so a Profile
+        Settings edit's own Write/Discard belong on Overview too."""
+        window = self._window()
+        window._state["report_rate_hz"] = 500
+        window._reset_profile_draft()
+        window._sync_report_rate_combo()
+        window.vibration_view.sliders["left_grip"].set_value("75")
+        window.report_rate_combo.set_value("1000")
+
+        window.rail._nav_buttons["overview"].click()
+
+        self.assertFalse(window.profile_write_btn.isHidden())
+        self.assertFalse(window.profile_discard_btn.isHidden())
+        self.assertTrue(window.vibration_write_btn.isHidden())
+
+    def test_an_edit_made_on_the_current_page_never_hides_its_own_buttons(self):
+        """Touching a second scope's field must not flip the first
+        scope's already-visible pair off while the user's still on its
+        page -- visibility is recomputed for every scope on every change."""
+        window = self._window()
+        window.rail._nav_buttons["vibration"].click()
+        window.vibration_view.sliders["left_grip"].set_value("75")
+        self.assertFalse(window.vibration_write_btn.isHidden())
+
+        window.settings_view.brightness.set_value("100")  # second scope goes dirty
+
+        self.assertFalse(window.vibration_write_btn.isHidden())  # still on its page
+        self.assertTrue(window.dock_write_btn.isHidden())        # dock's pair waits for its own page
 
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")

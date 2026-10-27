@@ -60,7 +60,17 @@ from typing import Callable, Optional
 import usb.core
 import usb.util
 
-from pyg7 import buttons, dock_settings, dpad_options, motion, report_rate, sticks, triggers, vibration
+from pyg7 import (
+    buttons,
+    dock_settings,
+    dpad_options,
+    motion,
+    noninterference,
+    report_rate,
+    sticks,
+    triggers,
+    vibration,
+)
 from pyg7 import state as state_mod
 from pyg7.constants import IFACE, VID
 from pyg7.device import (
@@ -325,6 +335,26 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
     p_raw.add_argument("payload", help="Payload as hex bytes, e.g. 0305007b013e -- sent exactly as "
                         "given, with none of the range/format checks every other setting command has")
 
+    p_ni_snap = sub.add_parser(
+        "snapshot",
+        help="Read every raw config category byte-for-byte, undecoded (handshakes "
+             "automatically if needed), and save it to a file. The hardware "
+             "noninterference check's own 'before'/'after' step (Projects/g7ctl/"
+             "redesign/IMPLEMENTATION-PLAN.md, Track S, S0/S7): save one before a "
+             "change, one after, then 'diff' the two to confirm only the intended "
+             "bytes moved. Cheapest run as three lines of a 'batch' script "
+             "(snapshot, the change itself, snapshot again) -- one session, one "
+             "handshake, instead of three.")
+    p_ni_snap.add_argument("path", help="Output path for the snapshot, e.g. before.json")
+
+    p_ni_diff = sub.add_parser(
+        "diff",
+        help="Compare two snapshot files byte-for-byte and print what changed, "
+             "per raw category. Pure file comparison -- no device connection, no "
+             "handshake, works offline against snapshots saved earlier.")
+    p_ni_diff.add_argument("before", help="Earlier snapshot file")
+    p_ni_diff.add_argument("after", help="Later snapshot file")
+
     sub.add_parser("list", help="List known button/keycode names.")
 
     p_new = sub.add_parser("new-state", help="Write a fresh default state JSON file to edit by hand.")
@@ -516,6 +546,13 @@ def _handle_state_command(sess: VendorSession, args: argparse.Namespace) -> bool
         print(f"  Battery: {status.percent}%" + ("  (charging)" if status.charging else ""))
         return True
 
+    if args.action == "snapshot":
+        snap = noninterference.snapshot(sess)
+        noninterference.save_snapshot(args.path, snap)
+        total_bytes = sum(len(blob) for blob in snap.values())
+        print(f"Saved snapshot ({len(snap)} categories, {total_bytes} bytes) to {args.path}")
+        return True
+
     return False
 
 
@@ -594,6 +631,17 @@ def _print_state(state: dict, slot: int) -> None:
     print("Device-wide (not per-profile):")
     print(f"  dock LED brightness {state['dock_led_brightness']}%")
     print(f"  dock auto on/off    {state['dock_auto_on_off']}")
+
+
+def _print_noninterference_diff(before_path: str, after_path: str) -> None:
+    """The `diff` subcommand's own body -- shared by main()'s top-level
+    dispatch and _run_batch_line() (a pure file comparison, needs no
+    device session either way, so both special-case it before touching
+    _dispatch()'s session-bound chain, same as list/new-state already
+    do)."""
+    before = noninterference.load_snapshot(before_path)
+    after = noninterference.load_snapshot(after_path)
+    print(noninterference.format_diff(noninterference.diff(before, after)))
 
 
 def _print_list() -> None:
@@ -717,10 +765,13 @@ def _dispatch_batch_args(sess: VendorSession, args: argparse.Namespace) -> None:
 
 
 def _run_batch_line(sess: VendorSession, args: argparse.Namespace) -> None:
-    """Handles the 3 batch/REPL actions _dispatch() doesn't know about
-    (list/new-state need no session at all; batch/enter-vendor make no
-    sense once a session is already open) before falling through to the
-    normal device-touching dispatch."""
+    """Handles the batch/REPL actions _dispatch() doesn't know about
+    (list/new-state/diff need no session at all; batch/enter-vendor make
+    no sense once a session is already open) before falling through to
+    the normal device-touching dispatch. snapshot is NOT one of these --
+    it needs the session, so it's handled by _handle_state_command() via
+    the normal _dispatch_batch_args() path below, same as
+    read-state/write-state."""
     if args.action in BATCH_NOT_ALLOWED:
         raise _BatchLineError(f"'{args.action}' isn't valid inside a batch session")
     if args.action == "list":
@@ -729,6 +780,9 @@ def _run_batch_line(sess: VendorSession, args: argparse.Namespace) -> None:
     if args.action == "new-state":
         state_mod.save_state(args.path, state_mod.default_state_dict(args.name))
         print(f"Wrote a new default state to {args.path}")
+        return
+    if args.action == "diff":
+        _print_noninterference_diff(args.before, args.after)
         return
     _dispatch_batch_args(sess, args)
 
@@ -1223,6 +1277,17 @@ def main() -> None:
     if args.action == "new-state":
         state_mod.save_state(args.path, state_mod.default_state_dict(args.name))
         print(f"Wrote a new default state to {args.path}")
+        return
+
+    if args.action == "diff":
+        # Pure file comparison, same reasoning as list/new-state above --
+        # no device touched, no handshake, nothing to wrap in the
+        # USB-error handling below.
+        try:
+            _print_noninterference_diff(args.before, args.after)
+        except (OSError, ValueError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
         return
 
     # Everything below touches the device, directly or via _dispatch() (which

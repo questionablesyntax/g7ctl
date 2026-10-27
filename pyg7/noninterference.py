@@ -23,6 +23,9 @@ IMPLEMENTATION-PLAN.md's S0 status note for the run and its result.
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from .constants import DOCK_READ_CATEGORY, FULL_BLOB_LENGTH
 from .dock_settings import BLOB_LENGTH as DOCK_BLOB_LENGTH
 from .session import SHIFT_CATEGORY
@@ -74,6 +77,24 @@ def diff(before: dict[int, bytes], after: dict[int, bytes]) -> dict[int, list[tu
         if cat_changes:
             changes[category] = cat_changes
     return changes
+
+
+def save_snapshot(path: str, snapshot: dict[int, bytes]) -> None:
+    """Write a snapshot to a JSON file -- category numbers as decimal
+    string keys (JSON object keys must be strings either way), each blob
+    as hex. Round-trips exactly through `load_snapshot()`; not meant for
+    anything else, so no schema version or metadata beyond the blobs
+    themselves -- `state.py`'s `save_state()`/`load_state()` is the
+    model for a *user-facing* file format, this one only ever feeds
+    back into `diff()`."""
+    data = {str(category): blob.hex() for category, blob in snapshot.items()}
+    Path(path).write_text(json.dumps(data, indent=2) + "\n")
+
+
+def load_snapshot(path: str) -> dict[int, bytes]:
+    """`save_snapshot()`'s own inverse."""
+    data = json.loads(Path(path).read_text())
+    return {int(category): bytes.fromhex(blob) for category, blob in data.items()}
 
 
 def format_diff(changes: dict[int, list[tuple[int, int, int]]]) -> str:

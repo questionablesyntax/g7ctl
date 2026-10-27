@@ -500,6 +500,119 @@ class DpadDockSetCommandTest(unittest.TestCase):
         self.assertNotEqual(ctx.exception.code, 0)
 
 
+class NoninterferenceCommandTest(unittest.TestCase):
+    """`snapshot`/`diff` -- the hardware noninterference check's own
+    before/after step, wrapped into the CLI (Projects/g7ctl/redesign/
+    IMPLEMENTATION-PLAN.md, Track S, S0/S7), now that it's been run by
+    hand often enough to be worth scripting rather than a one-off REPL
+    session every time."""
+
+    def setUp(self):
+        self._orig_find = cli_main.find_writable_device
+        self._orig_session = cli_main.VendorSession
+        self._orig_argv = sys.argv
+        cli_main.find_writable_device = lambda: (object(), False)
+        cli_main.VendorSession = _CapturingSessionCM
+
+    def tearDown(self):
+        cli_main.find_writable_device = self._orig_find
+        cli_main.VendorSession = self._orig_session
+        sys.argv = self._orig_argv
+
+    def _tmp_path(self, name):
+        fh = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+        fh.close()
+        return Path(fh.name).with_name(name)
+
+    def _run(self, argv):
+        # Neither subcommand takes --interval -- snapshot is a read
+        # (same shape as read-state, no _add_heartbeat_args()), diff is
+        # a pure file comparison with no device pacing of any kind.
+        sys.argv = ["g7ctl", *argv]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                cli_main.main()
+                code = 0
+            except SystemExit as e:
+                code = e.code
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_snapshot_writes_every_candidate_category_to_a_file(self):
+        from pyg7 import noninterference as ni
+
+        path = self._tmp_path("before.json")
+        code, stdout, _stderr = self._run(["snapshot", str(path)])
+
+        self.assertEqual(code, 0)
+        self.assertIn(str(path), stdout)
+        saved = ni.load_snapshot(str(path))
+        self.assertEqual(set(saved), set(ni.RAW_CATEGORIES))
+        for category, length in ni.RAW_CATEGORIES.items():
+            self.assertEqual(len(saved[category]), length)
+
+    def test_diff_of_identical_snapshots_prints_no_change(self):
+        from pyg7 import noninterference as ni
+
+        before, after = self._tmp_path("a.json"), self._tmp_path("b.json")
+        self._run(["snapshot", str(before)])
+        self._run(["snapshot", str(after)])  # same fake blob both times
+
+        code, stdout, _stderr = self._run(["diff", str(before), str(after)])
+
+        self.assertEqual(code, 0)
+        self.assertIn("no change", stdout)
+        # Sanity: actually the same bytes, not just a lucky "no change".
+        self.assertEqual(ni.load_snapshot(str(before)), ni.load_snapshot(str(after)))
+
+    def test_diff_needs_no_device_session_at_all(self):
+        """The real point of splitting this from snapshot: pure file
+        comparison, safe to run with no controller connected."""
+        from pyg7 import noninterference as ni
+
+        before, after = self._tmp_path("a.json"), self._tmp_path("b.json")
+        ni.save_snapshot(str(before), {1: b"\x00\x00"})
+        ni.save_snapshot(str(after), {1: b"\x00\x01"})
+
+        def _boom():
+            raise AssertionError("diff must not touch the device at all")
+        cli_main.find_writable_device = _boom
+
+        code, stdout, _stderr = self._run(["diff", str(before), str(after)])
+
+        self.assertEqual(code, 0)
+        self.assertIn("category 0x01", stdout)
+        self.assertIn("0x01: 0x00 -> 0x01", stdout)
+
+    def test_diff_reports_a_missing_snapshot_file_cleanly(self):
+        code, _stdout, stderr = self._run(
+            ["diff", "/nonexistent/before.json", "/nonexistent/after.json"])
+        self.assertEqual(code, 1)
+        self.assertIn("Error", stderr)
+
+    def test_snapshot_and_diff_both_work_inside_one_batch_script(self):
+        before, after = self._tmp_path("before.json"), self._tmp_path("after.json")
+        fh = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
+        fh.write("\n".join([
+            f"snapshot {before}",
+            "vibration-set left_grip 50",
+            f"snapshot {after}",
+            f"diff {before} {after}",
+        ]))
+        fh.close()
+
+        sys.argv = ["g7ctl", "batch", fh.name, "--interval", "0"]
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
+            cli_main.main()
+
+        # 4 lines, all handled (the diff line without ever touching the
+        # faked session -- it's a pure file comparison even mid-batch).
+        self.assertIn("4/4 succeeded", stdout.getvalue())
+        self.assertTrue(before.exists())
+        self.assertTrue(after.exists())
+
+
 class NonExitingArgumentParserTest(unittest.TestCase):
     """The parser class batch/REPL mode reparses each line with -- a bad
     line must raise a catchable exception, never call sys.exit(), or one

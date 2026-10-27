@@ -47,7 +47,8 @@ from .modal_overlay import ModalOverlayBase
 from .ownership_bar import OwnershipBar
 from .qss import generate_stylesheet
 from .rail import PROFILE_PAGE_KEYS, SHARED_PAGE_KEYS, Rail
-from .review_sheet import SCOPE_LABELS, ReviewSheet, scope_for_path
+from .review_sheet import ReviewSheet
+from .scopes import SCOPE_LABELS, scope_for_path
 from .segmented_control import SegmentedControl
 from .theme_runtime import ThemeController
 from .views.buttons_view import ButtonsView
@@ -88,6 +89,17 @@ _AUTO_RELEASE_DELAY_MS = 400
 # right order so "Write all" reads the same scopes in the same sequence
 # a user would see if they wrote each one by hand.
 _SCOPE_ORDER = ("vibration", "dock", "triggers", "sticks", "motion", "buttons", "profile_settings")
+
+# Which scope's own Write/Discard buttons belong to which rail page -- see
+# MainWindow._refresh_write_all_btn(). Overview hosts the second Report
+# Rate control (a Profile Settings edit); the Shift view is the Buttons
+# page's other layer, so it shares Buttons' scope.
+_PAGE_SCOPES = {
+    "overview": ("profile_settings",), "profile_settings": ("profile_settings",),
+    "buttons": ("buttons",), "shift": ("buttons",),
+    "sticks": ("sticks",), "triggers": ("triggers",), "motion": ("motion",),
+    "vibration": ("vibration",), "dock": ("dock",),
+}
 
 
 def _combined_scope_label(scopes: list) -> str:
@@ -359,6 +371,7 @@ class MainWindow(QMainWindow):
         self.rail = Rail(self._theme.palette, self._theme.icons, self)
         self.rail.profileChanged.connect(self._on_profile_changed)
         self.rail.pageRequested.connect(self._on_page_requested)
+        self.rail.pageRequested.connect(lambda _key: self._refresh_write_all_btn())
         self.rail.readRequested.connect(lambda: self.request_read_from_device(force_dock_read=True))
         self.rail.importRequested.connect(self._on_import)
         self.rail.exportRequested.connect(self._on_export)
@@ -718,10 +731,9 @@ class MainWindow(QMainWindow):
         self.write_all_btn.setToolTip(
             "Write every changed field across every page in one go -- "
             "re-reads the controller first and refuses if something "
-            "else changed there since. Opens a review sheet exactly "
-            "like any other write would, for a real conflict or more "
-            "than three rows total -- never just for spanning more "
-            "than one page."
+            "else changed there since. Opens a review sheet only if "
+            "something actually conflicts -- never just for spanning "
+            "more than one page, or for how many fields changed."
         )
         self.write_all_btn.clicked.connect(self._on_write_all_clicked)
         row.addWidget(self.write_all_btn)
@@ -1076,11 +1088,9 @@ class MainWindow(QMainWindow):
     def _refresh_vibration_draft_ui(self) -> None:
         count = self._vibration_draft.edit_count
         self.rail.set_edit_count("vibration", count)
-        self.vibration_write_btn.setVisible(count > 0)
         self.vibration_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
         self.vibration_write_btn.setEnabled(
             count > 0 and self._connection_state == "connected" and not self._syncing)
-        self.vibration_discard_btn.setVisible(count > 0)
         self.vibration_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
         self.vibration_discard_btn.setEnabled(count > 0 and not self._syncing)
         self._refresh_write_all_btn()
@@ -1118,11 +1128,9 @@ class MainWindow(QMainWindow):
     def _refresh_dock_draft_ui(self) -> None:
         count = self._dock_draft.edit_count
         self.rail.set_edit_count("dock", count)
-        self.dock_write_btn.setVisible(count > 0)
         self.dock_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
         self.dock_write_btn.setEnabled(
             count > 0 and self._connection_state == "connected" and not self._syncing)
-        self.dock_discard_btn.setVisible(count > 0)
         self.dock_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
         self.dock_discard_btn.setEnabled(count > 0 and not self._syncing)
         self._refresh_write_all_btn()
@@ -1150,11 +1158,9 @@ class MainWindow(QMainWindow):
     def _refresh_triggers_draft_ui(self) -> None:
         count = self._triggers_draft.edit_count
         self.rail.set_edit_count("triggers", count)
-        self.triggers_write_btn.setVisible(count > 0)
         self.triggers_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
         self.triggers_write_btn.setEnabled(
             count > 0 and self._connection_state == "connected" and not self._syncing)
-        self.triggers_discard_btn.setVisible(count > 0)
         self.triggers_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
         self.triggers_discard_btn.setEnabled(count > 0 and not self._syncing)
         self._refresh_write_all_btn()
@@ -1178,11 +1184,9 @@ class MainWindow(QMainWindow):
     def _refresh_sticks_draft_ui(self) -> None:
         count = self._sticks_draft.edit_count
         self.rail.set_edit_count("sticks", count)
-        self.sticks_write_btn.setVisible(count > 0)
         self.sticks_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
         self.sticks_write_btn.setEnabled(
             count > 0 and self._connection_state == "connected" and not self._syncing)
-        self.sticks_discard_btn.setVisible(count > 0)
         self.sticks_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
         self.sticks_discard_btn.setEnabled(count > 0 and not self._syncing)
         self._refresh_write_all_btn()
@@ -1205,11 +1209,9 @@ class MainWindow(QMainWindow):
     def _refresh_motion_draft_ui(self) -> None:
         count = self._motion_draft.edit_count
         self.rail.set_edit_count("motion", count)
-        self.motion_write_btn.setVisible(count > 0)
         self.motion_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
         self.motion_write_btn.setEnabled(
             count > 0 and self._connection_state == "connected" and not self._syncing)
-        self.motion_discard_btn.setVisible(count > 0)
         self.motion_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
         self.motion_discard_btn.setEnabled(count > 0 and not self._syncing)
         self._refresh_write_all_btn()
@@ -1232,11 +1234,9 @@ class MainWindow(QMainWindow):
     def _refresh_buttons_draft_ui(self) -> None:
         count = self._buttons_draft.edit_count
         self.rail.set_edit_count("buttons", count)
-        self.buttons_write_btn.setVisible(count > 0)
         self.buttons_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
         self.buttons_write_btn.setEnabled(
             count > 0 and self._connection_state == "connected" and not self._syncing)
-        self.buttons_discard_btn.setVisible(count > 0)
         self.buttons_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
         self.buttons_discard_btn.setEnabled(count > 0 and not self._syncing)
         self._refresh_write_all_btn()
@@ -1285,11 +1285,9 @@ class MainWindow(QMainWindow):
     def _refresh_profile_draft_ui(self) -> None:
         count = self._profile_draft.edit_count
         self.rail.set_edit_count("profile_settings", count)
-        self.profile_write_btn.setVisible(count > 0)
         self.profile_write_btn.setText("Write 1 change" if count == 1 else f"Write {count} changes")
         self.profile_write_btn.setEnabled(
             count > 0 and self._connection_state == "connected" and not self._syncing)
-        self.profile_discard_btn.setVisible(count > 0)
         self.profile_discard_btn.setText("Discard 1 change" if count == 1 else f"Discard {count} changes")
         self.profile_discard_btn.setEnabled(count > 0 and not self._syncing)
         self._refresh_write_all_btn()
@@ -1439,15 +1437,38 @@ class MainWindow(QMainWindow):
             n = sum(self._draft_for_scope(s).edit_count for s in scopes)
             self.write_all_btn.setText(f"Write all {n} changes")
             self.write_all_btn.setEnabled(self._connection_state == "connected" and not self._syncing)
+        # Per-scope Write/Discard visibility lives HERE, not in each
+        # _refresh_*_draft_ui(): it depends on how many scopes are dirty
+        # and which page is showing, so any one scope's change can flip
+        # another's. With one dirty scope nothing changes (its buttons
+        # show on every page, as ever). With two or more, three
+        # identical "Discard 1 change / Write 1 change" pairs side by
+        # side read as one button duplicating itself (2026-10-26,
+        # first hardware run) -- so each scope's pair shows only on its
+        # own page, and "Write all" is the one control that's global.
+        current = self.rail.current_page()
+        for scope in _SCOPE_ORDER:
+            show = (
+                self._draft_for_scope(scope).edit_count > 0
+                and (len(scopes) <= 1 or scope in _PAGE_SCOPES.get(current, ()))
+            )
+            write_btn, discard_btn = self._scope_buttons(scope)
+            write_btn.setVisible(show)
+            discard_btn.setVisible(show)
+
+    def _scope_buttons(self, scope: str) -> tuple:
+        prefix = "profile" if scope == "profile_settings" else scope
+        return getattr(self, f"{prefix}_write_btn"), getattr(self, f"{prefix}_discard_btn")
 
     def _on_write_all_clicked(self) -> None:
         """S7's cross-scope batch: every scope with an outstanding draft,
-        in one write. No special escalation rule of its own -- the same
-        conflict-or->3-rows test every other write already uses decides
-        whether this needs the review sheet (dropped the "more than one
-        scope always escalates" idea the same day it was proposed: the
-        sheet is a soft-error surface, "something's weird here, take a
-        look," not a toll gate for touching more than one page at once).
+        in one write. Escalates to the review sheet on a real conflict
+        ONLY -- not for spanning more than one scope (dropped the same
+        day it was proposed) and not for row count either (dropped after
+        the first hardware run, 2026-10-26: a 4-field batch across three
+        pages opened the sheet purely for being >3 rows, which isn't "a
+        soft error"). The sheet is a "something's weird here, take a
+        look" surface, not a toll gate. See watcher._do_execute().
 
         Builds one combined baseline dict from each scope's OWN
         ObservedSnapshot, not a merge of the whole-state snapshots
@@ -1998,6 +2019,9 @@ class MainWindow(QMainWindow):
             if self.rail.current_page() in ("shift",):
                 self.rail.set_current_page("buttons")
                 self.pages.setCurrentWidget(self.buttons_view)
+        # The current page may just have changed out from under a click
+        # (set_current_page() above doesn't emit pageRequested).
+        self._refresh_write_all_btn()
 
     def _sync_report_rate_combo(self) -> None:
         """Reflect self._state["report_rate_hz"] in every control that

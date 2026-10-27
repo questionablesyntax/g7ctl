@@ -34,6 +34,8 @@ from pyg7.device import (
 )
 from pyg7.session import EARLY_PROBE_HEARTBEATS, VendorSession
 
+from .scopes import scope_for_path
+
 log = logging.getLogger(__name__)
 
 POLL_INTERVAL = 1.0        # how often to check for the device while disconnected
@@ -552,8 +554,10 @@ class DeviceWatcher(QObject):
         revert changes made on the controller").
 
         Escalates to needs_review() -- the review-sheet path -- instead
-        of executing directly whenever there's a real conflict or more
-        than three rows. DESIGN-SPEC.md 10.3 also names "any change
+        of executing directly whenever there's a real conflict, or more
+        than three rows within ONE scope (a multi-scope "Write all
+        changes" batch escalates on a conflict only -- see the check
+        below). DESIGN-SPEC.md 10.3 also names "any change
         touching shared scope" as always escalating; that was tried for
         Dock (2026-10-26) and dropped the same day after seeing it force
         the sheet on hardware for a single-field, no-conflict Dock write
@@ -590,7 +594,15 @@ class DeviceWatcher(QObject):
         job = workflow_mod.prepare(
             "fastpath", revision, connection_generation, approved_intents,
             baseline_state=baseline_state, fresh_state=fresh_state)
-        if job.conflicts or len(job.outcomes) > 3:
+        # A write spanning more than one scope ("Write all changes")
+        # escalates on a real conflict only, never on row count: the
+        # sheet is a soft-error surface, and "you touched several pages
+        # at once" isn't one (2026-10-26, after the first hardware
+        # run). The >3-rows rule below is a single-scope concept -- many
+        # rows on ONE page is the case the sheet's own layout was
+        # designed to make readable.
+        multi_scope = len({scope_for_path(i.path) for i in approved_intents}) > 1
+        if job.conflicts or (len(job.outcomes) > 3 and not multi_scope):
             self.needs_review.emit(job, fresh_state)
             return
         if not job.writable:
