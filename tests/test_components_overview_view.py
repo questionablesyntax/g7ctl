@@ -36,6 +36,17 @@ class OverviewViewTest(unittest.TestCase):
 
         self.assertIsInstance(self.view.diagram, ControllerDiagram)
 
+    def test_the_diagram_uses_the_same_control_names_as_buttons(self):
+        # Overview once fell back to the raw ids ("DPAD_UP"), because only
+        # the Buttons page passed the display names in.
+        from g7ctlc.views.buttons_view import ButtonsView
+
+        buttons = ButtonsView(DARK_PALETTE)
+        for button_id in ("dpad_up", "dpad_right", "l3", "view", "share"):
+            self.assertEqual(
+                self.view.diagram._label_for(button_id), buttons.diagram._label_for(button_id))
+        self.assertEqual(self.view.diagram._label_for("dpad_up"), "D-Pad Up")
+
     def test_starts_with_no_highlight(self):
         # Nothing on this page drives a highlight yet -- a stray non-None
         # default would be a silent leftover from whatever ControllerDiagram

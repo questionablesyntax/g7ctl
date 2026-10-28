@@ -63,6 +63,30 @@ class ControllerDiagramTest(unittest.TestCase):
         self.diagram.set_palette(LIGHT_PALETTE)
         self.assertIs(self.diagram._palette, LIGHT_PALETTE)
 
+    def test_the_supersampled_art_is_reused_until_the_size_or_palette_changes(self):
+        self.diagram.show()
+        self.diagram.grab()
+        cached = self.diagram._art_cache
+        self.assertIsNotNone(cached)
+        # A repaint that changes only callouts or the highlight reuses it.
+        self.diagram.set_highlighted("a")
+        self.diagram.set_bindings({"a": "Keyboard: R"})
+        self.diagram.grab()
+        self.assertIs(self.diagram._art_cache[1], cached[1])
+        # A new size re-renders it.
+        self.diagram.resize(500, 420)
+        self.diagram.grab()
+        self.assertIsNot(self.diagram._art_cache[1], cached[1])
+
+    def test_changing_the_palette_drops_the_cached_art(self):
+        self.diagram.show()
+        self.diagram.grab()
+        self.assertIsNotNone(self.diagram._art_cache)
+        self.diagram.set_palette(LIGHT_PALETTE)
+        self.assertIsNone(self.diagram._art_cache)
+        self.diagram.grab()
+        self.assertIsNotNone(self.diagram._art_cache)
+
     def test_the_line_art_actually_recolours_for_a_different_palette(self):
         # Real bug, found 2026-10-22: QSvgRenderer does not follow the
         # host QPainter's pen for fill="currentColor"/stroke="currentColor"
@@ -182,10 +206,73 @@ class ControllerDiagramTest(unittest.TestCase):
         self.diagram.set_bindings({"a": "Keyboard: R"})
         self.assertEqual(self.diagram._bindings, {"a": "Keyboard: R"})
 
+    def test_every_button_gets_a_callout_without_expanding_remapped_bindings(self):
+        from g7ctlc.controller_diagram import UNMAPPED_CALLOUT_TEXT
+        from pyg7.buttons import KNOWN_BUTTON_IDS
+
+        self.diagram.set_bindings({"a": "Keyboard: R"})
+        self.diagram.show()
+        self.diagram.grab()
+        self.assertEqual(set(self.diagram._callout_rects), set(KNOWN_BUTTON_IDS))
+        self.assertEqual(self.diagram._bindings, {"a": "Keyboard: R"})
+        self.assertEqual(self.diagram._callout_text("b"), UNMAPPED_CALLOUT_TEXT)
+
+    def test_compact_width_keeps_callout_cards_outside_the_artwork(self):
+        # The main window can narrow until its content pane is only this
+        # wide. Cards must elide there rather than force the artwork into
+        # its full-width fallback, which would draw it behind both rails.
+        self.diagram.resize(360, 500)
+        self.diagram.show()
+        self.diagram.grab()
+        art = self.diagram._draw_rect()
+        for button_id, card in self.diagram._callout_rects.items():
+            self.assertFalse(card.intersects(art), button_id)
+
     def test_set_bindings_updates_the_hotspot_accessible_name(self):
+        from g7ctlc.controller_diagram import UNMAPPED_CALLOUT_TEXT
+
         self.diagram.set_bindings({"a": "Keyboard: R"})
         self.assertIn("remapped to Keyboard: R", self.diagram.hotspot_for("a").accessibleName())
-        self.assertIn("not remapped", self.diagram.hotspot_for("b").accessibleName())
+        self.assertIn(UNMAPPED_CALLOUT_TEXT.lower(), self.diagram.hotspot_for("b").accessibleName())
+
+    def test_hovering_a_callout_shows_a_tooltip_without_raising(self):
+        # A tooltip event carries its position as a QPoint, where mouse events
+        # carry a QPointF; handing it straight to QRectF.contains() raised a
+        # TypeError that only showed up when the cursor rested on a callout.
+        from PyQt6.QtCore import QEvent
+        from PyQt6.QtGui import QHelpEvent
+        from PyQt6.QtWidgets import QToolTip
+
+        self.diagram.resize(900, 700)
+        self.diagram.show()
+        self.diagram.grab()
+        inside = self.diagram._callout_rects["a"].center().toPoint()
+        self.assertEqual(self.diagram._callout_at(inside), "a")
+        event = QHelpEvent(QEvent.Type.ToolTip, inside, self.diagram.mapToGlobal(inside))
+        self.assertTrue(self.diagram.event(event))
+        # The middle of the widget is the artwork, not a callout: it must look
+        # up as "no callout" and fall through to the normal tooltip handling.
+        outside = self.diagram.rect().center()
+        self.assertIsNone(self.diagram._callout_at(outside))
+        event = QHelpEvent(QEvent.Type.ToolTip, outside, self.diagram.mapToGlobal(outside))
+        self.diagram.event(event)
+        # A tooltip left open when the interpreter exits crashes it on teardown.
+        QToolTip.hideText()
+
+    def test_clicking_a_callout_activates_its_control_without_a_new_tab_stop(self):
+        self.diagram.resize(900, 700)
+        self.diagram.show()
+        self.diagram.grab()
+        original_hotspots = set(self.diagram._hotspots)
+        received = []
+        self.diagram.activated.connect(received.append)
+        QTest.mouseClick(
+            self.diagram,
+            Qt.MouseButton.LeftButton,
+            pos=self.diagram._callout_rects["a"].center().toPoint(),
+        )
+        self.assertEqual(received, ["a"])
+        self.assertEqual(set(self.diagram._hotspots), original_hotspots)
 
     def test_paints_without_raising_with_bindings_set(self):
         # Mirrors test_paints_without_raising_with_a_highlight_active --

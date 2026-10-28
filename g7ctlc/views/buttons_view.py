@@ -69,20 +69,10 @@ from pyg7.buttons import BUTTON_TABLE_SLOTS, KNOWN_BUTTON_IDS
 from pyg7.field_spec import BUTTON_FIELDS, DPAD_FIELDS, Intent
 
 from ..checkbox import Checkbox
-from ..controller_diagram import ControllerDiagram
+from ..controller_diagram import BUTTON_LABELS, ControllerDiagram
 from ..keycode_picker import KeycodePicker
 from ..palette import DARK_PALETTE, Palette
 from ..widgets import is_known_keycode, keycode_display_text
-
-_BUTTON_LABELS = {
-    "share": "Share", "a": "A", "b": "B", "x": "X", "y": "Y",
-    "lb": "LB", "rb": "RB", "lt": "LT", "rt": "RT",
-    "l3": "L3 (stick click)", "r3": "R3 (stick click)",
-    "view": "View", "menu": "Menu", "l4": "L4", "r4": "R4",
-    "l5": "L5", "r5": "R5",
-    "dpad_up": "D-Pad Up", "dpad_down": "D-Pad Down",
-    "dpad_left": "D-Pad Left", "dpad_right": "D-Pad Right",
-}
 
 _BUTTON_GROUPS = [
     ("a", "b", "x", "y"),
@@ -155,7 +145,7 @@ class ButtonsView(QWidget):
         assert not missing, f"buttons missing from _BUTTON_GROUPS: {missing}"
 
         self.diagram = ControllerDiagram(
-            palette, labels=_BUTTON_LABELS, order=self._order, parent=self)
+            palette, labels=BUTTON_LABELS, order=self._order, parent=self)
         self.diagram.activated.connect(self._on_diagram_activated)
 
         outer = QVBoxLayout(self)
@@ -251,7 +241,7 @@ class ButtonsView(QWidget):
         # per button -- without this it would keep announcing "Latch" with
         # no button context to a screen reader, where the old per-row
         # checkbox said "RB, Latch".
-        label = _BUTTON_LABELS.get(button_id, button_id.upper())
+        label = BUTTON_LABELS.get(button_id, button_id.upper())
         self._picker.latch_checkbox.setAccessibleName(f"{label}, Latch")
 
     def _on_code_chosen(self, value) -> None:

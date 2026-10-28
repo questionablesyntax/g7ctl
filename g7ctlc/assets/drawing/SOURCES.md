@@ -21,3 +21,10 @@ photos of the physical controller.
 sub-directions -- `guide` and the M/mode button are deliberately excluded,
 neither is remappable. `ControllerDiagram` (`g7ctlc/controller_diagram.py`)
 looks these up by id via `QSvgRenderer.boundsOnElement()`.
+
+2026-10-28 cleanup: three circular outlines (the left stick's outer ring,
+the D-pad ring and the Y button ring) were redrawn as true circles at the
+traced centres, and the M/mode button's corrupted interior was replaced
+with a plain pill outline and an M glyph, both hand-authored; the
+superseded traced paths were removed. All other geometry is still the
+original trace.
