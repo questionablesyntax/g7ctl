@@ -67,6 +67,8 @@ pip install -e .          # protocol library + the `g7ctl` CLI
 pip install -e ".[gui]"   # also installs PyQt6 and `g7ctlc`
 ```
 
+The desktop app needs PyQt6 6.7 or newer.
+
 Running straight from a checkout works without installing anything — use
 `python3 g7ctl_tool.py` and `./g7ctlc_launcher.py` in place of the two commands.
 
@@ -125,6 +127,12 @@ g7ctl read-state --profile 1 --save snapshot.json
 
 # Push a whole saved configuration (reads the controller first, writes only what differs)
 g7ctl write-state snapshot.json
+
+# Save the controller's raw configuration to a file, and compare two such files
+# (no device needed for the comparison) -- shows exactly which bytes a change touched
+g7ctl snapshot before.json
+g7ctl snapshot after.json
+g7ctl diff before.json after.json
 
 # List known button/keycode names (no device needed)
 g7ctl list
@@ -384,6 +392,8 @@ values are hardware-confirmed versus predicted from a confirmed pattern.
 | `g7ctlc/` | The GUI + tray app. |
 | `g7ctl_tool.py` | Convenience shim: runs the CLI straight from a checkout, no install. Equivalent to the `g7ctl` command. |
 | `g7ctlc_launcher.py` | Same idea for the GUI. |
+| `tools/` | One-off hardware scripts used while mapping the protocol (button-bitfield capture, G7 SE bulk-interface probe). Not needed to use the app. |
+| `docs/` | The screenshot shown above. |
 | `packaging/`, `udev/` | Arch PKGBUILDs (`packaging/` for a released tarball, `packaging/git/` for the tip of `main`) and desktop entry; the udev rule for non-root USB access. |
 
 The two root-level scripts exist purely so a fresh `git clone` is runnable with
@@ -396,7 +406,7 @@ commands instead — they do the same thing.
 python3 -m unittest discover -s tests -t .
 ```
 
-545 tests, no controller required — payload builders and blob decoders run
+No controller is required — payload builders and blob decoders run
 against a fake session (`tests/fakes.py`), and `tests/fixtures/live_read.json`
 holds real `read_state()` output captured from a physical controller. The GUI's
 view round-trip tests (headless, offscreen platform) are skipped automatically
@@ -404,10 +414,6 @@ if PyQt6 isn't installed.
 
 Please keep them passing; they exist because a wrong byte here doesn't raise an
 error, it writes something unintended to a device's persistent config.
-
-Repo restructure and maintenance, 2026-09: git history cleaned up, stale
-local build artifacts reviewed, `.gitignore` tightened. No functional
-changes to `pyg7`/`g7ctl`/`g7ctlc`.
 
 ## Contributors
 
