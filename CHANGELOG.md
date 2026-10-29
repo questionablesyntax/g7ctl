@@ -46,6 +46,12 @@ adheres to [semantic versioning](https://semver.org/).
   controller's current settings first; it stops without writing anything.
 - A hand-edited state file that omits a key is no longer treated as an
   instruction to clear that setting.
+- A large sync, a profile import, or `g7ctl write-state` of a profile that
+  differs in many settings could drop the controller's USB connection partway
+  through (`Errno 5`) and leave the profile partly written. The controller
+  cannot take more than about 25 writes in a session without a read in between,
+  so writes now slip in a small read every 15; a 124-setting change that failed
+  every time now completes.
 
 ## [0.3.3] - 2026-09-17
 

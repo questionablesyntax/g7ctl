@@ -397,6 +397,17 @@ contending for the device, about 20 s). The same four writes sent as
 back correctly. A single write, or several to one page, never showed it, so it
 only bites multi-field batches.
 
+**A read at least every ~25 writes** (confirmed on hardware 2026-10-29). After
+more than about 25 writes in one session with no read in between, the
+controller drops off USB (`Errno 5`, then it re-enumerates) at its next read;
+the writes themselves land. Any read resets the count: 80 writes with a read
+every 20 all passed, while 30 writes before a read failed. Idle time does not
+help beyond a short burst (24 s of heartbeats after 63 writes still failed). A
+small read (8 bytes of the category just written) every 15 writes keeps it
+healthy: 100 writes with one every 15, then a 53-byte read, all succeeded; the
+same run without them failed at that last read. `VendorSession` sends these
+checkpoint reads itself.
+
 **Heartbeat** (`CMD=0x02`): payload `f2 00`, fixed.
 
 ## Config writes are addressed writes into a register file
