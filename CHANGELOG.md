@@ -6,6 +6,13 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-29
+
+### Fixed
+
+- The desktop app failed to start on Python 3.9 (an import-time `TypeError` on
+  the Buttons page). 3.9 is still the declared minimum, so it works there again.
+
 ## [0.4.0] - 2026-10-29
 
 ### Added
@@ -1240,7 +1247,8 @@ and motion/gyro is unimplemented by choice.
 - The PKGBUILD is structurally validated but has not been build-tested
   against a real release tarball.
 
-[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/questionablesyntax/g7ctl/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/questionablesyntax/g7ctl/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/questionablesyntax/g7ctl/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/questionablesyntax/g7ctl/compare/v0.3.1...v0.3.2
