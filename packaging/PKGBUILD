@@ -66,7 +66,7 @@ checkdepends=('python-pyusb' 'python-pyqt6')
 # bump -- the checksum below is specific to one tarball, and a stale one
 # fails validation rather than silently building the wrong source.
 source=("$pkgbase-$pkgver.tar.gz::https://github.com/questionablesyntax/g7ctl/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('6d14d7c56c7bd7c2c914be3e5d05d26bc0c1f0ce8922ff396b205209784b6758')
+sha256sums=('55ec9f9acc76e4aa9f1ee614210b374131af6de33193d99cf2ebb1a726e4149f')
 
 build() {
   cd "$pkgbase-$pkgver"
