@@ -157,29 +157,6 @@ class ControllerDiagramTest(unittest.TestCase):
         custom = ControllerDiagram(DARK_PALETTE, order=["b", "a"])
         self.assertEqual(list(custom._hotspots), ["b", "a"])
 
-    def test_interactive_false_builds_no_hotspots_at_all(self):
-        # Read-only drawing use -- no Tab
-        # stops and no activated/focused signals, rather than a
-        # clickable-looking part that silently does nothing.
-        from g7ctlc.controller_diagram import ControllerDiagram
-
-        quiet = ControllerDiagram(DARK_PALETTE, interactive=False)
-        self.assertEqual(quiet._hotspots, {})
-        self.assertIsNone(quiet.hotspot_for("a"))
-
-    def test_interactive_false_still_paints_highlight_and_callouts(self):
-        # The flag only skips hotspots -- set_highlighted()/set_bindings()
-        # and the paint path they drive are unaffected.
-        from g7ctlc.controller_diagram import ControllerDiagram
-
-        quiet = ControllerDiagram(DARK_PALETTE, interactive=False)
-        quiet.resize(300, 240)
-        quiet.set_highlighted("a")
-        quiet.set_bindings({"b": "Keyboard: R"})
-        self.assertEqual(quiet._highlighted, "a")
-        pixmap = quiet.grab()
-        self.assertFalse(pixmap.isNull())
-
     def test_clicking_a_hotspot_emits_activated_with_its_button_id(self):
         self.diagram.show()
         received = []

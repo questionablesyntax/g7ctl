@@ -216,17 +216,9 @@ class ControllerDiagram(QWidget):
         *,
         labels: dict[str, str] | None = None,
         order: list[str] | None = None,
-        interactive: bool = True,
     ) -> None:
-        """`interactive=False` skips building any hotspots at all -- line
-        art, the selected-button highlight and
-        `set_bindings()`'s callouts all work identically either way, since
-        none of that painting depends on a hotspot existing. A page that
-        isn't a remapping surface gets no Tab stops and no `activated`/
-        `focused` signals, rather than a Tab-reachable, clickable-looking
-        part that silently does nothing (the real gap this flag closes,
-        found once the Buttons page's own diagram started doing real work
-        -- see HANDOFF.md's "Findings in today's code")."""
+        """`labels` maps button ids to display names (default: BUTTON_LABELS);
+        `order` sets the hotspots' Tab order."""
         super().__init__(parent)
         self._palette = palette
         self._renderer = _build_renderer(palette)
@@ -242,9 +234,8 @@ class ControllerDiagram(QWidget):
         # force every tab in the main window to inherit the diagram's height.
         self.setMinimumSize(160, 130)
         self.setMouseTracking(True)
-        if interactive:
-            self._build_hotspots(order or list(KNOWN_BUTTON_IDS))
-            self._layout_hotspots()
+        self._build_hotspots(order or list(KNOWN_BUTTON_IDS))
+        self._layout_hotspots()
 
     # -- construction -----------------------------------------------------
 
