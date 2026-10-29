@@ -11,7 +11,9 @@ interleaving or order). A single byte or a reordered heartbeat anywhere
 in a 400+-event trace fails this test.
 """
 import json
+import unittest
 from pathlib import Path
+from unittest import mock
 
 from pyg7 import state as state_mod
 
@@ -42,19 +44,20 @@ def _deserialize_trace(serializable):
     return trace
 
 
-def test_write_state_trace_matches_the_frozen_golden_trace(monkeypatch):
-    fixture = _load_fixture()
-    expected_trace = _deserialize_trace(fixture["trace"])
+class WriteStateParityTest(unittest.TestCase):
+    def test_write_state_trace_matches_the_frozen_golden_trace(self):
+        fixture = _load_fixture()
+        expected_trace = _deserialize_trace(fixture["trace"])
 
-    trace: list = []
-    sess = TracingFakeSession(trace=trace)
-    monkeypatch.setattr(state_mod.time, "sleep", lambda s: trace.append(("sleep", s)))
+        trace: list = []
+        sess = TracingFakeSession(trace=trace)
+        with mock.patch.object(state_mod.time, "sleep", lambda s: trace.append(("sleep", s))):
+            skipped = state_mod.write_state(sess, fixture["state"], interval=0.01)
 
-    skipped = state_mod.write_state(sess, fixture["state"], interval=0.01)
-
-    assert skipped == fixture["skipped"]
-    assert len(trace) == len(expected_trace), (
-        f"trace length changed: {len(trace)} events vs {len(expected_trace)} expected "
-        "-- something now sends/heartbeats/sleeps a different number of times")
-    for i, (actual, expected) in enumerate(zip(trace, expected_trace)):
-        assert actual == expected, f"trace diverges at event {i}: {actual!r} != {expected!r}"
+        self.assertEqual(skipped, fixture["skipped"])
+        self.assertEqual(
+            len(trace), len(expected_trace),
+            f"trace length changed: {len(trace)} events vs {len(expected_trace)} expected "
+            "-- something now sends/heartbeats/sleeps a different number of times")
+        for i, (actual, expected) in enumerate(zip(trace, expected_trace)):
+            self.assertEqual(actual, expected, f"trace diverges at event {i}: {actual!r} != {expected!r}")

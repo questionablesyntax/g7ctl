@@ -4,7 +4,9 @@ off hardware; the restoration *procedure* S0 actually requires is
 hardware-only by nature and lives outside pytest -- see
 Projects/g7ctl/redesign/IMPLEMENTATION-PLAN.md's S0 status note.
 """
-import pytest
+import tempfile
+import unittest
+from pathlib import Path
 
 from pyg7 import noninterference as ni
 from pyg7.constants import DOCK_READ_CATEGORY, FULL_BLOB_LENGTH, READ_CHUNK_LENGTH
@@ -49,88 +51,81 @@ def _all_categories_blob(fill: int = 0) -> dict[int, bytes]:
     return {category: bytes([fill]) * length for category, length in ni.RAW_CATEGORIES.items()}
 
 
-def test_raw_categories_matches_the_six_real_blobs():
-    assert set(ni.RAW_CATEGORIES) == {1, 2, 3, 4, SHIFT_CATEGORY, DOCK_READ_CATEGORY}
-    assert ni.RAW_CATEGORIES[1] == FULL_BLOB_LENGTH
-    assert ni.RAW_CATEGORIES[DOCK_READ_CATEGORY] == DOCK_BLOB_LENGTH
+class NoninterferenceTest(unittest.TestCase):
+    def test_raw_categories_matches_the_six_real_blobs(self):
+        self.assertEqual(set(ni.RAW_CATEGORIES), {1, 2, 3, 4, SHIFT_CATEGORY, DOCK_READ_CATEGORY})
+        self.assertEqual(ni.RAW_CATEGORIES[1], FULL_BLOB_LENGTH)
+        self.assertEqual(ni.RAW_CATEGORIES[DOCK_READ_CATEGORY], DOCK_BLOB_LENGTH)
 
+    def test_snapshot_reads_every_category_at_its_own_length(self):
+        sess = _MultiCategoryFakeSession(_all_categories_blob(fill=0x11))
+        snap = ni.snapshot(sess)
+        self.assertEqual(set(snap), set(ni.RAW_CATEGORIES))
+        for category, length in ni.RAW_CATEGORIES.items():
+            self.assertEqual(len(snap[category]), length)
+            self.assertEqual(snap[category], bytes([0x11]) * length)
 
-def test_snapshot_reads_every_category_at_its_own_length():
-    sess = _MultiCategoryFakeSession(_all_categories_blob(fill=0x11))
-    snap = ni.snapshot(sess)
-    assert set(snap) == set(ni.RAW_CATEGORIES)
-    for category, length in ni.RAW_CATEGORIES.items():
-        assert len(snap[category]) == length
-        assert snap[category] == bytes([0x11]) * length
+    def test_diff_finds_nothing_when_nothing_changed(self):
+        sess = _MultiCategoryFakeSession(_all_categories_blob(fill=0x22))
+        before = ni.snapshot(sess)
+        after = ni.snapshot(sess)
+        self.assertEqual(ni.diff(before, after), {})
 
+    def test_diff_finds_exactly_the_changed_bytes(self):
+        before_blobs = _all_categories_blob(fill=0x00)
+        before = ni.snapshot(_MultiCategoryFakeSession(before_blobs))
 
-def test_diff_finds_nothing_when_nothing_changed():
-    sess = _MultiCategoryFakeSession(_all_categories_blob(fill=0x22))
-    before = ni.snapshot(sess)
-    after = ni.snapshot(sess)
-    assert ni.diff(before, after) == {}
+        after_blobs = {k: bytearray(v) for k, v in before_blobs.items()}
+        after_blobs[2][10] = 0x7B
+        after_blobs[SHIFT_CATEGORY][0] = 0x01
+        after = ni.snapshot(_MultiCategoryFakeSession({k: bytes(v) for k, v in after_blobs.items()}))
 
+        changes = ni.diff(before, after)
+        self.assertEqual(set(changes), {2, SHIFT_CATEGORY})
+        self.assertEqual(changes[2], [(10, 0x00, 0x7B)])
+        self.assertEqual(changes[SHIFT_CATEGORY], [(0, 0x00, 0x01)])
 
-def test_diff_finds_exactly_the_changed_bytes():
-    before_blobs = _all_categories_blob(fill=0x00)
-    before = ni.snapshot(_MultiCategoryFakeSession(before_blobs))
+    def test_diff_rejects_mismatched_lengths(self):
+        before = {1: b"\x00" * FULL_BLOB_LENGTH}
+        after = {1: b"\x00" * (FULL_BLOB_LENGTH - 1)}
+        with self.assertRaises(ValueError):
+            ni.diff(before, after)
 
-    after_blobs = {k: bytearray(v) for k, v in before_blobs.items()}
-    after_blobs[2][10] = 0x7B
-    after_blobs[SHIFT_CATEGORY][0] = 0x01
-    after = ni.snapshot(_MultiCategoryFakeSession({k: bytes(v) for k, v in after_blobs.items()}))
+    def test_format_diff_reports_no_change(self):
+        self.assertEqual(ni.format_diff({}), "no change")
 
-    changes = ni.diff(before, after)
-    assert set(changes) == {2, SHIFT_CATEGORY}
-    assert changes[2] == [(10, 0x00, 0x7B)]
-    assert changes[SHIFT_CATEGORY] == [(0, 0x00, 0x01)]
+    def test_format_diff_renders_offsets_and_bytes_in_hex(self):
+        out = ni.format_diff({1: [(0x10, 0x00, 0xFF)]})
+        self.assertIn("0x10", out)
+        self.assertIn("0x00", out)
+        self.assertIn("0xff", out)
 
+    def test_save_then_load_snapshot_round_trips_exactly(self):
+        sess = _MultiCategoryFakeSession(_all_categories_blob(fill=0x33))
+        snap = ni.snapshot(sess)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snapshot.json"
+            ni.save_snapshot(str(path), snap)
+            loaded = ni.load_snapshot(str(path))
 
-def test_diff_rejects_mismatched_lengths():
-    before = {1: b"\x00" * FULL_BLOB_LENGTH}
-    after = {1: b"\x00" * (FULL_BLOB_LENGTH - 1)}
-    with pytest.raises(ValueError):
-        ni.diff(before, after)
+        self.assertEqual(loaded, snap)
 
+    def test_a_loaded_snapshot_diffs_the_same_as_the_original(self):
+        """The actual point: g7ctl noninterference-diff compares two FILES,
+        not two live snapshots -- diff() must not care which."""
+        before_blobs = _all_categories_blob(fill=0x00)
+        before = ni.snapshot(_MultiCategoryFakeSession(before_blobs))
 
-def test_format_diff_reports_no_change():
-    assert ni.format_diff({}) == "no change"
+        after_blobs = {k: bytearray(v) for k, v in before_blobs.items()}
+        after_blobs[SHIFT_CATEGORY][3] = 0x9A
+        after = ni.snapshot(_MultiCategoryFakeSession({k: bytes(v) for k, v in after_blobs.items()}))
 
+        with tempfile.TemporaryDirectory() as tmp:
+            before_path = Path(tmp) / "before.json"
+            after_path = Path(tmp) / "after.json"
+            ni.save_snapshot(str(before_path), before)
+            ni.save_snapshot(str(after_path), after)
+            file_diff = ni.diff(ni.load_snapshot(str(before_path)), ni.load_snapshot(str(after_path)))
 
-def test_format_diff_renders_offsets_and_bytes_in_hex():
-    out = ni.format_diff({1: [(0x10, 0x00, 0xFF)]})
-    assert "0x10" in out
-    assert "0x00" in out
-    assert "0xff" in out
-
-
-def test_save_then_load_snapshot_round_trips_exactly(tmp_path):
-    sess = _MultiCategoryFakeSession(_all_categories_blob(fill=0x33))
-    snap = ni.snapshot(sess)
-    path = tmp_path / "snapshot.json"
-
-    ni.save_snapshot(str(path), snap)
-    loaded = ni.load_snapshot(str(path))
-
-    assert loaded == snap
-
-
-def test_a_loaded_snapshot_diffs_the_same_as_the_original(tmp_path):
-    """The actual point: g7ctl noninterference-diff compares two FILES,
-    not two live snapshots -- diff() must not care which."""
-    before_blobs = _all_categories_blob(fill=0x00)
-    before = ni.snapshot(_MultiCategoryFakeSession(before_blobs))
-
-    after_blobs = {k: bytearray(v) for k, v in before_blobs.items()}
-    after_blobs[SHIFT_CATEGORY][3] = 0x9A
-    after = ni.snapshot(_MultiCategoryFakeSession({k: bytes(v) for k, v in after_blobs.items()}))
-
-    before_path = tmp_path / "before.json"
-    after_path = tmp_path / "after.json"
-    ni.save_snapshot(str(before_path), before)
-    ni.save_snapshot(str(after_path), after)
-
-    file_diff = ni.diff(ni.load_snapshot(str(before_path)), ni.load_snapshot(str(after_path)))
-
-    assert file_diff == ni.diff(before, after)
-    assert file_diff[SHIFT_CATEGORY] == [(3, 0x00, 0x9A)]
+        self.assertEqual(file_diff, ni.diff(before, after))
+        self.assertEqual(file_diff[SHIFT_CATEGORY], [(3, 0x00, 0x9A)])
