@@ -361,7 +361,8 @@ def build_parser(parser_class: type = argparse.ArgumentParser) -> argparse.Argum
     p_new.add_argument("path", help="Output path, e.g. mystate.json")
     p_new.add_argument("--name", default="New State")
 
-    p_write = sub.add_parser("write-state", help="Push an entire state JSON file to the device in one session (handshakes automatically if needed).")
+    p_write = sub.add_parser("write-state", help="Push a state JSON file to the device in one session, writing only what differs from the "
+                                                              "controller's current settings (handshakes automatically if needed).")
     p_write.add_argument("path", help="State JSON file to write")
     p_write.add_argument("--interval", type=float, default=state_mod.WRITE_HEARTBEAT_INTERVAL,
                           help=f"Seconds between heartbeats (default {state_mod.WRITE_HEARTBEAT_INTERVAL})")
@@ -494,12 +495,29 @@ def _handle_state_command(sess: VendorSession, args: argparse.Namespace) -> bool
     """Whole-config read/write. Returns True if it handled `args`."""
     if args.action == "write-state":
         state = state_mod.load_state(args.path)
-        state_mod.write_state(
+        # Diff against what the controller holds now, as the GUI's Sync Now
+        # does, so only settings that differ are written. Without a baseline
+        # this pushed every setting (about 140 writes): slow, and on one
+        # wired controller (2026-10-29) the connection dropped partway,
+        # leaving the profile half written. A failed baseline read stops here
+        # rather than falling back to a full push, for the reason given in
+        # DeviceWatcher._do_sync().
+        slot = state.get("controller_slot") or 1
+        try:
+            baseline = state_mod.read_state(sess, slot=slot)
+        except usb.core.USBError:
+            raise
+        except Exception as exc:
+            raise ValueError(
+                f"could not read Profile {slot}'s current settings first ({exc}); "
+                "nothing was written") from exc
+        skipped = state_mod.write_state(
             sess, state,
             on_progress=lambda i, total, label: print(f"  [{i}/{total}] {label}"),
             interval=args.interval,
+            baseline=baseline,
         )
-        print("State applied.")
+        print(f"State applied ({skipped} setting(s) already matched and were skipped).")
         print(f"  Targeted Profile {state.get('controller_slot') or 1} "
               "(every category is profile-scoped).")
         return True

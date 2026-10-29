@@ -31,6 +31,11 @@ adheres to [semantic versioning](https://semver.org/).
 ### Changed
 
 - The GUI now needs PyQt6 6.7 or newer (`pip install "g7ctl[gui]"`).
+- `g7ctl write-state` now reads the controller's current settings first and
+  writes only what differs, as the GUI's Sync Now already did. It used to push
+  every setting in the file (about 140 writes), which was slow and, on one wired
+  controller, dropped the USB connection partway through and left the profile
+  half written. If the current settings can't be read it stops without writing.
 - `PROTOCOL.md`: the Xbox/Guide button is bindable (its record is the slot the
   button table leaves blank), and any other button can be made to send Guide
   with the `native_home` keycode. Both were confirmed on hardware.

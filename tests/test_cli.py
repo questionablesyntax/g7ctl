@@ -149,6 +149,50 @@ class MainErrorHandlingTest(unittest.TestCase):
                 cli_main.main()
         return ctx.exception.code, stderr.getvalue()
 
+    def _valid_state_file(self):
+        from pyg7 import state as state_mod
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as fh:
+            path = fh.name
+        state_mod.save_state(path, state_mod.default_state_dict())
+        return path
+
+    def test_write_state_reads_a_baseline_and_writes_only_the_difference(self):
+        # The CLI used to call write_state() with no baseline, which pushes
+        # every setting (~140 writes) -- unlike the GUI's Sync Now.
+        path = self._valid_state_file()
+        sentinel = {"baseline": "from the controller"}
+        sys.argv = ["g7ctl", "write-state", path]
+        out = io.StringIO()
+        with mock.patch.object(cli_main.state_mod, "read_state", return_value=sentinel) as read, \
+                mock.patch.object(cli_main.state_mod, "write_state", return_value=137) as write, \
+                contextlib.redirect_stdout(out):
+            cli_main.main()
+        read.assert_called_once()
+        self.assertEqual(read.call_args.kwargs.get("slot"), 1)
+        self.assertIs(write.call_args.kwargs["baseline"], sentinel)
+        self.assertIn("137 setting(s) already matched", out.getvalue())
+
+    def test_write_state_stops_without_writing_when_the_baseline_read_fails(self):
+        path = self._valid_state_file()
+        with mock.patch.object(cli_main.state_mod, "read_state", side_effect=RuntimeError("boom")), \
+                mock.patch.object(cli_main.state_mod, "write_state") as write:
+            code, stderr = self._run(["write-state", path])
+        self.assertEqual(code, 1)
+        self.assertIn("nothing was written", stderr)
+        self.assertNotIn("Traceback", stderr)
+        write.assert_not_called()
+
+    def test_usb_error_during_the_baseline_read_is_explained_and_writes_nothing(self):
+        path = self._valid_state_file()
+        exc = usb.core.USBError("gone")
+        exc.errno = 5
+        with mock.patch.object(cli_main.state_mod, "read_state", side_effect=exc), \
+                mock.patch.object(cli_main.state_mod, "write_state") as write:
+            code, stderr = self._run(["write-state", path])
+        self.assertEqual(code, 1)
+        self.assertNotIn("Traceback", stderr)
+        write.assert_not_called()
+
     def test_missing_write_state_file_is_a_clean_error_not_a_traceback(self):
         code, stderr = self._run(["write-state", "/nonexistent/path/does-not-exist.json"])
         self.assertEqual(code, 1)

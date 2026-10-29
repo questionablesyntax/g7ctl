@@ -123,7 +123,7 @@ g7ctl remap b native_b --profile 2 # target a specific onboard profile
 g7ctl read-state --profile 1
 g7ctl read-state --profile 1 --save snapshot.json
 
-# Push a whole saved configuration (only writes what actually differs)
+# Push a whole saved configuration (reads the controller first, writes only what differs)
 g7ctl write-state snapshot.json
 
 # List known button/keycode names (no device needed)
