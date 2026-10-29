@@ -12,7 +12,9 @@ comments; only which widget it reaches has changed. Pages themselves
 un-reskinned views -- that's A4's job.
 """
 import copy
+import logging
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -81,6 +83,8 @@ _LEGACY_PROFILES_DIR = (
 # _auto_release_if_still_unfocused() covers that, and stops a quick
 # alt-tab-and-back from costing a full release/reconnect cycle.
 _AUTO_RELEASE_DELAY_MS = 400
+
+log = logging.getLogger(__name__)
 
 # S7: the fixed order every "which scopes are dirty" sweep walks in --
 # _dirty_scopes(), the "Write all changes" batch, the on-failure refresh
@@ -160,6 +164,8 @@ class MainWindow(QMainWindow):
         # Release Device button: an explicit release has to survive the
         # window being focused again, and this must never undo one.
         self._auto_released = False
+        # True only while Import/Export's file dialog is up -- see _file_dialog().
+        self._file_dialog_open = False
         self._auto_release_timer = QTimer(self)
         self._auto_release_timer.setSingleShot(True)
         self._auto_release_timer.setInterval(_AUTO_RELEASE_DELAY_MS)
@@ -859,6 +865,11 @@ class MainWindow(QMainWindow):
             # Focus came back, or it only ever went to one of our own windows
             # -- a modal confirmation dialog, not the user leaving.
             return
+        if self._file_dialog_open:
+            # Import/Export's file dialog can be a native one (KDE's, for
+            # instance), which is not a Qt window, so activeWindow() is None
+            # while it is up even though the user never left the app.
+            return
         if self._connection_state != "connected":
             return
         if self._syncing:
@@ -869,6 +880,31 @@ class MainWindow(QMainWindow):
             return
         self._auto_released = True
         self.release_toggled.emit(True)
+
+    @contextmanager
+    def _file_dialog(self):
+        """Wrap Import/Export's file dialog so it can't cost the user the
+        connection. A native file dialog is not one of this app's Qt windows,
+        so the unfocus check above saw "the user left" and released the
+        controller 400 ms in; if the reconnect on refocus was then missed the
+        app was left Released, Read and Write disabled (reported 2026-10-26
+        after an Import, never reproduced). This both stops the release while
+        the dialog is up and, if one happened anyway, undoes it on close."""
+        self._file_dialog_open = True
+        try:
+            yield
+        finally:
+            self._file_dialog_open = False
+            if self.isActiveWindow():
+                self._auto_release_timer.stop()
+                if self._auto_released:
+                    log.info("file dialog closed after an auto-release (connection=%s); "
+                             "reconnecting", self._connection_state)
+                self._reconnect_after_auto_release()
+            else:
+                # The user really did leave while the dialog was up; let the
+                # ordinary unfocus logic decide.
+                self._auto_release_timer.start()
 
     def _reconnect_after_auto_release(self) -> None:
         """Only undoes this class's own release -- an explicit Release Device
@@ -2047,9 +2083,10 @@ class MainWindow(QMainWindow):
                 "(or an import) yet -- read from the device or import a snapshot first.",
             )
             return
-        path, _filter = QFileDialog.getSaveFileName(
-            self, "Export State", self._default_snapshot_dir(), "JSON files (*.json)",
-        )
+        with self._file_dialog():
+            path, _filter = QFileDialog.getSaveFileName(
+                self, "Export State", self._default_snapshot_dir(), "JSON files (*.json)",
+            )
         if not path:
             return
         try:
@@ -2067,9 +2104,10 @@ class MainWindow(QMainWindow):
         # -- had just been synced.
         if self._syncing:
             return
-        path, _filter = QFileDialog.getOpenFileName(
-            self, "Import State", self._default_snapshot_dir(), "JSON files (*.json)",
-        )
+        with self._file_dialog():
+            path, _filter = QFileDialog.getOpenFileName(
+                self, "Import State", self._default_snapshot_dir(), "JSON files (*.json)",
+            )
         if not path:
             return
         try:
@@ -2084,6 +2122,8 @@ class MainWindow(QMainWindow):
         self._refresh_sync_btn()
         self._refresh_confirmed_display()
         self._set_dirty(True)
+        log.info("Imported %s (connection=%s, auto_released=%s)",
+                 Path(path).name, self._connection_state, self._auto_released)
         self.status_label.setText(f"Imported {Path(path).name} -- not yet synced")
 
     # --- Help menu -----------------------------------------------------

@@ -284,6 +284,69 @@ class AutoReleaseOnUnfocusTest(unittest.TestCase):
         window._auto_release_if_still_unfocused()
         self.assertEqual(self.emitted, [])
 
+    # -- Import/Export's file dialog (reported 2026-10-26: an Import left the
+    # app Released, Read and Write disabled; never reproduced) ---------------
+
+    def _open_dialog_that_fires_the_release_timer(self, window):
+        """Stand-in for a native file dialog: not a Qt window, so
+        activeWindow() stays None, and it stays open long enough for the
+        400 ms unfocus timer to fire."""
+        def fake(*_args, **_kwargs):
+            window._auto_release_if_still_unfocused()
+            return ("", "")
+        return mock.patch("g7ctlc.main_window.QFileDialog.getOpenFileName", side_effect=fake)
+
+    def test_unfocus_does_release_outside_a_file_dialog(self):
+        # Control for the next test: the same call does release normally, so
+        # that test would notice the guard going missing.
+        window = self._window()
+        window._auto_release_if_still_unfocused()
+        self.assertEqual(self.emitted, [True])
+
+    def test_an_import_dialog_does_not_cost_the_connection(self):
+        window = self._window()
+        with self._open_dialog_that_fires_the_release_timer(window):
+            window._on_import()
+        self.assertEqual(self.emitted, [])
+        self.assertFalse(window._auto_released)
+        self.assertFalse(window._file_dialog_open)
+
+    def test_an_export_dialog_does_not_cost_the_connection(self):
+        window = self._window()
+        window._state_confirmed = True
+
+        def fake(*_args, **_kwargs):
+            window._auto_release_if_still_unfocused()
+            return ("", "")
+        with mock.patch("g7ctlc.main_window.QFileDialog.getSaveFileName", side_effect=fake):
+            window._on_export()
+        self.assertEqual(self.emitted, [])
+        self.assertFalse(window._file_dialog_open)
+
+    def test_a_release_that_happened_anyway_is_undone_when_the_dialog_closes(self):
+        window = self._window(active=True)
+        window._auto_released = True
+        window._connection_state = "paused"
+        with mock.patch("g7ctlc.main_window.QFileDialog.getOpenFileName", return_value=("", "")):
+            window._on_import()
+        self.assertEqual(self.emitted, [False])
+        self.assertFalse(window._auto_released)
+
+    def test_an_explicit_release_survives_a_file_dialog(self):
+        # Release Device leaves _auto_released False; closing a dialog must
+        # not silently reconnect it.
+        window = self._window(active=True)
+        window._connection_state = "paused"
+        with mock.patch("g7ctlc.main_window.QFileDialog.getOpenFileName", return_value=("", "")):
+            window._on_import()
+        self.assertEqual(self.emitted, [])
+
+    def test_leaving_during_the_dialog_still_gets_the_normal_release_check(self):
+        window = self._window(active=False)
+        with mock.patch("g7ctlc.main_window.QFileDialog.getOpenFileName", return_value=("", "")):
+            window._on_import()
+        self.assertTrue(window._auto_release_timer.isActive())
+
     def test_refocus_reconnects_after_an_auto_release(self):
         window = self._window()
         window._auto_release_if_still_unfocused()
