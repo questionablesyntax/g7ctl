@@ -3,7 +3,7 @@
 Configure your GameSir G7 Pro from Linux — button remapping, stick and trigger
 tuning, vibration, polling rate, dock settings. No Windows, no Nexus, no VM.
 
-<img src="docs/screenshot.png" alt="G7 Control Center showing the Buttons tab: each of the 21 buttons listed with its Default Layer and Shift Layer binding, a profile selector and report rate in the top bar, and Read from Device / Sync Now actions along the bottom." width="320">
+<img src="docs/screenshot.png" alt="G7 Control Center showing the Buttons page: a drawing of the controller with a callout around its edge for each of the 21 buttons, remapped ones highlighted, a profile selector and page list on the left, and Read from controller, Sync Now and Release Device actions." width="720">
 
 Three pieces, one repo:
 
@@ -159,30 +159,43 @@ surfaced as raw hex rather than dropped.
 three go through `g7ctlc.app:main()`. Left-clicking the tray icon shows/hides
 the window.
 
-- **Tabs** for Buttons, Sticks, Triggers, Vibration and Report Rate, plus a
-  Settings tab for the two genuinely global, non-profile-scoped dock settings
-  (LED Brightness, Auto On/Off).
+- **Pages** down the left for the selected profile — Buttons, Sticks, Triggers,
+  Motion, Vibration and Profile settings (Report Rate) — and two pages shared by
+  every profile: the Shift layer, and Dock (LED Brightness, Auto On/Off). The
+  window follows your system's light or dark setting.
+- **The Buttons page is a drawing of the controller.** Click any control — or
+  Tab to it and press Enter — to pick what it does. Every one of the 21 controls
+  has a callout around the edge showing its current binding, with remapped ones
+  highlighted. The Shift layer has its own page and uses the same drawing.
 - **No managed local profile list.** The device's own 4 profile slots are the
-  source of truth, picked directly via the "Profile" selector in the top bar.
+  source of truth, picked directly via the "Profile" selector at the top left.
 - **Automatic reads** on every connect and every profile switch, so the GUI
   never sits there showing stale state after a binding was changed elsewhere.
-  Skipped if you have unsynced local edits pending, rather than silently
+  Skipped if you have unwritten local edits pending, rather than silently
   discarding them.
-- **"Sync Now"** pushes the current in-memory state to the selected profile. It
+- **Edits are drafts until you write them.** Each page has its own "Write N
+  changes" and "Discard changes" buttons, and every edited field shows what it
+  was and a Revert button. When more than one page has edits, "Write all
+  changes" writes them in one go. Each write is checked afterwards by reading
+  the value back from the controller. A review screen appears only when
+  something needs a second look: a setting that changed on the controller since
+  you last read it, or a large batch of edits on one page.
+- **"Sync Now"** pushes the whole current state to the selected profile. It
   reads a fresh baseline first and skips any setting that already matches, so an
   unchanged sync is effectively a no-op instead of rewriting ~30 settings.
-- **"Read from Device"** does the same read on demand — useful for catching
+- **"Read from controller"** does the same read on demand — useful for catching
   drift from the on-device remap shortcuts below.
 - **"Export…" / "Import…"** save or load the entire current state as a JSON
-  snapshot at a path you choose.
+  snapshot at a path you choose. An imported state is marked as not read from
+  your controller until you read it or write it.
 - **Automatic release on unfocus** — the controller goes back to being a gamepad
   whenever the window isn't focused, and reconnects when it is. A sync or read
   in flight defers the release until it finishes, so tabbing away mid-write
   can't abort it.
 
-Both "Sync Now" and "Read from Device" (when it would discard unsynced edits)
-ask for confirmation first — the former pushes to persistent device config, the
-latter overwrites every tab.
+"Sync Now" always asks for confirmation first, since it pushes to persistent
+device config. "Read from controller" asks only when it would discard unwritten
+edits, since it overwrites every page.
 
 On startup the app renames its own process to "g7ctlc" via `prctl`, rather than
 showing up as "python3". Without it, KDE's taskbar and Window Rules would
