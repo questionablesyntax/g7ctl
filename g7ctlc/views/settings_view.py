@@ -22,7 +22,7 @@ no-profile-argument signature.
 """
 from typing import Optional
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QFormLayout,
     QGroupBox,
@@ -94,6 +94,7 @@ class SettingsView(QWidget):
         outer.setSpacing(12)
 
         dock_box = QGroupBox("Dock")
+        dock_box.setMaximumWidth(780)
         form = QFormLayout(dock_box)
         form.setVerticalSpacing(10)
         form.setHorizontalSpacing(14)
@@ -156,7 +157,7 @@ class SettingsView(QWidget):
         auto_layout.addStretch(1)
         form.addRow("", auto_row)
 
-        outer.addWidget(dock_box)
+        outer.addWidget(dock_box, 0, Qt.AlignmentFlag.AlignHCenter)
         outer.addStretch(1)
 
         scroll = QScrollArea()

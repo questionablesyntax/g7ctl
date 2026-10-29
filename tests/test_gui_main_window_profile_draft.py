@@ -64,14 +64,6 @@ class ProfileSettingsFastPathTest(unittest.TestCase):
         self.assertIn("500", window._report_rate_was_label.text())
         self.assertFalse(window._report_rate_revert_btn.isHidden())
 
-    def test_editing_via_overview_also_touches_the_profile_draft(self):
-        """Both combos funnel through the same _on_report_rate_changed --
-        touching either must mark the one shared draft."""
-        window = self._window()
-        window.overview_view.report_rate_combo.set_value("250")
-        self.assertEqual(window._profile_draft.edit_count, 1)
-        self.assertEqual(window.report_rate_combo.value(), "250")
-
     def test_manually_dialing_back_to_the_loaded_value_acts_as_an_implicit_revert(self):
         """Same real bug every other S6 slice needed fixed (2026-10-26,
         hardware test) -- built in from the start here."""

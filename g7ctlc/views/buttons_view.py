@@ -425,8 +425,8 @@ class ButtonsView(QWidget):
 
     def _refresh_diagram_bindings(self) -> None:
         """Feed the diagram's callouts from whichever layer is showing.
-        `keycode_display_text()` is the same read-only wording Overview's
-        own callouts and the old Shift-reference column used -- a callout
+        `keycode_display_text()` is the same read-only wording the old
+        Shift-reference column used -- a callout
         is inherently read-only now, there's no editable field it could
         drift from.
 

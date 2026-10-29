@@ -1,7 +1,7 @@
 """Smoke test for `tests/gui_render_harness.py`'s skeleton (A1 of the
 redesign). Proves the harness itself works -- constructs a small widget
 styled with the real A1 QSS generator, renders it headless, and checks a
-real PNG came out. Per-page fixtures (Overview, Sticks, ...) land in A2-A6
+real PNG came out. Per-page fixtures (Buttons, Sticks, ...) land in A2-A6
 as each page is re-skinned; this file stays the harness's own smoke test,
 not a growing page-fixture file.
 

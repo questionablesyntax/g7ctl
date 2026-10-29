@@ -3,8 +3,8 @@
 of the button bitfield on input report `0x10` (PROTOCOL.md "The input
 stream on report 0x10"): "Which bit of 0x09/0x0A belongs to which button
 is not mapped -- the sweep did not record button order reliably." This
-is for the Track D / H0 hardware session the g7ctlc redesign's Overview
-hero and Buttons diagram need (`DESIGN-SPEC.md` section 6, "Button press
+is for the Track D / H0 hardware session the g7ctlc redesign's Buttons
+diagram needs (`DESIGN-SPEC.md` section 6, "Button press
 highlights on the drawing | button bitfield, bytes 9-10 | after hardware
 session H0") -- the drawing/geometry half of H0 is now covered by
 reference artwork instead of a photo session; this script is the

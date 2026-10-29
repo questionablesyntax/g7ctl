@@ -20,7 +20,7 @@ Checkboxes still write through the old whole-state Sync Now path only.
 """
 from typing import Optional
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QFormLayout,
     QGroupBox,
@@ -96,6 +96,7 @@ class VibrationView(QWidget):
         outer.setSpacing(12)
 
         levels_box = QGroupBox("Vibration Levels")
+        levels_box.setMaximumWidth(780)
         form = QFormLayout(levels_box)
         form.setVerticalSpacing(10)
         form.setHorizontalSpacing(14)
@@ -139,9 +140,10 @@ class VibrationView(QWidget):
             self.sliders[key] = control
             self._was_labels[key] = was_label
             self._revert_buttons[key] = revert_btn
-        outer.addWidget(levels_box)
+        outer.addWidget(levels_box, 0, Qt.AlignmentFlag.AlignHCenter)
 
         flags_box = QGroupBox("Trigger Vibration Flags")
+        flags_box.setMaximumWidth(780)
         flags_form = QFormLayout(flags_box)
         flags_form.setVerticalSpacing(10)
         flags_form.setHorizontalSpacing(14)
@@ -165,7 +167,7 @@ class VibrationView(QWidget):
             flags_form.addRow(f"{side.capitalize()} Trigger", container)
             self.checks[f"{side}_trigger_force"] = force
             self.checks[f"{side}_trigger_sync"] = sync
-        outer.addWidget(flags_box)
+        outer.addWidget(flags_box, 0, Qt.AlignmentFlag.AlignHCenter)
         outer.addStretch(1)
 
         scroll = QScrollArea()

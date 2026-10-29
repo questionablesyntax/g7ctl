@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import QByteArray, QEvent, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QByteArray, QEvent, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QCloseEvent, QDesktopServices, QHideEvent, QShowEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -53,7 +53,6 @@ from .segmented_control import SegmentedControl
 from .theme_runtime import ThemeController
 from .views.buttons_view import ButtonsView
 from .views.motion_view import MotionView
-from .views.overview_view import OverviewView
 from .views.settings_view import SettingsView
 from .views.sticks_view import SticksView
 from .views.triggers_view import TriggersView
@@ -91,11 +90,10 @@ _AUTO_RELEASE_DELAY_MS = 400
 _SCOPE_ORDER = ("vibration", "dock", "triggers", "sticks", "motion", "buttons", "profile_settings")
 
 # Which scope's own Write/Discard buttons belong to which rail page -- see
-# MainWindow._refresh_write_all_btn(). Overview hosts the second Report
-# Rate control (a Profile Settings edit); the Shift view is the Buttons
-# page's other layer, so it shares Buttons' scope.
+# MainWindow._refresh_write_all_btn(). The Shift view is the Buttons page's
+# other layer, so it shares Buttons' scope.
 _PAGE_SCOPES = {
-    "overview": ("profile_settings",), "profile_settings": ("profile_settings",),
+    "profile_settings": ("profile_settings",),
     "buttons": ("buttons",), "shift": ("buttons",),
     "sticks": ("sticks",), "triggers": ("triggers",), "motion": ("motion",),
     "vibration": ("vibration",), "dock": ("dock",),
@@ -328,7 +326,6 @@ class MainWindow(QMainWindow):
         # to call until now (see each one's own docstring).
         self.rail.set_palette(palette)
         self._connection_alarm.set_palette(palette)
-        self.overview_view.set_palette(palette)
         self.buttons_view.set_palette(palette)
 
     @property
@@ -439,8 +436,6 @@ class MainWindow(QMainWindow):
         per-profile, while the dock settings it holds are device-wide.
         """
         self.pages = QStackedWidget()
-        self.overview_view = OverviewView(self._theme.palette, icon_loader=self._theme.icons)
-        self.overview_view.reportRateChanged.connect(self._on_report_rate_changed)
         self.buttons_view = ButtonsView(self._theme.palette)
         self.buttons_view.fieldTouched.connect(self._on_buttons_field_touched)
         self.buttons_view.fieldReverted.connect(self._on_buttons_field_reverted)
@@ -461,7 +456,6 @@ class MainWindow(QMainWindow):
         self.settings_view.fieldReverted.connect(self._on_dock_field_reverted)
         self._profile_settings_page = self._build_profile_settings_page()
         self._page_widgets = {
-            "overview": self.overview_view,
             "buttons": self.buttons_view,
             "sticks": self.sticks_view,
             "triggers": self.triggers_view,
@@ -483,14 +477,9 @@ class MainWindow(QMainWindow):
                 continue
             widget.changed.connect(self._on_dirty)
         self.buttons_view.changed.connect(self._on_dirty)
-        # Real bug, found adding the Overview page (D2, 2026-10-22):
         # QStackedWidget.currentWidget() defaults to whichever widget was
-        # added *first*, which had only ever been buttons_view by accident
-        # of PROFILE_PAGE_KEYS' own ordering -- rail.py's default-checked
-        # nav button ("buttons") and the actual visible page content would
-        # have silently diverged the moment anything else led that tuple.
-        # Set explicitly so the two can never drift apart again regardless
-        # of iteration order.
+        # added first. Set Buttons explicitly so it always matches the
+        # rail's default-checked entry regardless of iteration order.
         self.pages.setCurrentWidget(self.buttons_view)
         return self.pages
 
@@ -558,13 +547,15 @@ class MainWindow(QMainWindow):
         class of its own to hold a `fieldTouched` signal (this whole page
         is built inline here), so the mark/revert row and the touch
         tracking both live directly on MainWindow instead of being
-        forwarded through a view. Overview's own independent report-rate
-        combo (D2, 2026-10-22) is unaffected -- it's a convenience mirror
-        of the same value, not a second editing surface with its own
-        revert affordance; `_sync_report_rate_combo()` already keeps it
-        showing whatever this page's own draft/state currently holds.
+        forwarded through a view.
         """
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(14, 12, 14, 12)
+        outer.setSpacing(12)
+
         content = QWidget()
+        content.setMaximumWidth(780)
         form = QFormLayout(content)
         # A3-style SegmentedControl, A4's re-skin -- "report_rate_combo"
         # keeps its pre-redesign name (MainWindow/tests address it that
@@ -600,7 +591,10 @@ class MainWindow(QMainWindow):
         form.addRow("Report Rate:", row_widget)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setWidget(content)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        outer.addWidget(content, 0, Qt.AlignmentFlag.AlignHCenter)
+        outer.addStretch(1)
+        scroll.setWidget(page)
         return scroll
 
     def _build_discard_btn(self, handler) -> QPushButton:
@@ -786,16 +780,6 @@ class MainWindow(QMainWindow):
         """
         self._active_profile = slot
         self.rail.set_active_profile(slot)
-        self._sync_overview_scope()
-
-    def _sync_overview_scope(self) -> None:
-        """Push the viewed profile slot and the physically-active one into
-        Overview's scope line -- pushed directly rather than read from
-        `self._state` inside `OverviewView.load_state()`, so the profile
-        number updates the instant either one changes, not lagging behind
-        a device read (OverviewView's own module docstring)."""
-        self.overview_view.set_profile_scope(
-            self._state.get("controller_slot") or 1, self._active_profile)
 
     def set_firmware(self, version: str) -> None:
         """Record the controller's firmware version, read once per
@@ -1858,7 +1842,6 @@ class MainWindow(QMainWindow):
         # button-table slot on every read.
         self._state["continuous_trigger"] = device_state.get("continuous_trigger", {})
         self.buttons_view.load_state(self._state)
-        self.overview_view.load_state(self._state)
 
         self._state["sticks"] = device_state["sticks"]
         self._state["triggers"] = device_state["triggers"]
@@ -1904,7 +1887,6 @@ class MainWindow(QMainWindow):
         self._sync_profile_switch()
         self._sync_report_rate_combo()
         self.buttons_view.load_state(self._state)
-        self.overview_view.load_state(self._state)
         self.sticks_view.load_state(self._state)
         self.triggers_view.load_state(self._state)
         self.motion_view.load_state(self._state)
@@ -1934,14 +1916,12 @@ class MainWindow(QMainWindow):
             self.rail.set_profile(self._state.get("controller_slot") or 1)
         finally:
             self._loading_profile_switch = False
-        self._sync_overview_scope()
 
     def _on_profile_changed(self, slot: object) -> None:
         if self._loading_profile_switch:
             return
         self._apply_view(slot)
         self._state["controller_slot"] = slot
-        self._sync_overview_scope()
         # The values on screen right now were confirmed (if ever) against
         # whichever profile was selected before, not this one -- they say
         # nothing about this profile until a read of it succeeds. Clearing
@@ -2024,11 +2004,8 @@ class MainWindow(QMainWindow):
         self._refresh_write_all_btn()
 
     def _sync_report_rate_combo(self) -> None:
-        """Reflect self._state["report_rate_hz"] in every control that
-        shows it -- the Settings page's own combo (same loading-guard
-        reasoning as _sync_profile_switch()) and Overview's independent
-        instance (D2's Overview work, 2026-10-22), which guards its own
-        signal via blockSignals() rather than this flag."""
+        """Reflect self._state["report_rate_hz"] in the Profile Settings
+        control, using the same loading guard as _sync_profile_switch()."""
         hz = self._state.get("report_rate_hz") or 1000
         self._loading_report_rate_combo = True
         try:
@@ -2038,15 +2015,11 @@ class MainWindow(QMainWindow):
             self.report_rate_combo.set_value(value)
         finally:
             self._loading_report_rate_combo = False
-        self.overview_view.set_report_rate(hz)
 
     def _on_report_rate_changed(self, value: object) -> None:
         if self._loading_report_rate_combo or value is None:
             return
         self._state["report_rate_hz"] = int(value)
-        # Keeps whichever combo the user did NOT just touch in sync --
-        # two independent SegmentedControl instances now show this value
-        # (Settings page, Overview), not one.
         self._sync_report_rate_combo()
         self._on_dirty()
         self._mark_report_rate_touched(int(value))

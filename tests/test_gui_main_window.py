@@ -1247,78 +1247,27 @@ class PaletteWiringTest(unittest.TestCase):
         for b, a in zip(before, after):
             self.assertNotEqual(b, a, "an icon did not change for a different palette")
 
+    def test_a_palette_change_reaches_the_buttons_diagram(self):
+        from g7ctlc.palette import LIGHT_PALETTE
+        w = self._window()
+        before = w.buttons_view.diagram._palette
+        w._on_palette_changed(LIGHT_PALETTE)
+        self.assertIsNot(w.buttons_view.diagram._palette, before)
+        self.assertIs(w.buttons_view.diagram._palette, LIGHT_PALETTE)
+
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
-class OverviewPageWiringTest(unittest.TestCase):
-    """D2: the Overview page exists, is reachable from the rail, and its
-    addition didn't quietly change what page a fresh launch lands on --
-    `buttons` stays the default deliberately (DIRECTION-A.md frames
-    Overview as "home", but changing the actual launch page is its own
-    decision, not bundled into this slice)."""
-
+class LaunchPageTest(unittest.TestCase):
+    """The stacked pages and the rail's default-checked entry are set in
+    separate places, so a fresh window must land on Buttons in both."""
     app = None
 
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def _window(self):
+    def test_buttons_is_the_page_shown_on_launch(self):
         from g7ctlc.main_window import MainWindow
-        return MainWindow()
-
-    def test_buttons_is_still_the_default_page_on_launch(self):
-        w = self._window()
+        w = MainWindow()
         self.assertIs(w.pages.currentWidget(), w.buttons_view)
-
-    def test_requesting_overview_switches_to_it(self):
-        w = self._window()
-        w._on_page_requested("overview")
-        self.assertIs(w.pages.currentWidget(), w.overview_view)
-
-    def test_a_palette_change_reaches_the_overview_diagram(self):
-        from g7ctlc.palette import LIGHT_PALETTE
-        w = self._window()
-        before = w.overview_view.diagram._palette
-        w._on_palette_changed(LIGHT_PALETTE)
-        self.assertIsNot(w.overview_view.diagram._palette, before)
-        self.assertIs(w.overview_view.diagram._palette, LIGHT_PALETTE)
-
-    # -- Overview's scope line and report rate, 2026-10-22 owner decision --
-
-    def test_selecting_a_profile_updates_the_scope_line(self):
-        w = self._window()
-        w._on_profile_changed(2)
-        self.assertIn("Profile 2", w.overview_view.scope_line.text_label.text())
-
-    def test_scope_line_notes_when_the_active_profile_is_the_one_shown(self):
-        w = self._window()
-        w._on_profile_changed(2)
-        w.set_active_profile(2)
-        self.assertIn(
-            "using this profile right now", w.overview_view.scope_line.text_label.text())
-
-    def test_scope_line_says_nothing_extra_when_a_different_profile_is_active(self):
-        w = self._window()
-        w._on_profile_changed(2)
-        w.set_active_profile(3)
-        self.assertNotIn(
-            "using this profile right now", w.overview_view.scope_line.text_label.text())
-
-    def test_no_active_profile_says_nothing_extra_either(self):
-        w = self._window()
-        w._on_profile_changed(2)
-        w.set_active_profile(None)
-        self.assertNotIn(
-            "using this profile right now", w.overview_view.scope_line.text_label.text())
-
-    def test_editing_overviews_report_rate_updates_the_settings_page_combo_too(self):
-        w = self._window()
-        w.overview_view.report_rate_combo.set_value("500")
-        self.assertEqual(w._state["report_rate_hz"], 500)
-        self.assertEqual(w.report_rate_combo.value(), "500")
-
-    def test_editing_the_settings_pages_report_rate_updates_overview_too(self):
-        w = self._window()
-        w.report_rate_combo.set_value("250")
-        self.assertEqual(w._state["report_rate_hz"], 250)
-        self.assertEqual(w.overview_view.report_rate_combo.value(), "250")
+        self.assertEqual(w.rail.current_page(), "buttons")

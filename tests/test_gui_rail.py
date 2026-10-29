@@ -35,6 +35,10 @@ class RailNavigationTest(unittest.TestCase):
         rail = self._rail()
         self.assertEqual(rail.current_page(), "buttons")
 
+    def test_redundant_overview_entry_is_not_in_the_rail(self):
+        rail = self._rail()
+        self.assertNotIn("overview", rail._nav_buttons)
+
     def test_clicking_a_different_nav_entry_requests_its_page_and_moves_current(self):
         rail = self._rail()
         received = []

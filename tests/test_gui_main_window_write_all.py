@@ -254,7 +254,7 @@ class ScopeButtonPlacementTest(unittest.TestCase):
         window = self._window()
         window.vibration_view.sliders["left_grip"].set_value("75")
 
-        for page in ("vibration", "sticks", "overview", "dock"):
+        for page in ("vibration", "sticks", "profile_settings", "dock"):
             window.rail._nav_buttons[page].click()
             self.assertFalse(window.vibration_write_btn.isHidden(), page)
             self.assertFalse(window.vibration_discard_btn.isHidden(), page)
@@ -281,7 +281,7 @@ class ScopeButtonPlacementTest(unittest.TestCase):
         window.vibration_view.sliders["left_grip"].set_value("75")
         window.settings_view.brightness.set_value("100")
 
-        for page in ("vibration", "dock", "sticks", "overview"):
+        for page in ("vibration", "dock", "sticks", "profile_settings"):
             window.rail._nav_buttons[page].click()
             self.assertFalse(window.write_all_btn.isHidden(), page)
 
@@ -296,9 +296,7 @@ class ScopeButtonPlacementTest(unittest.TestCase):
         self.assertTrue(window.dock_write_btn.isHidden())
         self.assertFalse(window.write_all_btn.isHidden())
 
-    def test_overview_hosts_the_profile_settings_pair(self):
-        """Overview carries the second Report Rate control, so a Profile
-        Settings edit's own Write/Discard belong on Overview too."""
+    def test_profile_settings_hosts_its_own_write_and_discard_pair(self):
         window = self._window()
         window._state["report_rate_hz"] = 500
         window._reset_profile_draft()
@@ -306,7 +304,7 @@ class ScopeButtonPlacementTest(unittest.TestCase):
         window.vibration_view.sliders["left_grip"].set_value("75")
         window.report_rate_combo.set_value("1000")
 
-        window.rail._nav_buttons["overview"].click()
+        window.rail._nav_buttons["profile_settings"].click()
 
         self.assertFalse(window.profile_write_btn.isHidden())
         self.assertFalse(window.profile_discard_btn.isHidden())
