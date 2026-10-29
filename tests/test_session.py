@@ -10,10 +10,12 @@ from unittest import mock
 
 import usb.core
 
-from pyg7.constants import CMD_HEARTBEAT, CMD_WRITE
+from pyg7.constants import CMD_HEARTBEAT, CMD_READ, CMD_WRITE
 from pyg7.session import (
+    CHECKPOINT_READ_LENGTH,
     READ_CHUNK_TIMEOUT,
     SETTLE_HEARTBEATS,
+    WRITES_BETWEEN_CHECKPOINTS,
     VendorSession,
 )
 
@@ -27,6 +29,95 @@ class _FakeDevice:
     def write(self, endpoint, data):
         self.written.append((endpoint, bytes(data)))
         return len(data)
+
+
+class CheckpointReadTest(unittest.TestCase):
+    """After more than about 25 writes in a session without a read, the
+    controller drops off USB at its next read (found on hardware 2026-10-29,
+    FINDINGS.md). Any read resets the count, so a writing session slips a small
+    read in every WRITES_BETWEEN_CHECKPOINTS writes. read_chunk is replaced so
+    these only watch when it is asked for."""
+
+    def setUp(self):
+        self.dev = _FakeDevice()
+        self.sess = VendorSession(self.dev)
+        self.checkpoints = []
+        patcher = mock.patch.object(
+            VendorSession, "read_chunk",
+            side_effect=lambda category, offset, length=8, timeout=None: self._record(category, offset, length))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _record(self, category, offset, length):
+        self.checkpoints.append((category, offset, length, len(self.dev.written)))
+        # What a real read does at the wire: it sends the CMD_READ request.
+        self.sess.send_raw(CMD_READ, bytes([5, category, 0, offset, length]))
+        return bytes(length)
+
+    def _write(self, count=1, profile=4):
+        for _ in range(count):
+            self.sess.send_raw(CMD_WRITE, bytes([0x03, profile, 0x00, 0x20, 0x01, 0x4B]))
+
+    def test_a_handful_of_writes_sends_no_checkpoint(self):
+        self._write(WRITES_BETWEEN_CHECKPOINTS)
+        self.assertEqual(self.checkpoints, [])
+
+    def test_the_write_after_the_limit_is_preceded_by_a_small_read(self):
+        self._write(WRITES_BETWEEN_CHECKPOINTS + 1)
+        self.assertEqual(len(self.checkpoints), 1)
+        category, offset, length, frames_before = self.checkpoints[0]
+        self.assertEqual((category, offset, length), (4, 0, CHECKPOINT_READ_LENGTH))
+        self.assertEqual(frames_before, WRITES_BETWEEN_CHECKPOINTS, "it comes before the 16th write goes out")
+
+    def test_a_long_run_gets_one_checkpoint_per_interval(self):
+        self._write(WRITES_BETWEEN_CHECKPOINTS * 6 + 1)
+        self.assertEqual(len(self.checkpoints), 6)
+
+    def test_the_hundred_write_case_from_the_hardware_test_never_goes_far_without_a_read(self):
+        self._write(100)
+        sent = [frame[3] for _endpoint, frame in self.dev.written]
+        longest = run = 0
+        for cmd in sent:
+            run = 0 if cmd == CMD_READ else run + (cmd == CMD_WRITE)
+            longest = max(longest, run)
+        self.assertLessEqual(longest, WRITES_BETWEEN_CHECKPOINTS)
+
+    def test_any_read_resets_the_count(self):
+        self._write(WRITES_BETWEEN_CHECKPOINTS - 1)
+        self.sess.send_raw(CMD_READ, bytes(5))
+        self._write(WRITES_BETWEEN_CHECKPOINTS)
+        self.assertEqual(self.checkpoints, [])
+
+    def test_heartbeats_do_not_count_as_writes(self):
+        self._write(1)
+        for _ in range(100):
+            self.sess.heartbeat()
+        self._write(WRITES_BETWEEN_CHECKPOINTS - 1)
+        self.assertEqual(self.checkpoints, [])
+
+    def test_the_checkpoint_reads_the_category_of_the_latest_write(self):
+        self._write(WRITES_BETWEEN_CHECKPOINTS, profile=2)
+        self.sess.send_raw(CMD_WRITE, bytes([0x03, 0x20, 0x01, 0x32, 0x01, 0x32]))
+        self.assertEqual(self.checkpoints[0][0], 2)
+        self._write(WRITES_BETWEEN_CHECKPOINTS, profile=0x20)
+        self.assertEqual(self.checkpoints[-1][0], 0x20)
+
+    def test_a_raw_payload_that_names_no_category_is_never_read_back(self):
+        for _ in range(WRITES_BETWEEN_CHECKPOINTS + 5):
+            self.sess.send_raw(CMD_WRITE, bytes([0x99, 0x77]))
+        self.assertEqual(self.checkpoints, [])
+
+    def test_an_unanswered_checkpoint_does_not_fail_the_write(self):
+        VendorSession.read_chunk.side_effect = TimeoutError("no answer")
+        self._write(WRITES_BETWEEN_CHECKPOINTS + 1)
+        self.assertEqual(sum(1 for _e, frame in self.dev.written if frame[3] == CMD_WRITE),
+                         WRITES_BETWEEN_CHECKPOINTS + 1)
+
+    def test_a_lost_connection_during_the_checkpoint_propagates(self):
+        VendorSession.read_chunk.side_effect = usb.core.USBError("gone")
+        self._write(WRITES_BETWEEN_CHECKPOINTS)
+        with self.assertRaises(usb.core.USBError):
+            self._write(1)
 
 
 class SendRawTest(unittest.TestCase):

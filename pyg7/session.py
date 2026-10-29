@@ -21,6 +21,7 @@ from .constants import (
     CMD_HEARTBEAT,
     CMD_READ,
     CMD_WRITE,
+    DOCK_READ_CATEGORY,
     EP_IN,
     EP_OUT,
     IFACE,
@@ -85,6 +86,20 @@ class BatteryStatus(NamedTuple):
 SETTLE_HEARTBEATS = 24
 SETTLE_INTERVAL = 0.25
 
+# Checkpoint reads. Found on hardware 2026-10-29 (FINDINGS.md): after more than
+# about 25 writes in one session without a read in between, the controller
+# drops off USB (Errno 5, then re-enumerates) at its next read; the writes
+# themselves are fine. Any read resets the count (80 writes in one session with
+# a read every 20 all passed; 30 before a read failed), and idle time does not
+# help beyond a short burst (24 s of heartbeats before the read still failed
+# after 63 writes). So a session that is writing slips a small read in after
+# every WRITES_BETWEEN_CHECKPOINTS writes. 100 writes with one every 15, then
+# the 53-byte live-suffix read that always failed, all succeeded; the same run
+# with none failed at that read. A large sync, an import, the CLI's write-state
+# and the GUI's read-back after a big batch are all protected, and a handful of
+# writes, the usual case, never sends one.
+WRITES_BETWEEN_CHECKPOINTS = 15
+CHECKPOINT_READ_LENGTH = 8
 # How much warmup to give the FAST path before the first real read attempt
 # -- see DeviceWatcher._establish() for how this is actually used (two-tier:
 # a short warmup + one quick probe, falling back to the full SETTLE_HEARTBEATS
@@ -220,6 +235,10 @@ class VendorSession:
         self.seq = 0
         self._claimed = False
         self._detached = False
+        # Writes sent since the last read, and the category of the latest one
+        # -- see WRITES_BETWEEN_CHECKPOINTS.
+        self._writes_since_read = 0
+        self._write_category: Optional[int] = None
 
     def __enter__(self) -> "VendorSession":
         if self.dev.is_kernel_driver_active(IFACE):
@@ -275,6 +294,17 @@ class VendorSession:
         # rather than a clean rejection.
         if len(payload) > 60:
             raise ValueError(f"payload too long: {len(payload)} bytes, max 60 (4-byte header + payload = 64)")
+        if cmd_byte == CMD_READ:
+            self._writes_since_read = 0
+        elif cmd_byte == CMD_WRITE:
+            if self._writes_since_read >= WRITES_BETWEEN_CHECKPOINTS:
+                self._checkpoint_read()
+            self._writes_since_read += 1
+            # A config write is `03 [category/profile] 00 [address] ...`; only
+            # those name a category that is safe to read back.
+            if len(payload) > 1 and payload[0] == 0x03 and (
+                    payload[1] in range(PROFILE_MIN, PROFILE_MAX + 2) or payload[1] == DOCK_READ_CATEGORY):
+                self._write_category = payload[1]
         pkt = bytearray(64)
         pkt[0] = 0x0f
         pkt[1] = 0x00
@@ -286,6 +316,19 @@ class VendorSession:
 
     def heartbeat(self) -> bytes:
         return self.send_raw(CMD_HEARTBEAT, bytes([0xf2, 0x00]))
+
+    def _checkpoint_read(self) -> None:
+        """A small read to reset the controller's count of writes since its
+        last read (see WRITES_BETWEEN_CHECKPOINTS). Skipped when no config write
+        has named a category to read yet. A connection that is gone propagates
+        as the USBError it is; an answer that simply does not arrive is not
+        worth failing the write over."""
+        if self._write_category is None:
+            return
+        try:
+            self.read_chunk(self._write_category, 0, CHECKPOINT_READ_LENGTH)
+        except TimeoutError as exc:
+            log.debug("checkpoint read got no answer: %r", exc)
 
     def send_addressed(self, prefix: bytes, setting_id: int, data: bytes,
                         interval: Optional[float] = None) -> bytes:
