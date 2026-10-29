@@ -62,6 +62,8 @@ packages = ["pyg7", "g7ctl", "g7ctlc", "g7ctlc.views", "g7ctlc.assets"]
     "fonts/*.ttf",
     "fonts/*.txt",
     "fonts/*.md",
+    "drawing/*.svg",
+    "drawing/*.md",
     "icons/*.svg",
     "icons/LICENSE",
     "icons/*.md",
