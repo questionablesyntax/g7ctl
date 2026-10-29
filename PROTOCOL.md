@@ -387,6 +387,16 @@ no heartbeat before/after is silently discarded and the device reverts to
 after (`pyg7/session.py:VendorSession`, `~0.316s` cadence matches the
 real app).
 
+**Consecutive writes need a heartbeat between them, too** (confirmed on
+hardware 2026-10-26/27). Heartbeats around a *batch* are not enough. Four
+writes sent back to back, with no heartbeat between them, landed the first two
+and silently lost the last two, and the controller then dropped off USB
+(`Errno 19`, then `Errno 5` until the kernel's `xpad` driver stopped
+contending for the device, about 20 s). The same four writes sent as
+`sleep, heartbeat, sleep` at the `~0.316s` cadence between each pair all read
+back correctly. A single write, or several to one page, never showed it, so it
+only bites multi-field batches.
+
 **Heartbeat** (`CMD=0x02`): payload `f2 00`, fixed.
 
 ## Config writes are addressed writes into a register file
