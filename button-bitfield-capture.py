@@ -102,7 +102,7 @@ _BUTTON_LABELS: dict[str, str] = {
 # physically pressable button the drawing still needs a highlight for.
 # Captured last, clearly marked, not mixed into the remappable set above.
 _EXTRA_BUTTONS: list[tuple[str, str]] = [
-    ("guide", "Xbox/Guide button (not remappable -- diagram only)"),
+    ("guide", "Xbox/Guide button (no binding exposed -- diagram only)"),
 ]
 
 FRAME_LEN = 63          # report 0x10's own fixed payload length (PROTOCOL.md)

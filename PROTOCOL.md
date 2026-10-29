@@ -587,8 +587,19 @@ button table** (`0x42 + n*7`), checked for all 20 slots.
 | D-Pad Down | unconfirmed | `49 02` |
 | D-Pad Left | unconfirmed | `50 02` |
 | D-Pad Right | unconfirmed | `57 02` |
+| Guide (Xbox, center) | unconfirmed | `96 02` |
 
-Not remappable: Xbox/Guide (center) button, M (hardware profile-switch).
+**The Xbox/Guide (center) button is bindable** -- confirmed 2026-10-29. Its
+record is the slot this table otherwise leaves blank (`0x96`, between Y and
+View) and takes the same `01 [KEYCODE]` write: `03 [PROFILE] 00 96 02 01
+[KEYCODE]`. Bound to native A on the active profile, three taps of the
+physical Guide button produced three A presses and no Guide press; unbinding
+(`03 [PROFILE] 00 96 02 00`) restored the slot byte-identical. The reverse
+also works: `native_home` (`0D`) bound to any other button makes that button
+send Guide to the host. Nexus's picker offers neither. Only a native keycode
+was tried on the Guide slot. Holding Guide powers the controller off; whether
+a *bound* Guide still does is untested. The M button (hardware
+profile-switch) is untested.
 
 ### Continuous Trigger, byte 4 of a button's record
 
@@ -672,7 +683,9 @@ picker labels ("Home", "L4", "R4", "L5", "R5") instead of inferring from
 Nexus's UI directly. `Home` here is the native Xbox/Guide button's own
 keycode -- it is still not a valid *remap target* in Nexus's own picker
 (Xbox/Guide and M are confirmed non-remappable there), but the wire value
-exists and is readable/writable via this raw protocol regardless.
+exists and is readable/writable via this raw protocol regardless. Confirmed
+to take effect 2026-10-29: bound to another button, it sends the Guide
+button to the host.
 
 Watching Linux `evdev`/`usbmon` alone could not have answered this: the
 `xpad` driver only understands the standard XInput button set, so a paddle
@@ -1215,8 +1228,8 @@ for:**
 | 6 | L3 (left stick click) |
 | 7 | R3 (right stick click) |
 
-**Byte 11 -- confirmed, two bits: bit 0 (`0x01`) is Guide/Xbox (not
-remappable, diagram-only -- `button-bitfield-capture.py`'s
+**Byte 11 -- confirmed, two bits: bit 0 (`0x01`) is Guide/Xbox
+(captured separately -- `button-bitfield-capture.py`'s
 `_EXTRA_BUTTONS`), bit 1 (`0x02`) is Share.** Guide needed a different
 capture technique than every other button: a sustained hold risks
 tripping the controller's own "hold Guide to power off" gesture (a real

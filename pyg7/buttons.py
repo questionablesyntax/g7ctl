@@ -363,14 +363,15 @@ BUTTON_TABLE_SLOT_SIZE = 7
 # table came from: the 4 D-pad directions come first (confirmed spacing:
 # exactly BUTTON_TABLE_SLOT_SIZE apart, immediately before the rest of the
 # table), then the 8 native-gamepad slots in the same order as this file's
-# own native_* keycodes, a reserved gap for the non-remappable Xbox/Guide
-# button, then View/Menu, then the 5 "special" buttons in ascending
+# own native_* keycodes, a gap for the Xbox/Guide button's own record
+# (bindable, confirmed 2026-10-29, but not exposed here yet -- see
+# PROTOCOL.md), then View/Menu, then the 5 "special" buttons in ascending
 # BUTTON_ID order (Share < L4 < L5 < R4 < R5) -- NOT the L4/R4/L5/R5
 # grouping used for readability elsewhere in this file.
 BUTTON_TABLE_SLOTS = [
     "dpad_up", "dpad_down", "dpad_left", "dpad_right",
     "lb", "rb", "l3", "r3", "a", "b", "x", "y",
-    None,  # reserved: Xbox/Guide, confirmed non-remappable
+    None,  # Xbox/Guide's own record (0x96): bindable, not exposed yet
     "view", "menu",
     "share", "l4", "l5", "r4", "r5",
 ]

@@ -38,8 +38,9 @@ class ButtonTableDecodeTest(unittest.TestCase):
         self.assertIsNone(buttons.decode_button_table(blob)["b"])
 
     def test_guide_slot_is_reserved_and_never_reported(self):
-        # BUTTON_TABLE_SLOTS carries a None placeholder for the
-        # non-remappable Xbox/Guide button; it must not leak into the result.
+        # BUTTON_TABLE_SLOTS carries a None placeholder for the Xbox/Guide
+        # button's record, which isn't exposed as a binding; it must not
+        # leak into the result.
         decoded = buttons.decode_button_table(self._blob_with_slots({}))
         self.assertNotIn(None, decoded)
 

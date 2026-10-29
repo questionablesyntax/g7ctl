@@ -19,7 +19,7 @@ photos of the physical controller.
 `fill="none"`, no stroke) layered over the line art, one per
 `pyg7.buttons.KNOWN_BUTTON_IDS` entry plus the non-bindable D-pad
 sub-directions -- `guide` and the M/mode button are deliberately excluded,
-neither is remappable. `ControllerDiagram` (`g7ctlc/controller_diagram.py`)
+neither is an exposed binding target. `ControllerDiagram` (`g7ctlc/controller_diagram.py`)
 looks these up by id via `QSvgRenderer.boundsOnElement()`.
 
 2026-10-28 cleanup: three circular outlines (the left stick's outer ring,
