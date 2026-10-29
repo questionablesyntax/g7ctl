@@ -41,4 +41,4 @@ are separate packages that depend on this one -- neither is imported here.
 See PROTOCOL.md at the repo root for the wire-format reference.
 """
 
-__version__ = "0.3.3"
+__version__ = "0.4.0"

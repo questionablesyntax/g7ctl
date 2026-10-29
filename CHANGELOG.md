@@ -6,6 +6,8 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-29
+
 ### Added
 
 - **A redesigned desktop app (`g7ctlc`).** Pages down the left (Buttons,
@@ -1238,7 +1240,13 @@ and motion/gyro is unimplemented by choice.
 - The PKGBUILD is structurally validated but has not been build-tested
   against a real release tarball.
 
-[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/questionablesyntax/g7ctl/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/questionablesyntax/g7ctl/compare/v0.3.3...v0.4.0
+[0.3.3]: https://github.com/questionablesyntax/g7ctl/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/questionablesyntax/g7ctl/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/questionablesyntax/g7ctl/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/questionablesyntax/g7ctl/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/questionablesyntax/g7ctl/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.10...v0.2.0
 [0.1.10]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/questionablesyntax/g7ctl/compare/v0.1.8...v0.1.9
