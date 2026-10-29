@@ -6,6 +6,42 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **A redesigned desktop app (`g7ctlc`).** Pages down the left (Buttons,
+  Sticks, Triggers, Motion, Vibration, Profile settings, plus the shared Shift
+  layer and Dock), light and dark themes that follow the system setting,
+  bundled fonts, keyboard navigation and accessible names throughout, and tray
+  icon states that are told apart by shape, not colour alone.
+- **The Buttons page is a drawing of the controller.** Click, or Tab to and
+  press Enter on, any control to change its binding. Every one of the 21
+  controls has a callout around the edge showing its current binding, with
+  remapped ones highlighted.
+- **Edits are drafts until written.** Each page has its own Write and Discard
+  buttons and per-field Revert, "Write all changes" writes every edited page at
+  once, and every write is read back from the controller and verified. A review
+  screen appears only when something needs a look: a setting that changed on the
+  controller since the last read, or a large batch on one page.
+- **Importing a saved state says where it came from**, and is marked as not read
+  from the controller until you read or write it.
+- **`g7ctl snapshot` and `g7ctl diff`** save the controller's raw configuration
+  to a file and compare two saved files, for checking exactly which bytes a
+  change touched.
+
+### Changed
+
+- The GUI now needs PyQt6 6.7 or newer (`pip install "g7ctl[gui]"`).
+- `PROTOCOL.md`: the Xbox/Guide button is bindable (its record is the slot the
+  button table leaves blank), and any other button can be made to send Guide
+  with the `native_home` keycode. Both were confirmed on hardware.
+
+### Fixed
+
+- Sync Now no longer falls back to a blind full write when it cannot read the
+  controller's current settings first; it stops without writing anything.
+- A hand-edited state file that omits a key is no longer treated as an
+  instruction to clear that setting.
+
 ## [0.3.3] - 2026-09-17
 
 ### Changed
