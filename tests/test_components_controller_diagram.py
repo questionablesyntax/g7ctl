@@ -235,29 +235,37 @@ class ControllerDiagramTest(unittest.TestCase):
         self.assertIn("remapped to Keyboard: R", self.diagram.hotspot_for("a").accessibleName())
         self.assertIn(UNMAPPED_CALLOUT_TEXT.lower(), self.diagram.hotspot_for("b").accessibleName())
 
-    def test_hovering_a_callout_shows_a_tooltip_without_raising(self):
+    def test_hovering_a_callout_asks_for_its_full_text_without_raising(self):
         # A tooltip event carries its position as a QPoint, where mouse events
         # carry a QPointF; handing it straight to QRectF.contains() raised a
         # TypeError that only showed up when the cursor rested on a callout.
+        # QToolTip.showText is replaced: a real tooltip widget left alive here
+        # crashed a later test on a machine with a real session.
+        from unittest import mock
+
         from PyQt6.QtCore import QEvent
         from PyQt6.QtGui import QHelpEvent
-        from PyQt6.QtWidgets import QToolTip
+
+        from g7ctlc.controller_diagram import UNMAPPED_CALLOUT_TEXT
 
         self.diagram.resize(900, 700)
         self.diagram.show()
         self.diagram.grab()
         inside = self.diagram._callout_rects["a"].center().toPoint()
         self.assertEqual(self.diagram._callout_at(inside), "a")
-        event = QHelpEvent(QEvent.Type.ToolTip, inside, self.diagram.mapToGlobal(inside))
-        self.assertTrue(self.diagram.event(event))
-        # The middle of the widget is the artwork, not a callout: it must look
-        # up as "no callout" and fall through to the normal tooltip handling.
-        outside = self.diagram.rect().center()
-        self.assertIsNone(self.diagram._callout_at(outside))
-        event = QHelpEvent(QEvent.Type.ToolTip, outside, self.diagram.mapToGlobal(outside))
-        self.diagram.event(event)
-        # A tooltip left open when the interpreter exits crashes it on teardown.
-        QToolTip.hideText()
+        with mock.patch("g7ctlc.controller_diagram.QToolTip.showText") as show:
+            event = QHelpEvent(QEvent.Type.ToolTip, inside, self.diagram.mapToGlobal(inside))
+            self.assertTrue(self.diagram.event(event))
+            show.assert_called_once()
+            self.assertEqual(show.call_args.args[1], f"A \u2014 {UNMAPPED_CALLOUT_TEXT}")
+            # The middle of the widget is the artwork, not a callout: it looks
+            # up as "no callout" and shows nothing of ours.
+            show.reset_mock()
+            outside = self.diagram.rect().center()
+            self.assertIsNone(self.diagram._callout_at(outside))
+            event = QHelpEvent(QEvent.Type.ToolTip, outside, self.diagram.mapToGlobal(outside))
+            self.diagram.event(event)
+            show.assert_not_called()
 
     def test_clicking_a_callout_activates_its_control_without_a_new_tab_stop(self):
         self.diagram.resize(900, 700)
