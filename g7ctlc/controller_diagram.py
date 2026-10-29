@@ -63,7 +63,7 @@ _STROKE_CURRENT_COLOR_RE = re.compile(r'stroke="currentColor"')
 UNMAPPED_CALLOUT_TEXT = "Not remapped"
 
 # Display names for the 21 bindable controls, shared by every page that shows
-# the diagram so a control reads the same on Buttons and Overview.
+# the diagram so a control reads consistently everywhere it appears.
 BUTTON_LABELS = {
     "share": "Share", "a": "A", "b": "B", "x": "X", "y": "Y",
     "lb": "LB", "rb": "RB", "lt": "LT", "rt": "RT",
@@ -114,6 +114,11 @@ _CALLOUT_EARLY_DEPARTURES: dict[str, float] = {
     "y": 10.0,
     "dpad_left": -13.0,
 }
+
+# Share sits below the guide glyph.  Its top-card route takes a short step
+# left before rising, so its vertical run clears that glyph instead of
+# bisecting it.
+_CALLOUT_TOP_LANE_WIDTHS: dict[str, float] = {"share": -1.7}
 
 
 def _build_renderer(palette: Palette) -> QSvgRenderer:
@@ -213,8 +218,8 @@ class ControllerDiagram(QWidget):
         order: list[str] | None = None,
         interactive: bool = True,
     ) -> None:
-        """`interactive=False` (Overview's own instance) skips building any
-        hotspots at all -- line art, the selected-button highlight and
+        """`interactive=False` skips building any hotspots at all -- line
+        art, the selected-button highlight and
         `set_bindings()`'s callouts all work identically either way, since
         none of that painting depends on a hotspot existing. A page that
         isn't a remapping surface gets no Tab stops and no `activated`/
@@ -311,7 +316,11 @@ class ControllerDiagram(QWidget):
     def _draw_rect(self) -> QRectF:
         """The aspect-fit rect for the artwork, leaving a clear callout rail."""
         rail = self._callout_side_width()
-        channel_gap = max(30.0, self.width() * 0.07)
+        # The cards need their full text width, but the channel between each
+        # rail and the drawing only needs enough room to turn a leader line.
+        # Keeping it deliberately narrow gives the controller its share of
+        # the composition instead of marooning it between two empty gutters.
+        channel_gap = max(16.0, self.width() * 0.025)
         vertical_rail = max(44.0, self.height() * 0.085)
         art_width = self.width() - (rail + channel_gap) * 2 - _MARGIN * 4
         art_height = self.height() - vertical_rail * 2
@@ -524,7 +533,10 @@ class ControllerDiagram(QWidget):
             end = QPointF(box.center().x(), box.bottom())
             channel = box.bottom() + (art.top() - box.bottom()) * fraction
             path = QPainterPath(anchor)
-            path.lineTo(anchor.x(), channel)
+            lane_x = anchor.x() + mapped.width() * _CALLOUT_TOP_LANE_WIDTHS.get(button_id, 0.0)
+            if lane_x != anchor.x():
+                path.lineTo(lane_x, anchor.y())
+            path.lineTo(lane_x, channel)
             path.lineTo(end.x(), channel)
             path.lineTo(end)
         else:

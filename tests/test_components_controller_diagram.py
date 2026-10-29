@@ -7,7 +7,7 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
-    from PyQt6.QtCore import Qt
+    from PyQt6.QtCore import QEvent, Qt
     from PyQt6.QtTest import QTest
     from PyQt6.QtWidgets import QApplication
 except ImportError:  # pragma: no cover - depends on the environment
@@ -29,6 +29,14 @@ class ControllerDiagramTest(unittest.TestCase):
 
         self.diagram = ControllerDiagram(DARK_PALETTE)
         self.diagram.resize(300, 240)
+
+    def tearDown(self):
+        # Destroy the widget now, on this test's own turn, instead of leaving
+        # a parentless widget for the garbage collector to delete at some
+        # arbitrary later point in the middle of another test's event loop.
+        self.diagram.close()
+        self.diagram.deleteLater()
+        self.app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     def test_loads_a_valid_svg(self):
         self.assertTrue(self.diagram._renderer.isValid())
@@ -150,7 +158,7 @@ class ControllerDiagramTest(unittest.TestCase):
         self.assertEqual(list(custom._hotspots), ["b", "a"])
 
     def test_interactive_false_builds_no_hotspots_at_all(self):
-        # Overview's own use (read-only drawing, D2 rework) -- no Tab
+        # Read-only drawing use -- no Tab
         # stops and no activated/focused signals, rather than a
         # clickable-looking part that silently does nothing.
         from g7ctlc.controller_diagram import ControllerDiagram
@@ -325,6 +333,9 @@ class ButtonsViewDiagramSyncTest(unittest.TestCase):
         # with the wrong button id only when run after a picker-opening
         # test, never in isolation.
         self.view._picker.close()
+        self.view.close()
+        self.view.deleteLater()
+        self.app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     def test_clicking_a_hotspot_highlights_its_button(self):
         QTest.mouseClick(self.view.diagram.hotspot_for("y"), Qt.MouseButton.LeftButton)

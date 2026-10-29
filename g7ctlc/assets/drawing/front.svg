@@ -61,7 +61,7 @@
 
 
 </g>
-    <g id="paddle_shape" transform="translate(0.000000,696.000000) scale(0.100000,-0.100000)" fill="none" stroke="currentColor" stroke-width="480">
+    <g id="paddle_shape" transform="translate(0.000000,696.000000) scale(0.100000,-0.100000)" fill="none" stroke="currentColor" stroke-width="200">
 <path d="M3130 6579 c-25 -11 -73 -23 -107 -26 -59 -6 -73 -11 -137 -57 -15
 -10 -47 -23 -73 -27 -25 -5 -60 -20 -77 -33 -17 -13 -42 -26 -55 -31 -13 -4
 -40 -21 -60 -39 -20 -17 -54 -45 -76 -61 -62 -46 -194 -185 -223 -235 -14 -25
@@ -673,14 +673,14 @@ c49 2 68 -1 72 -12 3 -8 28 -21 56 -29 81 -24 240 -177 240 -231 0 -12 11 -39
   <!-- Preserve the traced drawing's centres and line weight, while replacing
        its visibly faceted circular outlines with analytic circles. -->
   <g id="polished_circles" fill="none" stroke="currentColor">
-    <circle cx="366.205" cy="421.12" r="118.80" stroke-width="2.4" />
-    <circle cx="545.00" cy="660.44" r="117.30" stroke-width="5.5" />
-    <circle cx="1122.345" cy="321.56" r="50.60" stroke-width="3.2" />
+    <circle cx="366.205" cy="421.12" r="118.80" stroke-width="4" />
+    <circle cx="545.00" cy="660.44" r="117.30" stroke-width="4" />
+    <circle cx="1122.345" cy="321.56" r="50.60" stroke-width="4" />
   </g>
   <!-- The physical M/mode button is not bindable; repair only its corrupted
        traced mark, retaining the original pill's size and location. -->
   <rect id="mode_button_outline" x="699.6" y="735.7" width="89.8" height="49.3"
-        rx="24.65" fill="none" stroke="currentColor" stroke-width="3" />
+        rx="24.65" fill="none" stroke="currentColor" stroke-width="4" />
   <path id="mode_button_glyph" fill="currentColor"
         d="M735 768V752h3l6 9 6-9h3v16h-3v-11l-5 7h-2l-5-7v11z" />
   <use href="#paddle_shape" transform="translate(522.5,951.4) scale(0.2574)" />
