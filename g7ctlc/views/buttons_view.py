@@ -59,6 +59,8 @@ addressable the way every other coupled-field deferral in this track
 been -- its own pass, not assumed here. Still writes through the old
 whole-state Sync Now path only, same as before this slice.
 """
+from __future__ import annotations
+
 import copy
 import logging
 

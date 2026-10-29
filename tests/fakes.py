@@ -5,6 +5,7 @@ payload and hands it to session.send_raw(). Swapping in a recorder there
 makes the entire write side of the protocol testable with no controller
 attached, which is the only reason these tests can run in CI.
 """
+from __future__ import annotations
 
 
 class FakeSession:
