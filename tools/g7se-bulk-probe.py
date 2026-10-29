@@ -19,7 +19,7 @@ other confirmed G7 Pro variant. Nothing here writes a setting, changes a
 profile, or touches anything on the controller.
 
 Usage:
-    sudo python3 g7se-bulk-probe.py
+    sudo python3 tools/g7se-bulk-probe.py
 
 Needs pyusb: `python3 -m pip install --user pyusb` if you don't have it
 (the script will tell you plainly if it's missing rather than crash with

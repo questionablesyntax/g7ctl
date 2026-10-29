@@ -28,7 +28,7 @@ pkg/
 /test-build.sh
 packaging/.testbuild/
 
-# button-bitfield-capture.py's own output -- a per-run personal hardware
+# tools/button-bitfield-capture.py's own output -- a per-run personal hardware
 # capture dump, not a fixture or a build artifact; real findings get
 # written into PROTOCOL.md by hand instead.
-/button-bitfield-capture-*.json
+button-bitfield-capture-*.json

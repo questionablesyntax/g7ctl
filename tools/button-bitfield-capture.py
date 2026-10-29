@@ -28,9 +28,9 @@ changing alongside the expected one is itself a real finding, not
 something to silently discard because it wasn't in the documented set.
 
 Usage:
-    python3 button-bitfield-capture.py [--out capture.json]
+    PYTHONPATH=. python3 tools/button-bitfield-capture.py [--out capture.json]
 
-Needs pyg7 importable (run from the repo root, or with it installed) --
+Needs pyg7 importable (run from the repo root as above, or with it installed) --
 unlike g7se-bulk-probe.py, this doesn't need to be a zero-dependency
 handoff script; it's for use on this project's own dev machine, and
 pyg7.session.VendorSession is the real, already-safe primitive for a
@@ -64,8 +64,8 @@ try:
     from pyg7.device import find_writable_device, switch_to_xid
     from pyg7.session import EARLY_PROBE_HEARTBEATS, VendorSession
 except ImportError:
-    print("This needs pyg7 importable -- run from the g7ctl repo root, "
-          "or with the package installed.")
+    print("This needs pyg7 importable -- run from the g7ctl repo root with "
+          "PYTHONPATH=. , or with the package installed.")
     sys.exit(1)
 
 # Same default pacing floor g7ctl/main.py's CLI uses for a fresh handshake.

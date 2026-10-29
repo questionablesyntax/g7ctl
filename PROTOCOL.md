@@ -1165,7 +1165,7 @@ sweep did not record button order reliably.
 
 **UPDATE, 2026-10-22.** Mapped from a real, guided capture -- one button at
 a time, a fresh "nothing pressed" baseline diffed against a held sample
-(`button-bitfield-capture.py`, written specifically to avoid the
+(`tools/button-bitfield-capture.py`, written specifically to avoid the
 2026-08-08 sweep's own failure mode; see its own module docstring).
 
 **The first attempt this same day was itself wrong, caught and corrected
@@ -1250,7 +1250,7 @@ for:**
 | 7 | R3 (right stick click) |
 
 **Byte 11 -- confirmed, two bits: bit 0 (`0x01`) is Guide/Xbox
-(captured separately -- `button-bitfield-capture.py`'s
+(captured separately -- `tools/button-bitfield-capture.py`'s
 `_EXTRA_BUTTONS`), bit 1 (`0x02`) is Share.** Guide needed a different
 capture technique than every other button: a sustained hold risks
 tripping the controller's own "hold Guide to power off" gesture (a real
