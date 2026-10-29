@@ -7,7 +7,9 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04 on 2026-10-19, which has no Python 3.9
+    # build for setup-python, and 3.9 is still the declared minimum.
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
