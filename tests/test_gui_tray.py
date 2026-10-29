@@ -87,7 +87,7 @@ class ReleaseActionSyncGuardTest(unittest.TestCase):
 class QuitSyncGuardTest(unittest.TestCase):
     """TrayIcon's Quit action now confirms before quitting mid-sync.
 
-    Real bug, found 2026-09-17 (Astra and Sol's bug-sweeps independently):
+    Real bug, found 2026-09-17 (two independent code reviews):
     _quit() was a bare @staticmethod calling QApplication.instance().quit()
     unconditionally -- Quit was available and immediate even while a sync
     was actively writing to persistent device config, and app.py's own

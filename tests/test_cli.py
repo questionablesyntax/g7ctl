@@ -400,7 +400,7 @@ class DongleNoControllerTest(unittest.TestCase):
 
 
 class ConnectSessionTwoTierWarmupTest(unittest.TestCase):
-    """REAL BUG, found 2026-09-18 (Sol's bug-sweep): _connect_session()
+    """REAL BUG, found 2026-09-18 (a code review): _connect_session()
     called sess.settle() unconditionally, defaulting to the full
     SETTLE_HEARTBEATS warmup on every command -- ROADMAP.md item 54's
     2026-09-02 root-cause investigation found that exact full warmup is
@@ -490,7 +490,7 @@ class DpadDockSetCommandTest(unittest.TestCase):
         self.assertNotEqual(ctx.exception.code, 0)
 
     def test_negative_pre_heartbeats_rejected_via_argparse(self):
-        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): plain type=int
+        # REAL BUG, found 2026-09-18 (a code review): plain type=int
         # accepted any signed value -- a negative count silently suppressed
         # the corresponding safety heartbeat (range() on a negative count
         # just doesn't loop) instead of being rejected.
@@ -508,7 +508,7 @@ class DpadDockSetCommandTest(unittest.TestCase):
         self.assertNotEqual(ctx.exception.code, 0)
 
     def test_negative_interval_rejected_via_argparse(self):
-        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): plain type=float
+        # REAL BUG, found 2026-09-18 (a code review): plain type=float
         # accepted a negative interval. With --pre-heartbeats 0
         # --post-heartbeats 1 --interval -1, _wrapped_write() did the real
         # persistent write BEFORE the post-heartbeat sleep(-1) raised --
@@ -732,7 +732,7 @@ class BatchDryRunTest(unittest.TestCase):
         self.assertIn("'batch' isn't valid", stderr)
 
     def test_diag_rejected_inside_a_script_by_dry_run_too(self):
-        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): "diag" was
+        # REAL BUG, found 2026-09-17 (a code review): "diag" was
         # missing from BATCH_NOT_ALLOWED, so dry-run approved it as a
         # normal line -- but it's handled entirely outside _dispatch()'s
         # chain, so real execution hit `raise SystemExit(f"unhandled
@@ -744,8 +744,8 @@ class BatchDryRunTest(unittest.TestCase):
         self.assertIn("'diag' isn't valid", stderr)
 
     def test_malformed_quoting_is_a_normal_line_error_not_a_crash(self):
-        # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps,
-        # independently): shlex.split() used to run outside any try block,
+        # REAL BUG, found 2026-09-17 (two independent
+        # code reviews): shlex.split() used to run outside any try block,
         # so an unmatched quote's ValueError escaped normal per-line
         # handling entirely and aborted the whole dry-run pass instead of
         # being reported and counted like any other rejected line.
@@ -865,7 +865,7 @@ class BatchExecutionTest(unittest.TestCase):
         self.assertIn("2/3 succeeded", stdout)
 
     def test_usb_disconnect_aborts_even_with_continue_on_error(self):
-        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): usb.core.USBError
+        # REAL BUG, found 2026-09-17 (a code review): usb.core.USBError
         # is a direct OSError subclass, so the per-line
         # `except (_BatchLineError, ValueError, OSError)` clause caught a
         # real device disconnect exactly like an ordinary recoverable
@@ -937,7 +937,7 @@ class BatchReplTest(unittest.TestCase):
         self.assertEqual(len(_CapturingSessionCM.captured.payloads), 1)
 
     def test_a_slow_thinker_still_gets_heartbeats_while_input_blocks(self):
-        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): input() used to
+        # REAL BUG, found 2026-09-17 (a code review): input() used to
         # block with no heartbeat running concurrently at all -- a real
         # session-liveness requirement (see session.py's own module
         # docstring), not a cosmetic one. Anyone who paused more than a

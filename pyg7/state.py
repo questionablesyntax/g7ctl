@@ -221,8 +221,8 @@ class StateError(ValueError):
 def _require_dict(v: object, label: str) -> None:
     """Raise StateError (not AttributeError) if `v` isn't a dict/object --
     guards every `.items()`/`.get()` call this function makes on a section
-    or sub-section, one level deep. REAL BUG, found 2026-09-18 (Sol's
-    bug-sweep): before this existed, a hand-edited "buttons": [] (wrong
+    or sub-section, one level deep. REAL BUG, found 2026-09-18 (a code
+    review): before this existed, a hand-edited "buttons": [] (wrong
     container type) hit .items() on a list and raised a plain
     AttributeError -- a different exception class than every other
     rejection in this function, so it escaped the CLI's and GUI's
@@ -249,8 +249,8 @@ def validate_state(data: dict) -> None:
             raise StateError(f"missing top-level section {key!r}")
 
     slot = data.get("controller_slot")
-    # isinstance(slot, bool) check: REAL BUG, found 2026-09-18 (Sol's
-    # bug-sweep). Python's bool is an int subclass and True == 1, so
+    # isinstance(slot, bool) check: REAL BUG, found 2026-09-18 (a code
+    # review). Python's bool is an int subclass and True == 1, so
     # "controller_slot": true in a hand-edited file passed this membership
     # check and behaved as slot 1 -- a plausible hand-editing typo silently
     # retargeting a write. Same reasoning applies to dock_led_brightness and
@@ -303,8 +303,8 @@ def validate_state(data: dict) -> None:
     if auto is not None and not isinstance(auto, bool):
         raise StateError(f"dock_auto_on_off must be a bool or null, got {auto!r}")
 
-    # _require_dict() calls below: REAL BUG, found 2026-09-18 (Sol's
-    # bug-sweep). A hand-edited snapshot with e.g. "buttons": [] (wrong
+    # _require_dict() calls below: REAL BUG, found 2026-09-18 (a code
+    # review). A hand-edited snapshot with e.g. "buttons": [] (wrong
     # container type, not just a wrong-shaped dict) hit .items() on a list
     # and raised a raw AttributeError -- a different exception class than
     # the StateError (a ValueError subclass) every other rejection here
@@ -387,7 +387,7 @@ def _is_valid_keycode_value(s: str) -> bool:
     a value like "1ff" passed validation cleanly and then crashed
     write_state()/remap() with an opaque bytes-range error far from here.
 
-    isinstance(s, str) check: REAL BUG, found 2026-09-18 (Sol's bug-sweep).
+    isinstance(s, str) check: REAL BUG, found 2026-09-18 (a code review).
     A hand-edited binding like "a": 123 (a raw int, not a string) reached
     s.lower() and raised a plain AttributeError -- same escaped-exception
     problem as _require_dict() above, just here instead of a container
@@ -543,7 +543,7 @@ def _validate_trigger_settings(s: dict) -> None:
 def load_state(path: str) -> dict:
     with open(path) as f:
         data = json.load(f)
-    # REAL BUG, found 2026-09-17 (Sol's bug-sweep), reproduced live:
+    # REAL BUG, found 2026-09-17 (a code review), reproduced live:
     # _drop_mislabelled_legacy_shift() immediately calls data.get(...) --
     # valid JSON that isn't a dict (a bare list, null, or a scalar) raised
     # a raw AttributeError here, before validate_state()'s own
@@ -587,7 +587,7 @@ def _drop_mislabelled_legacy_shift(data: dict, source: str) -> None:
     file would push Profile 1's Default bindings over the real Shift layer
     that every profile shares.
 
-    REAL BUG, found 2026-09-17 by an external model bug-sweep (Astra),
+    REAL BUG, found 2026-09-17 by a code review,
     independently verified and traced further here: this function's own
     docstring used to claim "detection is exact rather than heuristic...
     schema 1 + controller_slot != 1 + a populated shift section ==
@@ -1082,7 +1082,7 @@ def _stick_steps(side: str, s: dict, baseline: Optional[dict] = None, profile: i
     # the whole block including the points, so writing them first would be
     # undone by the preset write that follows.
     #
-    # REAL BUG, found 2026-09-17 (Astra's bug-sweep): a points write is
+    # REAL BUG, found 2026-09-17 (a code review): a points write is
     # ALWAYS whole_block=True (write_curve_points()'s own default), and
     # curve_block_payload() defaults preset_index to Custom whenever one
     # isn't explicitly passed -- sticks.set_value()'s "curve_points" branch

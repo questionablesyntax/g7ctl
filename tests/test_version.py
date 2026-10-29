@@ -53,8 +53,8 @@ class VersionLockstepTest(unittest.TestCase):
 
     @unittest.skipUnless(_GIT_PKGBUILD.is_file(), "packaging/git/PKGBUILD only exists in a checkout")
     def test_git_pkgbuild_declares_the_same_checkdepends_as_the_release_one(self):
-        # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps,
-        # independently): packaging/git/PKGBUILD ran the identical
+        # REAL BUG, found 2026-09-17 (two independent
+        # code reviews): packaging/git/PKGBUILD ran the identical
         # check() suite but never declared checkdepends at all -- missing
         # python-pyusb can prevent the suite from even being collected in
         # a clean chroot; missing python-pyqt6 makes every g7ctlc test

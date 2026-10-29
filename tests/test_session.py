@@ -342,7 +342,7 @@ class ConnectionAgnosticDefaultsTest(unittest.TestCase):
 
 
 class ReadTimeoutMisclassificationTest(unittest.TestCase):
-    """REAL BUG, found 2026-09-18 (Sol's bug-sweep): read_chunk() (and
+    """REAL BUG, found 2026-09-18 (a code review): read_chunk() (and
     read_input_frame()/CMD_DEVICE_INFO's read loop, same pattern) used to
     treat ANY USBError with no numeric errno as a timeout and retry it
     silently until the deadline -- not just genuine timeouts. PyUSB
@@ -371,7 +371,7 @@ class MonotonicDeadlineTest(unittest.TestCase):
     """read_chunk()'s deadline/remaining pair must never consult the
     adjustable wall clock at all.
 
-    REAL BUG, found 2026-09-17 (Sol's bug-sweep): this used to use
+    REAL BUG, found 2026-09-17 (a code review): this used to use
     time.time() -- an NTP correction or a manual clock change mid-read
     could make a real response look timed out early, or let a genuinely
     stuck read run well past its configured timeout. Rather than
@@ -699,8 +699,8 @@ class _TracksDriverCallsDevice:
 
 class EnterClaimFailureRollbackTest(unittest.TestCase):
     """A failed usb.util.claim_interface() inside __enter__() must reattach
-    a driver it just detached -- found 2026-09-17 (Astra and Sol's
-    bug-sweeps, independently). __enter__() raising means __exit__() is
+    a driver it just detached -- found 2026-09-17 (two independent
+    code reviews). __enter__() raising means __exit__() is
     NEVER called (that's how the `with` statement works), so the rollback
     has to happen inside __enter__() itself, before re-raising -- there is
     no __exit__() left to do it. VendorSession.__enter__()/__exit__() had

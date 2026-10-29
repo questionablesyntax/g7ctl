@@ -113,7 +113,7 @@ def set_value(session: VendorSession, setting: str, value: SettingValue, profile
         else:
             # "force,sync" as two on/off tokens, e.g. "on,off"
             #
-            # REAL BUG, found 2026-09-18 (Sol's bug-sweep): this used to
+            # REAL BUG, found 2026-09-18 (a code review): this used to
             # check each token against only the true-token set inline
             # (`parts[0] in ("1", "true", "on", "yes")`), so ANY other
             # string -- a typo like "onn", or an unrelated word -- silently

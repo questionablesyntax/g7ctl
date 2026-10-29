@@ -292,7 +292,7 @@ class DeviceWatcher(QObject):
                     # POLL_INTERVAL while the device may still be
                     # re-enumerating on its own.
                     #
-                    # REAL BUG, found 2026-09-17 (Sol's bug-sweep): every
+                    # REAL BUG, found 2026-09-17 (a code review): every
                     # _probe_backoff_until read/write here used to use
                     # time.time() (the adjustable wall clock) -- genuinely
                     # inconsistent with this same file's OWN
@@ -521,8 +521,8 @@ class DeviceWatcher(QObject):
         # merge logic keeps whatever dock values it already has when this
         # comes back None.
         #
-        # `force_dock`, added 2026-09-17 (real bug, found by Astra and
-        # Sol's bug-sweeps independently): the explicit "Read from Device"
+        # `force_dock`, added 2026-09-17 (real bug, found by two independent
+        # code reviews): the explicit "Read from Device"
         # button's whole promised contract is "discard my edits, show me
         # the truth" -- without this override, an unsynced local dock edit
         # survived even an explicit discard-my-edits read (this method

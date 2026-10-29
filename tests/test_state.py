@@ -97,7 +97,7 @@ class ValidateStateTest(unittest.TestCase):
         state_mod.validate_state(self.state)
 
     def test_rejects_bool_controller_slot(self):
-        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): Python's bool is an
+        # REAL BUG, found 2026-09-18 (a code review): Python's bool is an
         # int subclass and True == 1, so "controller_slot": true in a
         # hand-edited file used to pass `slot not in (1, 2, 3, 4)` and
         # behave as slot 1 -- silently retargeting a write on a plausible
@@ -107,7 +107,7 @@ class ValidateStateTest(unittest.TestCase):
             state_mod.validate_state(self.state)
 
     def test_rejects_wrong_container_type_for_buttons(self):
-        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): "buttons": [] (a
+        # REAL BUG, found 2026-09-18 (a code review): "buttons": [] (a
         # list, not a dict) used to hit .items() and raise a plain
         # AttributeError -- a different exception class than every other
         # rejection here, so it escaped the CLI's and GUI's
@@ -137,7 +137,7 @@ class ValidateStateTest(unittest.TestCase):
             state_mod.validate_state(self.state)
 
     def test_rejects_non_string_keycode_value(self):
-        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): a hand-edited
+        # REAL BUG, found 2026-09-18 (a code review): a hand-edited
         # binding like "a": 123 (a raw int) used to reach s.lower() inside
         # _is_valid_keycode_value() and raise a plain AttributeError.
         self.state["buttons"]["default"]["a"] = 123
@@ -699,8 +699,8 @@ class SparseSubsectionTest(unittest.TestCase):
             write_fn(FakeSession(bytes(512)))  # must not raise end to end
 
     def test_clearing_activate_button_schedules_a_real_write(self):
-        # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps,
-        # independently): _add()'s blanket "skip on None" meant clearing
+        # REAL BUG, found 2026-09-17 (two independent
+        # code reviews): _add()'s blanket "skip on None" meant clearing
         # this binding (state -> None, baseline -> a real keycode) never
         # even reached motion.set_value() -- the old hardware binding
         # stayed live even though Sync reported success.
@@ -743,7 +743,7 @@ class SparseSubsectionTest(unittest.TestCase):
             write_fn(FakeSession(bytes(512)))  # must not raise end to end
 
     def test_restoring_a_named_curve_preset_does_not_schedule_a_points_write(self):
-        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): a points write is
+        # REAL BUG, found 2026-09-17 (a code review): a points write is
         # always whole_block=True and defaults its preset index to Custom
         # when one isn't passed explicitly -- so scheduling a points write
         # right after a named-preset write silently undid it. Only
@@ -800,7 +800,7 @@ class SaveLoadTest(unittest.TestCase):
             state_mod.save_state(path, state)
 
     def test_a_malformed_top_level_shape_raises_state_error_not_attribute_error(self):
-        # REAL BUG, found 2026-09-17 (Sol's bug-sweep), reproduced live:
+        # REAL BUG, found 2026-09-17 (a code review), reproduced live:
         # load_state() immediately called data.get(...) inside
         # _drop_mislabelled_legacy_shift(), before validate_state()'s own
         # isinstance() check ever ran -- so valid JSON that isn't a dict

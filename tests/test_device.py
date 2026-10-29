@@ -548,7 +548,7 @@ class SwitchToXidLandingIdentityTest(unittest.TestCase):
 
 
 class SwitchToXidMultiControllerTest(unittest.TestCase):
-    """REAL BUG, found 2026-09-18 (Sol's bug-sweep, reproduced with two fake
+    """REAL BUG, found 2026-09-18 (a code review, reproduced with two fake
     devices): the post-handshake re-enumeration loop used to call
     find_writable_device() completely unscoped, so with a second
     controller already sitting writable on a DIFFERENT USB port,
@@ -603,8 +603,8 @@ class _TracksDriverCallsDev(_FakeDev):
 
 class ClaimFailureRollbackTest(unittest.TestCase):
     """A failed usb.util.claim_interface() must reattach a driver it just
-    detached -- found 2026-09-17 (Astra and Sol's bug-sweeps,
-    independently): claim_interface() used to sit BEFORE the try/finally
+    detached -- found 2026-09-17 (two independent
+    code reviews): claim_interface() used to sit BEFORE the try/finally
     that handles cleanup, so a claim failure right after a successful
     detach skipped that finally block entirely. Confirmed real and
     reachable: switch_to_xid()'s handshake path detaches unconditionally

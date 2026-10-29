@@ -547,7 +547,7 @@ class _MotionSideWidget(CategorySideWidget):
         side_data["x_axis_output_mode"] = self.x_axis_output_mode.currentData()
         curve = side_data.setdefault("curve", {})
         curve["preset"] = self.curve.value()
-        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): this used to set
+        # REAL BUG, found 2026-09-18 (a code review): this used to set
         # curve["points"] = None unconditionally on every edit, actively
         # discarding real custom points that a device read may have
         # successfully decoded (pyg7.motion.decode_settings() does return

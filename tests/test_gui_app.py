@@ -75,7 +75,7 @@ class ConfigureLoggingTest(unittest.TestCase):
         self.addCleanup(self._patcher.stop)
 
     def tearDown(self):
-        # REAL BUG, found 2026-09-17 (Sol's bug-sweep): this used to
+        # REAL BUG, found 2026-09-17 (a code review): this used to
         # restore the original handler list without ever closing the
         # handlers _configure_logging() added during the test -- a
         # RotatingFileHandler holds a real open file descriptor, so every
@@ -90,7 +90,7 @@ class ConfigureLoggingTest(unittest.TestCase):
         logging.root.setLevel(self._orig_level)
 
     def test_tear_down_closes_the_handlers_this_test_added(self):
-        # REAL BUG, found 2026-09-17 (Sol's bug-sweep): tearDown() used to
+        # REAL BUG, found 2026-09-17 (a code review): tearDown() used to
         # restore the handler list without ever closing the discarded
         # RotatingFileHandler, leaking a real open file descriptor every
         # test. addCleanup runs AFTER this class's own tearDown() (LIFO,

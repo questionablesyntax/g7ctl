@@ -85,7 +85,7 @@ class ConfirmationGateTest(unittest.TestCase):
         self.assertFalse(window._syncing)
 
     def test_declining_profile_switch_read_blocks_export(self):
-        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): _on_profile_changed()
+        # REAL BUG, found 2026-09-18 (a code review): _on_profile_changed()
         # sets self._state["controller_slot"] to the NEWLY selected profile
         # unconditionally, before the "Discard unsynced changes?" prompt.
         # Declining that prompt used to leave Export fully available --
@@ -110,8 +110,8 @@ class ConfirmationGateTest(unittest.TestCase):
         save_state.assert_not_called()
 
     def test_read_button_click_forces_a_real_dock_read(self):
-        # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps
-        # independently): read_btn.clicked emits a `checked: bool` that Qt
+        # REAL BUG, found 2026-09-17 (two independent
+        # code reviews): read_btn.clicked emits a `checked: bool` that Qt
         # passes straight through to a directly-connected slot -- always
         # False for a plain button -- which would silently defeat
         # force_dock_read if connected without the explicit lambda this
@@ -924,7 +924,7 @@ class UnconfirmedStateDisplayTest(unittest.TestCase):
         self.assertTrue(self._content_locked(w))
 
     def test_report_rate_combo_is_gated_too(self):
-        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): report_rate_combo
+        # REAL BUG, found 2026-09-17 (a code review): report_rate_combo
         # used to live in the top selector bar, built before self.tabs
         # even existed -- _content_locked()'s own sweep (and
         # _refresh_confirmed_display()'s real one), keyed on self.tabs'

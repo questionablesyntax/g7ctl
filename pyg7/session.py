@@ -195,7 +195,7 @@ def _looks_like_a_read_timeout(e: usb.core.USBError) -> bool:
     """Whether a USBError from a read loop should be swallowed and retried
     (an ordinary "nothing arrived yet") rather than raised.
 
-    REAL BUG, found 2026-09-18 (Sol's bug-sweep): the three read loops below
+    REAL BUG, found 2026-09-18 (a code review): the three read loops below
     used to treat `errno is None` as equivalent to ETIMEDOUT outright,
     regardless of the exception's own message. PyUSB backends commonly
     construct errors with no numeric errno at all -- not limited to
@@ -247,8 +247,8 @@ class VendorSession:
         try:
             usb.util.claim_interface(self.dev, IFACE)
         except Exception:
-            # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps,
-            # independently): claim_interface() used to sit outside any
+            # REAL BUG, found 2026-09-17 (two independent
+            # code reviews): claim_interface() used to sit outside any
             # try/finally, and __enter__ raising means __exit__ is NEVER
             # called (that's how `with` works) -- so a failed claim right
             # after a successful detach left the kernel driver detached
@@ -481,7 +481,7 @@ class VendorSession:
         self.send_raw(CMD_READ, req_payload)
 
         echo = bytes([CMD_READ, category, (offset >> 8) & 0xFF, offset & 0xFF, length])
-        # REAL BUG, found 2026-09-17 (Sol's bug-sweep): this and the other
+        # REAL BUG, found 2026-09-17 (a code review): this and the other
         # two deadline/remaining pairs in this module used to use
         # time.time() (the adjustable wall clock) -- an NTP correction or a
         # manual clock change mid-read could make a real response look

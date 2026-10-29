@@ -165,7 +165,7 @@ class EstablishSessionTest(unittest.TestCase):
         session = _FakeSession(via_dongle=False, live=False)
         watcher = self._watcher(session)
         # time.monotonic(), not time.time() -- _probe_backoff_until switched
-        # clocks 2026-09-17 (real bug, found by Sol's bug-sweep: it used to
+        # clocks 2026-09-17 (real bug, found by a code review: it used to
         # use the adjustable wall clock, genuinely inconsistent with this
         # same file's own time.monotonic() elsewhere). Comparing a
         # monotonic deadline against a wall-clock "before" would be
@@ -630,7 +630,7 @@ class EmitErrorIsLoggedTest(unittest.TestCase):
 class ForceDockReadTest(unittest.TestCase):
     """DeviceWatcher._do_read()'s force_dock override.
 
-    REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps independently):
+    REAL BUG, found 2026-09-17 (two independent code reviews):
     _dock_known's skip-after-first-read optimization is real and correct
     for automatic reads (profile switch, auto-read-on-connect), but the
     explicit "Read from Device" button's whole promised contract is

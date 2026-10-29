@@ -47,7 +47,7 @@ arch=('any')
 url="https://github.com/questionablesyntax/g7ctl"
 license=('Apache-2.0' 'GPL-3.0-or-later')
 makedepends=('git' 'python-build' 'python-installer' 'python-wheel' 'python-setuptools')
-# REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps, independently):
+# REAL BUG, found 2026-09-17 (two independent code reviews):
 # missing here even though check() below runs the same suite the release
 # PKGBUILD does. Without python-pyusb, pyg7 imports usb.core at module
 # level, so the suite can't even be collected in a clean chroot; without

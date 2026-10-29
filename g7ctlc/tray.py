@@ -286,8 +286,8 @@ class TrayIcon(QSystemTrayIcon):
         self.main_window.activateWindow()
 
     def _quit(self) -> None:
-        # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps,
-        # independently), fixed exactly the way app.py's own _shutdown()
+        # REAL BUG, found 2026-09-17 (two independent
+        # code reviews), fixed exactly the way app.py's own _shutdown()
         # comment already specified but deferred: "the real fix would be
         # confirming with the user before quitting at all while a sync is
         # in flight (the same pattern Sync Now itself already asks for)."

@@ -251,7 +251,7 @@ class VibrationTest(unittest.TestCase):
             vibration.set_value(FakeSession(), "left_trigger_flags", -1)
 
     def test_flags_string_typo_rejected(self):
-        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): the string-token
+        # REAL BUG, found 2026-09-18 (a code review): the string-token
         # path used to check only whether a token was in the true set --
         # any other string, including a typo like "onn", silently meant
         # False rather than being rejected. `g7ctl vibration-set
@@ -307,7 +307,7 @@ class StickWriteTest(unittest.TestCase):
             self.assertEqual(sess.only_payload()[-1], expected)
 
     def test_unknown_trajectory_is_rejected_not_silently_circle(self):
-        # REAL BUG, found 2026-09-17 (Sol's bug-sweep): this used to treat
+        # REAL BUG, found 2026-09-17 (a code review): this used to treat
         # ANY string that wasn't exactly "raw" as "circle" -- a typo
         # ("rew", "Circl") became a real, wrong write instead of a
         # rejected input.
@@ -600,8 +600,8 @@ class MotionWriteTest(unittest.TestCase):
         self.assertEqual(sess.only_payload()[-1], 0x1F)
 
     def test_clearing_activate_button_encodes_the_unbound_sentinel(self):
-        # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps,
-        # independently): set_value() used to call resolve_keycode(value)
+        # REAL BUG, found 2026-09-17 (two independent
+        # code reviews): set_value() used to call resolve_keycode(value)
         # directly, which crashes on a bare None (it calls .lower() on its
         # argument). state.py's _motion_steps() worked around that by
         # never calling set_value() with None at all -- so clearing this
@@ -690,7 +690,7 @@ class DpadOptionsTest(unittest.TestCase):
         self.assertEqual(sess.only_payload()[-1], 0x00)
 
     def test_diagonal_lock_rejects_a_typo_instead_of_silently_writing_false(self):
-        # REAL BUG, found 2026-09-17 (Sol's bug-sweep): values.boolean()
+        # REAL BUG, found 2026-09-17 (a code review): values.boolean()
         # used to return False for ANY string not in the true set -- a
         # typo'd "flase"/"onn" (or an unrelated word) became a real, wrong
         # write to persistent device config instead of a rejected input.

@@ -125,7 +125,7 @@ class SticksViewRoundTripTest(unittest.TestCase):
         self.assertTrue(left.direction_box.isHidden())
 
     def test_editing_left_stick_does_not_remap_right_stick_output(self):
-        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): _StickSideWidget
+        # REAL BUG, found 2026-09-17 (a code review): _StickSideWidget
         # had no idea which side it represented, so its output_mode display
         # fallback for an unconfigured (None) value was hardcoded to
         # "left_stick" for BOTH instances. SticksView._on_edit() sweeps
@@ -155,7 +155,7 @@ class SticksViewRoundTripTest(unittest.TestCase):
             "an untouched field on the same widget must not gain a value either")
 
     def test_switching_between_named_presets_refreshes_the_displayed_points(self):
-        # REAL BUG, found 2026-09-17 (Astra's bug-sweep):
+        # REAL BUG, found 2026-09-17 (a code review):
         # _update_curve_points_enabled() used to only update _last_preset
         # bookkeeping when switching between two NAMED presets -- the
         # combo correctly showed "Concave" but curve_points/curve_editor
@@ -313,7 +313,7 @@ class VibrationViewRoundTripTest(unittest.TestCase):
         self.assertEqual(view.sliders["left_grip"].value(), "50")  # nearest stop to 43
         self.assertEqual(state["vibration"]["left_grip"], 43, "load_state() must not rewrite the value it was given")
 
-        # Corrected 2026-09-17 (real bug, found by Astra's bug-sweep): this
+        # Corrected 2026-09-17 (real bug, found by a code review): this
         # used to call view._on_edit() directly and assert THAT alone
         # normalizes the value -- but _on_edit() firing at all used to be
         # treated as equivalent to "the slider was touched," which is
@@ -347,7 +347,7 @@ class VibrationViewRoundTripTest(unittest.TestCase):
         self.assertTrue(state["vibration"]["right_trigger_force"])  # the real edit still landed
 
     def test_first_edit_after_load_writes_immediately(self):
-        # REAL BUG, found 2026-09-18 (Sol's bug-sweep) -- a regression this
+        # REAL BUG, found 2026-09-18 (a code review) -- a regression this
         # same fix introduced (2026-09-17, see the class docstring above):
         # valueChanged connects _on_edit BEFORE _mark_slider_touched, and Qt
         # fires same-signal slots in connection order. So the FIRST edit
@@ -417,7 +417,7 @@ class SettingsViewRoundTripTest(unittest.TestCase):
         self.assertEqual(state["dock_led_brightness"], 0)
 
     def test_untouched_off_scale_brightness_survives_an_unrelated_edit(self):
-        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): toggling
+        # REAL BUG, found 2026-09-17 (a code review): toggling
         # auto_on_off used to re-derive dock_led_brightness from the
         # combo's current (coarse, nearest-stop) selection too, silently
         # rounding an off-scale exact value even though nothing about
@@ -434,7 +434,7 @@ class SettingsViewRoundTripTest(unittest.TestCase):
                           "an untouched brightness value must survive an unrelated edit")
 
     def test_first_edit_after_load_writes_immediately(self):
-        # REAL BUG, found 2026-09-18 (Sol's bug-sweep) -- same regression and
+        # REAL BUG, found 2026-09-18 (a code review) -- same regression and
         # same cause as VibrationViewRoundTripTest's identically-named test;
         # see its comment. currentIndexChanged connects _on_edit BEFORE
         # _mark_brightness_touched, so the first edit after a load is
@@ -963,7 +963,7 @@ class MotionViewRoundTripTest(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_custom_curve_points_survive_an_unrelated_edit(self):
-        # REAL BUG, found 2026-09-18 (Sol's bug-sweep): save_into() used to
+        # REAL BUG, found 2026-09-18 (a code review): save_into() used to
         # set curve["points"] = None UNCONDITIONALLY on every edit --
         # actively discarding real custom points a device read may have
         # successfully decoded (pyg7.motion.decode_settings() does return

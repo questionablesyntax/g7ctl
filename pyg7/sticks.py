@@ -161,7 +161,7 @@ def set_value(session: VendorSession, side: str, setting: str, value: SettingVal
     prefix = prefix_sticks(profile)
 
     if setting == "trajectory":
-        # REAL BUG, found 2026-09-17 (Sol's bug-sweep): this used to
+        # REAL BUG, found 2026-09-17 (a code review): this used to
         # accept exact "raw" and silently treat EVERY other string as
         # "circle" -- a typo ("rew", "Circl") became a real, wrong write
         # instead of a rejected input. Only two values exist on the wire

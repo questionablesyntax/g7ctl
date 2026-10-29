@@ -123,7 +123,7 @@ class _StickSideWidget(CategorySideWidget):
     def __init__(
         self, side: str, palette: Palette = DARK_PALETTE, parent: Optional[QWidget] = None,
     ) -> None:
-        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): this widget used
+        # REAL BUG, found 2026-09-17 (a code review): this widget used
         # to have no idea which side it represented at all, and
         # _load_fields()'s output_mode fallback was hardcoded to
         # "left_stick" unconditionally -- correct for the left instance,
@@ -498,7 +498,7 @@ class _StickSideWidget(CategorySideWidget):
             seed = preset_points(self._last_preset) or preset_points("standard")
             self.curve_points.load(seed)
         if not custom:
-            # REAL BUG, found 2026-09-17 (Astra's bug-sweep): this branch
+            # REAL BUG, found 2026-09-17 (a code review): this branch
             # used to only update _last_preset bookkeeping -- switching
             # between two NAMED presets (e.g. Standard -> Concave) never
             # touched curve_points/curve_editor at all, so the graph kept
@@ -613,7 +613,7 @@ class _StickSideWidget(CategorySideWidget):
         self._sync_curve_editor()
 
     def _mark_output_mode_configured(self, *_args: object) -> None:
-        # REAL BUG, found 2026-09-17 (Astra's bug-sweep), root cause traced
+        # REAL BUG, found 2026-09-17 (a code review), root cause traced
         # further here after the first, insufficient fix attempt: making
         # the DISPLAY fallback side-aware (right stick shows "right_stick"
         # instead of "left_stick" when unconfigured) stopped the WRONG

@@ -442,7 +442,7 @@ def find_writable_device(
     (device, via_dongle) or (None, False).
 
     `bus`/`port_numbers`, if given, restrict the scan to devices on that
-    exact physical USB port. REAL BUG, found 2026-09-18 (Sol's bug-sweep,
+    exact physical USB port. REAL BUG, found 2026-09-18 (a code review,
     reproduced with two fake devices): without this, switch_to_xid()'s
     re-enumeration loop called this with no scoping at all, so with two
     controllers attached -- one being handshaken off PID_HID, a second
@@ -694,8 +694,8 @@ def switch_to_xid(timeout_s: float = 10.0,
     try:
         usb.util.claim_interface(dev, IFACE)
     except Exception:
-        # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps,
-        # independently), same shape and same fix as VendorSession's own
+        # REAL BUG, found 2026-09-17 (two independent
+        # code reviews), same shape and same fix as VendorSession's own
         # __enter__ (session.py): claim_interface() used to sit BEFORE the
         # try/finally that handles cleanup, so a claim failure right after
         # a successful detach skipped that finally block entirely, leaving
@@ -744,8 +744,8 @@ def switch_to_xid(timeout_s: float = 10.0,
         # immediately and every read after it fails. Waiting for interface
         # 1 to stop being HID waits for the thing that actually changes.
         #
-        # bus/port_numbers scoping: REAL BUG, found 2026-09-18 (Sol's
-        # bug-sweep). An unscoped call here returns whichever writable
+        # bus/port_numbers scoping: REAL BUG, found 2026-09-18 (a code
+        # review). An unscoped call here returns whichever writable
         # device this VID-wide scan sees FIRST -- with a second controller
         # already sitting writable while this one is still mid-handshake,
         # that could be the wrong device entirely, and the caller would

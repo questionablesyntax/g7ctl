@@ -105,8 +105,8 @@ class ButtonsViewRoundTripTest(unittest.TestCase):
         # The flip side: selecting "(Default)" must genuinely register as a
         # reset, not just look like one.
         #
-        # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps,
-        # independently): this test used to assert only
+        # REAL BUG, found 2026-09-17 (two independent
+        # code reviews): this test used to assert only
         # `assertIsNone(state["buttons"]["default"].get("a"))`, which passes
         # identically whether "a" is present with value None OR missing from
         # the dict entirely -- so it kept passing right through the actual

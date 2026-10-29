@@ -96,7 +96,7 @@ DEFAULT_INTERVAL = 0.316   # matches the app's observed heartbeat cadence
 # individual lines don't need the pre/post heartbeat sandwich _wrapped_write()
 # uses for a standalone invocation -- see _dispatch_batch_args().
 BATCH_HEARTBEAT_INTERVAL = 0.25   # matches g7ctlc/watcher.py's cadence
-# REAL BUG, found 2026-09-17 (Astra's bug-sweep): "diag" was missing here.
+# REAL BUG, found 2026-09-17 (a code review): "diag" was missing here.
 # It's handled entirely outside _dispatch()'s chain (in main() itself, not
 # _handle_setting_write/_handle_state_command/_handle_raw), so a batch
 # script line calling it fell through to _dispatch()'s own
@@ -138,7 +138,7 @@ class _NonExitingArgumentParser(argparse.ArgumentParser):
 def _non_negative_int(s: str) -> int:
     """argparse `type=` for --pre-heartbeats/--post-heartbeats.
 
-    REAL BUG, found 2026-09-18 (Sol's bug-sweep): plain `type=int` accepts
+    REAL BUG, found 2026-09-18 (a code review): plain `type=int` accepts
     any signed value, including negative counts. A negative heartbeat count
     silently suppressed the corresponding safety heartbeat entirely (range()
     on a negative count just doesn't loop) rather than being rejected --
@@ -152,7 +152,7 @@ def _non_negative_int(s: str) -> int:
 def _non_negative_float(s: str) -> float:
     """argparse `type=` for --interval.
 
-    REAL BUG, found 2026-09-18 (Sol's bug-sweep): plain `type=float` accepts
+    REAL BUG, found 2026-09-18 (a code review): plain `type=float` accepts
     a negative interval. `_wrapped_write()` does the persistent write BEFORE
     the post-heartbeat sleep -- with e.g. `--pre-heartbeats 0
     --post-heartbeats 1 --interval -1`, sleep(-1) raised ValueError only
@@ -718,7 +718,7 @@ def _connect_session(min_interval: float = HANDSHAKE_MIN_INTERVAL):
         # service CMD_READ yet -- see VendorSession.settle().
         #
         # Two-tier, not a single settle()+probe: REAL BUG, found 2026-09-18
-        # (Sol's bug-sweep). ROADMAP.md item 54's 2026-09-02 root-cause
+        # (a code review). ROADMAP.md item 54's 2026-09-02 root-cause
         # investigation found the FULL warmup (SETTLE_HEARTBEATS, 24
         # heartbeats/6s, zero reads) before the first real read is itself
         # what destabilizes the connection right after a live profile
@@ -821,8 +821,8 @@ def _run_batch_lines(sess: VendorSession, lines: Iterable[str], *, line_parser: 
         try:
             tokens = shlex.split(raw, comments=True)
         except ValueError as exc:
-            # REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps,
-            # independently): shlex.split() used to run OUTSIDE any try
+            # REAL BUG, found 2026-09-17 (two independent
+            # code reviews): shlex.split() used to run OUTSIDE any try
             # block, so an unmatched quote's ValueError escaped the normal
             # per-line error handling entirely -- aborting the whole batch
             # (dry-run and REPL alike) even under --continue-on-error,
@@ -844,7 +844,7 @@ def _run_batch_lines(sess: VendorSession, lines: Iterable[str], *, line_parser: 
             _run_batch_line(sess, args)
             ok += 1
         except usb.core.USBError:
-            # REAL BUG, found 2026-09-17 (Astra's bug-sweep): usb.core.USBError
+            # REAL BUG, found 2026-09-17 (a code review): usb.core.USBError
             # is a direct OSError subclass (confirmed via its own __mro__),
             # so the comment this replaces -- "deliberately NOT caught here...
             # it propagates" -- was simply false: the broad `except (...,
@@ -876,7 +876,7 @@ def _run_batch_repl(sess: VendorSession, line_parser: argparse.ArgumentParser, i
     print("Type a command (e.g. 'remap a f12'), 'help' to list subcommands, "
           "'exit' or Ctrl-D to quit.\n")
 
-    # REAL BUG, found 2026-09-17 (Astra's bug-sweep): input() blocks with no
+    # REAL BUG, found 2026-09-17 (a code review): input() blocks with no
     # heartbeat running concurrently -- a real, documented session
     # requirement (see session.py's own module docstring: a write with no
     # heartbeat before/after gets silently discarded, and the device

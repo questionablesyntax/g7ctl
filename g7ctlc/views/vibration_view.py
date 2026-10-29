@@ -198,7 +198,7 @@ class VibrationView(QWidget):
         self._loaded_levels = {key: vib.get(key) for key in self.sliders}
 
     def _mark_slider_touched(self, key: str) -> None:
-        # REAL BUG, found 2026-09-17 (Astra's bug-sweep): _on_edit() used to
+        # REAL BUG, found 2026-09-17 (a code review): _on_edit() used to
         # unconditionally re-derive EVERY vibration key from its control's
         # CURRENT position on any edit anywhere in this tab -- toggling an
         # unrelated Force/Sync checkbox (or moving a DIFFERENT level

@@ -219,7 +219,7 @@ def _resolve_keycode_or_unbound(value: Optional[str]) -> int:
     0xFF, the same sentinel decode_settings() above already reads back as
     unconfigured for both activate_button and every direction setting.
 
-    REAL BUG, found 2026-09-17 (Astra and Sol's bug-sweeps, independently):
+    REAL BUG, found 2026-09-17 (two independent code reviews):
     set_value() used to call resolve_keycode(value) directly for these two
     cases, which crashes outright on a bare None (it calls .lower() on its
     argument) -- so state.py's _motion_steps() worked around that the only
