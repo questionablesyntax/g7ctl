@@ -427,10 +427,13 @@ error, it writes something unintended to a device's persistent config.
 
 ## Contributors
 
-v0.2.1 exists because people on Reddit reported bugs on hardware this project
-had never seen and helped test the fixes against their own controllers —
-[@tyrohellion](https://github.com/tyrohellion), GenderGambler, Ninja_Daemon117,
-OuToU, and Rokofur. Thank you.
+Development on this project exists because people reported bugs on hardware
+it had never seen and helped test the fixes against their own controllers.
+From Reddit: [@tyrohellion](https://github.com/tyrohellion), GenderGambler,
+Ninja_Daemon117, OuToU, and Rokofur. From GitHub:
+[@w33tti](https://github.com/w33tti), who found a bug in the Shift layer's
+import and export and filed a pull request for it
+([#2](https://github.com/questionablesyntax/g7ctl/pull/2)). Thank you.
 
 ## License
 
