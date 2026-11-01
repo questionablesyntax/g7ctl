@@ -54,6 +54,8 @@ class Rail(QWidget):
     readRequested = pyqtSignal()
     importRequested = pyqtSignal()
     exportRequested = pyqtSignal()
+    importSharedRequested = pyqtSignal()
+    exportSharedRequested = pyqtSignal()
     appPreferencesRequested = pyqtSignal()
 
     def __init__(self, palette: Palette, icon_loader: LucideIconLoader, parent: QWidget | None = None) -> None:
@@ -297,11 +299,22 @@ class Rail(QWidget):
     def _build_snapshots_menu(self, icon_loader: LucideIconLoader, palette: Palette) -> QMenu:
         menu = QMenu(self)
         self._import_action = menu.addAction(icon_loader.icon("file-up", 16, "text_primary", palette), "Import…")
-        self._import_action.setToolTip("Load a previously exported JSON snapshot file")
+        self._import_action.setToolTip(
+            "Load a previously exported JSON snapshot file. The Shift layer stays as the controller has it.")
         self._import_action.triggered.connect(self.importRequested.emit)
         self._export_action = menu.addAction(icon_loader.icon("file-down", 16, "text_primary", palette), "Export…")
-        self._export_action.setToolTip("Save the current state to a JSON snapshot file")
+        self._export_action.setToolTip("Save the current profile to a JSON snapshot file, without the Shift layer")
         self._export_action.triggered.connect(self.exportRequested.emit)
+        menu.addSeparator()
+        self._import_shared_action = menu.addAction(
+            icon_loader.icon("file-up", 16, "text_primary", palette), "Import Shared Profile…")
+        self._import_shared_action.setToolTip(
+            "Load only the Shift layer, which all four profiles share. Nothing else changes.")
+        self._import_shared_action.triggered.connect(self.importSharedRequested.emit)
+        self._export_shared_action = menu.addAction(
+            icon_loader.icon("file-down", 16, "text_primary", palette), "Export Shared Profile…")
+        self._export_shared_action.setToolTip("Save only the Shift layer, which all four profiles share")
+        self._export_shared_action.triggered.connect(self.exportSharedRequested.emit)
         return menu
 
     def wire_help_menu(self, build: Callable[[QMenu], None]) -> None:

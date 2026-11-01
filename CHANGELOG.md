@@ -6,6 +6,18 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Export and Import in the desktop app no longer carry the Shift layer.** All
+  four profiles share one Shift layer, so a snapshot of a single profile used to
+  rewrite it for every profile when imported and synced. Exports now leave it
+  out, and importing keeps the Shift layer the controller has. A snapshot saved
+  by an older version that contains one still imports, with that part ignored.
+  The Shift layer has its own **Export Shared Profile… / Import Shared Profile…**
+  in the Snapshots menu. Whole-state files remain `g7ctl read-state --save` and
+  `g7ctl write-state`. Thanks to @w33tti for finding this and for the design in
+  PR #2, which this follows.
+
 ## [0.4.1] - 2026-10-29
 
 ### Fixed

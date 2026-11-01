@@ -12,6 +12,7 @@ comments; only which widget it reaches has changed. Pages themselves
 un-reskinned views -- that's A4's job.
 """
 import copy
+import json
 import logging
 import os
 from contextlib import contextmanager
@@ -69,6 +70,10 @@ _GEOMETRY_PATH = (
 # Shift layer is not a fifth profile, and anything that mistakes it for
 # one would send profile=5 somewhere that expects 1-4.
 SHIFT_VIEW = "shift"
+
+# The Shift layer's own export file (a game-profile snapshot never carries it).
+_SHARED_PROFILE_FORMAT = "g7ctlc-shared-profile"
+_SHARED_PROFILE_VERSION = 1
 
 _LEGACY_PROFILES_DIR = (
     Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
@@ -378,6 +383,8 @@ class MainWindow(QMainWindow):
         self.rail.readRequested.connect(lambda: self.request_read_from_device(force_dock_read=True))
         self.rail.importRequested.connect(self._on_import)
         self.rail.exportRequested.connect(self._on_export)
+        self.rail.importSharedRequested.connect(self._on_import_shared_profile)
+        self.rail.exportSharedRequested.connect(self._on_export_shared_profile)
         self.rail.appPreferencesRequested.connect(self._on_app_preferences)
         self.rail.wire_help_menu(self._build_help_menu)
         # Aliases, same reasoning as the ownership bar above.
@@ -2089,8 +2096,15 @@ class MainWindow(QMainWindow):
             )
         if not path:
             return
+        # The Shift layer is one device-global table shared by all four
+        # profiles (PROTOCOL.md), so it never travels with a single profile's
+        # file: importing that file later and pressing Sync Now would rewrite
+        # it for every profile. It has its own file, see
+        # _on_export_shared_profile(). Copied so self._state keeps its Shift.
+        game_state = copy.deepcopy(self._state)
+        game_state["buttons"]["shift"] = {}
         try:
-            state_mod.save_state(path, self._state)
+            state_mod.save_state(path, game_state)
         except (state_mod.StateError, OSError) as exc:
             QMessageBox.critical(self, "Export failed", str(exc))
             return
@@ -2112,6 +2126,12 @@ class MainWindow(QMainWindow):
             return
         try:
             imported = state_mod.load_state(path)
+            # Snapshots exported before the Shift layer got its own file carry
+            # one. It is dropped for the same reason _on_export() doesn't
+            # write it; the device's Shift layer, as last read, stays.
+            shift_ignored = bool(imported["buttons"].get("shift"))
+            imported["buttons"]["shift"] = copy.deepcopy(self._state["buttons"].get("shift", {}))
+            state_mod.validate_state(imported)
         except (state_mod.StateError, OSError, ValueError) as exc:
             QMessageBox.critical(self, "Import failed", str(exc))
             return
@@ -2124,7 +2144,84 @@ class MainWindow(QMainWindow):
         self._set_dirty(True)
         log.info("Imported %s (connection=%s, auto_released=%s)",
                  Path(path).name, self._connection_state, self._auto_released)
-        self.status_label.setText(f"Imported {Path(path).name} -- not yet synced")
+        note = ("; its Shift layer was ignored (use Import Shared Profile)" if shift_ignored else "")
+        self.status_label.setText(f"Imported {Path(path).name} -- not yet synced{note}")
+
+    def _on_export_shared_profile(self) -> None:
+        """The Shift layer on its own: the one table all four profiles share."""
+        if self._syncing:
+            return
+        if not self._state_confirmed:
+            QMessageBox.warning(
+                self, "Export unavailable",
+                "The current settings haven't been confirmed against the controller "
+                "(or an import) yet -- read from the device first.",
+            )
+            return
+        with self._file_dialog():
+            path, _filter = QFileDialog.getSaveFileName(
+                self, "Export Shared Profile", self._default_snapshot_dir(), "JSON files (*.json)",
+            )
+        if not path:
+            return
+        shared_profile = {
+            "format": _SHARED_PROFILE_FORMAT,
+            "version": _SHARED_PROFILE_VERSION,
+            "shift": copy.deepcopy(self._state["buttons"].get("shift", {})),
+        }
+        try:
+            with open(path, "w") as f:
+                json.dump(shared_profile, f, indent=2)
+                f.write("\n")
+        except OSError as exc:
+            QMessageBox.critical(self, "Export failed", str(exc))
+            return
+        self.status_label.setText(f"Exported Shared Profile to {Path(path).name}")
+
+    def _on_import_shared_profile(self) -> None:
+        """Replaces the Shift layer only; every per-profile setting stays as
+        it is. Needs a confirmed state for the same reason Sync Now does: on
+        an unread window the rest of self._state is defaults, and this
+        import must not be the thing that makes them look real."""
+        if self._syncing:
+            return
+        if not self._state_confirmed:
+            QMessageBox.warning(
+                self, "Import unavailable",
+                "The current settings haven't been confirmed against the controller "
+                "(or an import) yet -- read from the device first.",
+            )
+            return
+        with self._file_dialog():
+            path, _filter = QFileDialog.getOpenFileName(
+                self, "Import Shared Profile", self._default_snapshot_dir(), "JSON files (*.json)",
+            )
+        if not path:
+            return
+        try:
+            with open(path) as f:
+                shared_profile = json.load(f)
+            if not isinstance(shared_profile, dict) or shared_profile.get("format") != _SHARED_PROFILE_FORMAT:
+                raise state_mod.StateError("not a Shared Profile file")
+            if shared_profile.get("version") != _SHARED_PROFILE_VERSION:
+                raise state_mod.StateError(
+                    f"unsupported Shared Profile version {shared_profile.get('version')!r}")
+            shift = shared_profile.get("shift")
+            if not isinstance(shift, dict):
+                raise state_mod.StateError("the Shared Profile's shift section must be an object")
+            candidate = copy.deepcopy(self._state)
+            candidate["buttons"]["shift"] = shift
+            state_mod.validate_state(candidate)
+        except (state_mod.StateError, OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Import failed", str(exc))
+            return
+        self._state["buttons"]["shift"] = copy.deepcopy(shift)
+        self._state_imported = True
+        self._load_views_from_state(imported=True)
+        self._refresh_sync_btn()
+        self._refresh_confirmed_display()
+        self._set_dirty(True)
+        self.status_label.setText(f"Imported Shared Profile {Path(path).name} -- not yet synced")
 
     # --- Help menu -----------------------------------------------------
 

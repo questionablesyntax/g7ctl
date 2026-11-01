@@ -193,9 +193,19 @@ the window.
   unchanged sync is effectively a no-op instead of rewriting ~30 settings.
 - **"Read from controller"** does the same read on demand — useful for catching
   drift from the on-device remap shortcuts below.
-- **"Export…" / "Import…"** save or load the entire current state as a JSON
-  snapshot at a path you choose. An imported state is marked as not read from
-  your controller until you read it or write it.
+- **"Export…" / "Import…"** save or load the current profile as a JSON snapshot
+  at a path you choose. The Shift layer is not part of it: all four profiles
+  share one Shift layer, so a snapshot of one profile never carries it, and
+  importing one leaves the controller's Shift layer as it was last read. A
+  snapshot saved by an older version that does contain a Shift layer still
+  imports, with that part ignored (the file is not changed).
+- **"Export Shared Profile…" / "Import Shared Profile…"** do the same for the
+  Shift layer alone. An import replaces only that layer; nothing else changes.
+  Both need the settings to have been read from the controller first. Whole-state
+  files, Shift layer included, are still `g7ctl read-state --save` and
+  `g7ctl write-state`.
+- An imported state, or Shift layer, is marked as not read from your controller
+  until you read it or write it.
 - **Automatic release on unfocus** — the controller goes back to being a gamepad
   whenever the window isn't focused, and reconnects when it is. A sync or read
   in flight defers the release until it finishes, so tabbing away mid-write

@@ -1334,3 +1334,180 @@ class LaunchPageTest(unittest.TestCase):
         w = MainWindow()
         self.assertIs(w.pages.currentWidget(), w.buttons_view)
         self.assertEqual(w.rail.current_page(), "buttons")
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class ShiftLayerHasItsOwnFileTest(unittest.TestCase):
+    """The Shift layer is one table shared by all four profiles, so a snapshot
+    of one profile must not carry it: importing that snapshot and pressing
+    Sync Now would rewrite the Shift layer for every profile. Game-profile
+    Export/Import leave it alone; Export/Import Shared Profile move only it.
+    (Reported as g7ctl PR #2 by w33tti, against the pre-0.4.0 window.)
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
+    def _path(self, name):
+        return os.path.join(self._tmp.name, name)
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+        w = MainWindow()
+        w.set_connection_state("connected")
+        read = state_mod.default_state_dict("read")
+        read["buttons"]["shift"] = {"a": "f12", "l4": "shift"}
+        w.set_read_finished(True, "read ok", read)
+        return w
+
+    def _write_json(self, name, payload):
+        import json
+        path = self._path(name)
+        with open(path, "w") as f:
+            json.dump(payload, f)
+        return path
+
+    def _export_game(self, w, name="game.json"):
+        path = self._path(name)
+        with mock.patch("g7ctlc.main_window.QFileDialog.getSaveFileName", return_value=(path, "")):
+            w._on_export()
+        return path
+
+    def _import_game(self, w, path):
+        with mock.patch("g7ctlc.main_window.QFileDialog.getOpenFileName", return_value=(path, "")):
+            w._on_import()
+
+    def _import_shared(self, w, path):
+        with mock.patch("g7ctlc.main_window.QFileDialog.getOpenFileName", return_value=(path, "")):
+            w._on_import_shared_profile()
+
+    def _snapshot_with_shift(self, shift):
+        snap = state_mod.default_state_dict("snapshot")
+        snap["buttons"]["default"]["b"] = "f11"
+        snap["buttons"]["shift"] = shift
+        return snap
+
+    def test_game_export_has_no_shift_layer_and_leaves_the_live_one_alone(self):
+        import json
+        w = self._window()
+        path = self._export_game(w)
+        with open(path) as f:
+            exported = json.load(f)
+        self.assertEqual(exported["buttons"]["shift"], {})
+        self.assertEqual(w._state["buttons"]["shift"], {"a": "f12", "l4": "shift"})
+
+    def test_game_import_keeps_the_controllers_shift_layer(self):
+        w = self._window()
+        path = self._write_json("old.json", self._snapshot_with_shift({"a": "f1"}))
+        self._import_game(w, path)
+        self.assertEqual(w._state["buttons"]["default"]["b"], "f11")
+        self.assertEqual(w._state["buttons"]["shift"], {"a": "f12", "l4": "shift"})
+
+    def test_game_import_says_when_it_ignored_a_shift_layer(self):
+        w = self._window()
+        self._import_game(w, self._write_json("old.json", self._snapshot_with_shift({"a": "f1"})))
+        self.assertIn("Shift layer was ignored", w.status_label.text())
+        self._import_game(w, self._write_json("new.json", self._snapshot_with_shift({})))
+        self.assertNotIn("ignored", w.status_label.text())
+
+    def test_a_game_import_never_plans_a_shift_write(self):
+        # The regression this class exists for, end to end: a snapshot whose
+        # Shift layer disagrees with the controller's must not turn into a
+        # Shift write when the imported state is synced.
+        w = self._window()
+        device = copy_of_state(w._state)
+        self._import_game(w, self._write_json("old.json", self._snapshot_with_shift({"a": "f1"})))
+        steps, _skipped = state_mod._build_steps(w._state, baseline=device)
+        self.assertEqual([label for label, _op in steps if "(shift)" in label], [])
+
+    def test_shared_export_holds_only_the_shift_layer(self):
+        import json
+        w = self._window()
+        path = self._path("shared.json")
+        with mock.patch("g7ctlc.main_window.QFileDialog.getSaveFileName", return_value=(path, "")):
+            w._on_export_shared_profile()
+        with open(path) as f:
+            exported = json.load(f)
+        self.assertEqual(exported, {"format": "g7ctlc-shared-profile", "version": 1,
+                                    "shift": {"a": "f12", "l4": "shift"}})
+
+    def test_shared_import_changes_only_the_shift_layer(self):
+        w = self._window()
+        w._state["buttons"]["default"]["b"] = "f11"
+        before = copy_of_state(w._state)
+        path = self._write_json("shared.json", {
+            "format": "g7ctlc-shared-profile", "version": 1, "shift": {"a": "f1"}})
+        self._import_shared(w, path)
+        expected = copy_of_state(before)
+        expected["buttons"]["shift"] = {"a": "f1"}
+        self.assertEqual(w._state, expected)
+        self.assertTrue(w._dirty)
+        self.assertTrue(w._state_imported)
+        self.assertIn("not yet synced", w.status_label.text())
+
+    def test_a_bad_shared_file_is_refused_and_changes_nothing(self):
+        good = {"format": "g7ctlc-shared-profile", "version": 1, "shift": {}}
+        cases = {
+            "wrong format": dict(good, format="something-else"),
+            "wrong version": dict(good, version=999),
+            "shift not an object": dict(good, shift=["a"]),
+            "unknown binding": dict(good, shift={"a": "definitely_not_a_keycode"}),
+            "not an object": ["shift"],
+        }
+        for name, payload in cases.items():
+            with self.subTest(name):
+                w = self._window()
+                before = copy_of_state(w._state)
+                with mock.patch("g7ctlc.main_window.QMessageBox.critical") as critical:
+                    self._import_shared(w, self._write_json("bad.json", payload))
+                critical.assert_called_once()
+                self.assertEqual(w._state, before)
+
+    def test_a_shared_file_that_is_not_json_is_refused(self):
+        w = self._window()
+        before = copy_of_state(w._state)
+        path = self._path("garbage.json")
+        with open(path, "w") as f:
+            f.write("not json")
+        with mock.patch("g7ctlc.main_window.QMessageBox.critical") as critical:
+            self._import_shared(w, path)
+        critical.assert_called_once()
+        self.assertEqual(w._state, before)
+
+    def test_shared_import_and_export_wait_for_a_confirmed_state(self):
+        w = self._window()
+        w._state_confirmed = False
+        with mock.patch("g7ctlc.main_window.QFileDialog.getOpenFileName") as open_dialog, mock.patch(
+            "g7ctlc.main_window.QFileDialog.getSaveFileName"
+        ) as save_dialog, mock.patch("g7ctlc.main_window.QMessageBox.warning") as warning:
+            w._on_import_shared_profile()
+            w._on_export_shared_profile()
+        self.assertEqual(warning.call_count, 2)
+        open_dialog.assert_not_called()
+        save_dialog.assert_not_called()
+
+    def test_shared_import_and_export_do_nothing_mid_sync(self):
+        w = self._window()
+        original = w._state
+        with mock.patch.object(w, "_confirm", return_value=True):
+            w.request_sync_now()
+        with mock.patch("g7ctlc.main_window.QFileDialog.getOpenFileName") as open_dialog, mock.patch(
+            "g7ctlc.main_window.QFileDialog.getSaveFileName"
+        ) as save_dialog:
+            w._on_import_shared_profile()
+            w._on_export_shared_profile()
+        open_dialog.assert_not_called()
+        save_dialog.assert_not_called()
+        self.assertIs(w._state, original)
+
+
+def copy_of_state(state):
+    import copy
+    return copy.deepcopy(state)

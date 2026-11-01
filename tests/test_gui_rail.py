@@ -142,12 +142,18 @@ class RailFooterSignalsTest(unittest.TestCase):
         imports, exports = [], []
         rail.importRequested.connect(lambda: imports.append(1))
         rail.exportRequested.connect(lambda: exports.append(1))
-        labels = [a.text() for a in rail.snapshots_button.menu().actions()]
-        self.assertEqual(labels, ["Import…", "Export…"])
-        rail.snapshots_button.menu().actions()[0].trigger()
-        rail.snapshots_button.menu().actions()[1].trigger()
+        shared_imports, shared_exports = [], []
+        rail.importSharedRequested.connect(lambda: shared_imports.append(1))
+        rail.exportSharedRequested.connect(lambda: shared_exports.append(1))
+        actions = [a for a in rail.snapshots_button.menu().actions() if not a.isSeparator()]
+        self.assertEqual([a.text() for a in actions], [
+            "Import…", "Export…", "Import Shared Profile…", "Export Shared Profile…"])
+        for action in actions:
+            action.trigger()
         self.assertEqual(imports, [1])
         self.assertEqual(exports, [1])
+        self.assertEqual(shared_imports, [1])
+        self.assertEqual(shared_exports, [1])
 
     def test_app_preferences_button_emits_its_signal(self):
         rail = self._rail()
