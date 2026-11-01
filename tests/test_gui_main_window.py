@@ -1566,6 +1566,7 @@ class WriteButtonsComeBackAfterAWriteTest(unittest.TestCase):
 
     def test_every_scope_can_be_written_again_after_the_review_sheet_is_cancelled(self):
         from PyQt6.QtWidgets import QDialog
+
         from pyg7.workflow import DraftRevision, prepare
         w = self._window()
         w._on_write_vibration_clicked()
