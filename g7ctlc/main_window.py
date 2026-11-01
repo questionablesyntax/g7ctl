@@ -1606,6 +1606,22 @@ class MainWindow(QMainWindow):
         self.ownership_bar.set_release_enabled(self._connection_state == "connected")
         self.rail.set_nav_enabled(True)
         self.import_export_btn.setEnabled(True)
+        # _lock_write_ui() disabled every scope's Write/Discard pair, and a
+        # write only refreshes the scopes it wrote (_finish_write_for_scope()).
+        # Without this a scope with unwritten edits that was NOT part of the
+        # write came back visible but greyed out (reported on Reddit
+        # 2026-11-01: edit Buttons and Motion, write Buttons only), and so
+        # did every scope after a review sheet was cancelled.
+        self._refresh_all_draft_uis()
+
+    def _refresh_all_draft_uis(self) -> None:
+        self._refresh_vibration_draft_ui()
+        self._refresh_dock_draft_ui()
+        self._refresh_triggers_draft_ui()
+        self._refresh_sticks_draft_ui()
+        self._refresh_motion_draft_ui()
+        self._refresh_buttons_draft_ui()
+        self._refresh_profile_draft_ui()
 
     def _start_execute(self, intents: list, baseline: dict) -> None:
         self._lock_write_ui()

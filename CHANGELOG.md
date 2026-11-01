@@ -18,6 +18,14 @@ adheres to [semantic versioning](https://semver.org/).
   `g7ctl write-state`. Thanks to @w33tti for finding this and for the design in
   PR #2, which this follows.
 
+### Fixed
+
+- **A page's Write button could stay greyed out with changes still pending.**
+  Edit two pages, write one, and the other page's Write button came back
+  disabled; cancelling the review screen left every page that way. They now
+  re-enable as soon as the write or review ends. Reported on Reddit by
+  GenderGambler.
+
 ## [0.4.1] - 2026-10-29
 
 ### Fixed

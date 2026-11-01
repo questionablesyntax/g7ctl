@@ -1511,3 +1511,70 @@ class ShiftLayerHasItsOwnFileTest(unittest.TestCase):
 def copy_of_state(state):
     import copy
     return copy.deepcopy(state)
+
+
+@unittest.skipIf(QApplication is None, "PyQt6 not installed")
+class WriteButtonsComeBackAfterAWriteTest(unittest.TestCase):
+    """_lock_write_ui() greys out every scope's Write/Discard pair for the
+    duration of a write, and only the scopes that were written used to get
+    refreshed afterwards. A scope that was edited but not part of the write
+    came back visible and permanently disabled (reported on Reddit
+    2026-11-01: change Buttons and Motion, write Buttons, and Motion's Write
+    button stays greyed out with a change still pending). Cancelling the
+    review sheet left every scope that way.
+    """
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self):
+        from g7ctlc.main_window import MainWindow
+        w = MainWindow()
+        w._state["controller_slot"] = 2
+        w._state["vibration"]["left_grip"] = 25
+        w._state.setdefault("motion", {"aim": {}, "tilt": {}})
+        w._state["motion"]["aim"]["sensitivity_scale"] = 50
+        w._state_confirmed = True
+        w._connection_state = "connected"
+        w._reset_vibration_draft()
+        w._reset_motion_draft()
+        w.vibration_view.load_state(w._state)
+        w.motion_view.load_state(w._state)
+        w.vibration_view.sliders["left_grip"].set_value("75")
+        w.motion_view.sides["aim"].sensitivity_scale.setValue(10)
+        return w
+
+    def test_an_unwritten_scope_can_still_be_written_after_another_scope_was(self):
+        from pyg7.field_spec import VIBRATION_LEVEL_FIELDS
+        from pyg7.workflow import ApprovedIntent, Classification, ExecutionResult, FieldOutcome, read_back
+        w = self._window()
+        w._on_write_vibration_clicked()
+        self.assertFalse(w.motion_write_btn.isEnabled())  # locked while the write is in flight
+
+        outcome = FieldOutcome(
+            ApprovedIntent(("vibration", "left_grip"), 75, VIBRATION_LEVEL_FIELDS["left_grip"], 2),
+            Classification.CLEAN, baseline_value=None, fresh_value=25)
+        rb = read_back(ExecutionResult(job_id="t", executed=(outcome,)), {"vibration": {"left_grip": 75}})
+        w.set_execute_finished(True, "Written.", rb)
+
+        self.assertEqual(w._vibration_draft.edit_count, 0)
+        self.assertEqual(w._motion_draft.edit_count, 1)
+        self.assertTrue(w.motion_write_btn.isEnabled())
+        self.assertTrue(w.motion_discard_btn.isEnabled())
+
+    def test_every_scope_can_be_written_again_after_the_review_sheet_is_cancelled(self):
+        from PyQt6.QtWidgets import QDialog
+        from pyg7.workflow import DraftRevision, prepare
+        w = self._window()
+        w._on_write_vibration_clicked()
+        job = prepare("t", DraftRevision("t", 1), 1, list(w._vibration_draft.to_approved_intents()),
+                      baseline_state={"vibration": {"left_grip": 25}},
+                      fresh_state={"vibration": {"left_grip": 25}})
+        with mock.patch("g7ctlc.main_window.ReviewSheet") as sheet_cls:
+            sheet_cls.return_value.exec.return_value = QDialog.DialogCode.Rejected
+            w.set_needs_review(job, {"vibration": {"left_grip": 25}})
+
+        self.assertTrue(w.vibration_write_btn.isEnabled())
+        self.assertTrue(w.motion_write_btn.isEnabled())
