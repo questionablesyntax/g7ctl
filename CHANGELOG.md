@@ -6,6 +6,8 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-02
+
 ### Changed
 
 - **Export and Import in the desktop app no longer carry the Shift layer.** All
