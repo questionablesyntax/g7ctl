@@ -33,6 +33,12 @@ adheres to [semantic versioning](https://semver.org/).
   set to. The register write itself was correct; writing it now also repairs
   three undocumented bytes the firmware needs alongside it, matching what
   GameSir Nexus's own write does. Reported on Reddit by GenderGambler.
+  **If a controller already has Output set to the broken value, re-apply it
+  once:** in the desktop app, set Output to a different value and Write,
+  then set it back and Write again -- the app only writes a setting that
+  changed since its last confirmed read, so Output has to actually change
+  to trigger the repair. `g7ctl motion-set` from the CLI always writes,
+  with no re-apply needed.
 
 - **The desktop app's editing profile selector didn't match the controller's
   active profile on connect.** Launching with the controller already on a
