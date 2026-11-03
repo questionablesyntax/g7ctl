@@ -163,6 +163,10 @@ class MainWindow(QMainWindow):
         self._connection_state = "disconnected"
         self._firmware = None
         self._active_profile = None
+        # Reset to False every time a connection is (re)established -- see
+        # _seed_editing_profile_from_active()'s own comment for why only
+        # the first active-profile report of a connection matters.
+        self._profile_seeded_this_connection = False
         self._syncing = False  # true while either a sync-to or read-from-device job is in flight
         # Set only when *we* released the device because the window lost
         # focus, so refocusing knows to reconnect. Kept distinct from the
@@ -789,10 +793,39 @@ class MainWindow(QMainWindow):
         The rail's switch chooses what you *edit*; this shows what you are
         *playing*. They are independent -- every category targets a
         profile explicitly, so editing Profile 2 while playing Profile 1
-        works correctly.
+        works correctly. See _seed_editing_profile_from_active()'s own
+        comment for the one-time exception, on a fresh connection only.
         """
         self._active_profile = slot
         self.rail.set_active_profile(slot)
+        self._seed_editing_profile_from_active(slot)
+
+    def _seed_editing_profile_from_active(self, slot: int) -> None:
+        """On a fresh connection's first known active profile, switch the
+        editing selection to match it, so launching the app finds the
+        controller's actual running profile already on screen instead of
+        always Profile 1 -- found 2026-11-02 verifying item 66's fix on a
+        controller that was already on Profile 4 (notes repo ROADMAP item
+        68). The active profile isn't known yet when _auto_read_on_connect()
+        fires (DeviceWatcher reports "connected" before its first
+        active-profile poll), so this corrects the editing selection just
+        after that first, briefly-wrong Profile 1 read completes, rather
+        than delaying the initial read itself.
+
+        Only the FIRST report of a connection does anything -- a later
+        physical profile switch (the user pressing the pad's own combo
+        mid-session) must not yank the editing view away from whatever
+        they are deliberately looking at. Editing and active stay
+        independently chosen after this one-time seed, same as
+        set_active_profile()'s own docstring already promises.
+        """
+        if self._profile_seeded_this_connection:
+            return
+        self._profile_seeded_this_connection = True
+        if self._connection_state != "connected" or slot == self._state.get("controller_slot"):
+            return
+        self._on_profile_changed(slot)
+        self._sync_profile_switch()
 
     def set_firmware(self, version: str) -> None:
         """Record the controller's firmware version, read once per
@@ -934,6 +967,7 @@ class MainWindow(QMainWindow):
             self.rail.read_button.setEnabled(not self._syncing)
             self.set_error("")  # a successful (re)connect supersedes any earlier error
             if not was_connected:
+                self._profile_seeded_this_connection = False
                 self._auto_read_on_connect()
         elif state == "paused":
             self.ownership_bar.set_release_enabled(True)

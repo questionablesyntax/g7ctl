@@ -139,7 +139,7 @@ class Rail(QWidget):
         if slot is None:
             self.on_controller_marker.setVisible(False)
             return
-        self._marker_label.setText(f"Profile {slot} is on the controller")
+        self._marker_label.setText(f"Profile {slot} is active")
         self.on_controller_marker.setVisible(True)
 
     def _on_profile_switch_changed(self, value: object) -> None:

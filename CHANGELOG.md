@@ -32,6 +32,12 @@ adheres to [semantic versioning](https://semver.org/).
   three undocumented bytes the firmware needs alongside it, matching what
   GameSir Nexus's own write does. Reported on Reddit by GenderGambler.
 
+- **The desktop app's editing profile selector didn't match the controller's
+  active profile on connect.** Launching with the controller already on a
+  profile other than 1 left the editor on Profile 1 until changed by hand,
+  so Sync Now could write to the wrong profile. It now seeds from the active
+  profile the first time a connection reports one, matching Nexus.
+
 ## [0.4.1] - 2026-10-29
 
 ### Fixed

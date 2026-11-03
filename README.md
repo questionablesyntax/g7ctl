@@ -176,7 +176,9 @@ the window.
   has a callout around the edge showing its current binding, with remapped ones
   highlighted. The Shift layer has its own page and uses the same drawing.
 - **No managed local profile list.** The device's own 4 profile slots are the
-  source of truth, picked directly via the "Profile" selector at the top left.
+  source of truth, picked directly via the "Profile" selector at the top left —
+  opens on whichever profile the controller is actively running, matching
+  GameSir Nexus's own behavior.
 - **Automatic reads** on every connect and every profile switch, so the GUI
   never sits there showing stale state after a binding was changed elsewhere.
   Skipped if you have unwritten local edits pending, rather than silently

@@ -705,11 +705,44 @@ class ActiveProfileMarkerTest(unittest.TestCase):
     def test_marking_does_not_change_the_selection(self):
         # set_active_profile() must not fire profileChanged -- that would
         # kick off a device read every time the poll noticed the same
-        # profile.
+        # profile. A disconnected window, matching every other test in
+        # this class -- see test_first_active_profile_report_seeds_the_
+        # editing_selection below for the connected, first-report case,
+        # where this item 68 (notes repo ROADMAP) exception applies.
         w = self._window()
         before = w.rail.profile_switch.value()
         w.set_active_profile(4)
         self.assertEqual(w.rail.profile_switch.value(), before)
+
+    def test_first_active_profile_report_seeds_the_editing_selection(self):
+        # Item 68 (notes repo ROADMAP), found verifying item 66's fix:
+        # launched with the controller already on Profile 4, the editing
+        # selector stayed on its default of 1 until changed by hand. The
+        # active profile isn't known at connect time (it arrives via a
+        # separate poll, slightly later -- see
+        # _seed_editing_profile_from_active()'s own comment), so this
+        # simulates that ordering: connect, let the inevitable first
+        # (wrong) read for Profile 1 land, THEN the active-profile report
+        # arrives and should correct the selection to 4.
+        w = self._window()
+        w.set_connection_state("connected")
+        w.set_read_finished(True, "ok", state_mod.default_state_dict("initial"))
+        w.set_active_profile(4)
+        self.assertEqual(w._state.get("controller_slot"), 4)
+        self.assertEqual(w.rail.profile_switch.value(), "4")
+
+    def test_a_later_active_profile_change_does_not_move_the_selection(self):
+        # The one-time seed above must not recur -- a physical profile
+        # switch mid-session (the user pressing the pad's own combo) keeps
+        # editing and active independent, same as every other test in this
+        # class already covers for the marker alone.
+        w = self._window()
+        w.set_connection_state("connected")
+        w.set_read_finished(True, "ok", state_mod.default_state_dict("initial"))
+        w.set_active_profile(4)  # the one-time seed
+        w._on_profile_changed(2)  # the user deliberately picks a different one to edit
+        w.set_active_profile(1)  # the controller is switched again, physically
+        self.assertEqual(w._state.get("controller_slot"), 2)
 
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
