@@ -744,6 +744,29 @@ class ActiveProfileMarkerTest(unittest.TestCase):
         w.set_active_profile(1)  # the controller is switched again, physically
         self.assertEqual(w._state.get("controller_slot"), 2)
 
+    def test_seed_during_an_in_flight_read_does_not_confirm_the_wrong_profile(self):
+        # REAL BUG, found in code review before this release: watcher.py's
+        # run() loop drains a queued read job before polling the active
+        # profile, but the read itself is queued across a cross-thread
+        # signal -- so the active-profile report for Profile 4 can arrive
+        # and seed the selection before the connect-time read for Profile 1
+        # even starts, let alone finishes. _on_profile_changed()'s own
+        # request_read_from_device() call is then skipped (guarded by
+        # _syncing, already True from the connect-time read), so nothing
+        # re-requests Profile 4's real data -- without the fix, the stale
+        # Profile 1 read landing afterward gets shown as a confirmed
+        # reading of Profile 4.
+        w = self._window()
+        received = []
+        w.read_requested.connect(lambda slot, force_dock: received.append((slot, force_dock)))
+        w.set_connection_state("connected")  # enqueues a read for Profile 1
+        w.set_active_profile(4)  # the active-profile report, arriving first
+        self.assertEqual(w._state.get("controller_slot"), 4)
+        self.assertTrue(w._syncing)  # still waiting on the Profile 1 read
+        w.set_read_finished(True, "ok", state_mod.default_state_dict("initial"))
+        self.assertFalse(w._state_confirmed)  # must not pass off as Profile 4's data
+        self.assertEqual(received, [(1, False), (4, False)])  # a real Profile 4 read follows
+
 
 @unittest.skipIf(QApplication is None, "PyQt6 not installed")
 class ContinuousTriggerReachesTheViewTest(unittest.TestCase):

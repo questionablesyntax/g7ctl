@@ -168,6 +168,10 @@ class MainWindow(QMainWindow):
         # the first active-profile report of a connection matters.
         self._profile_seeded_this_connection = False
         self._syncing = False  # true while either a sync-to or read-from-device job is in flight
+        # The slot request_read_from_device() last asked for -- set_read_finished()
+        # compares this against controller_slot to catch _seed_editing_profile_from_active()
+        # changing the selection while that read is still in flight (see its own comment).
+        self._read_requested_slot = None
         # Set only when *we* released the device because the window lost
         # focus, so refocusing knows to reconnect. Kept distinct from the
         # Release Device button: an explicit release has to survive the
@@ -1900,13 +1904,27 @@ class MainWindow(QMainWindow):
         self._refresh_confirmed_display()  # locks every page for the duration
         self.sync_status_label.setText("Reading from device…")
         slot = self._state.get("controller_slot") or 1
+        self._read_requested_slot = slot
         self.read_requested.emit(slot, force_dock_read)
 
     def set_read_finished(self, success: bool, message: str, device_state: Optional[dict]) -> None:
         self._syncing = False
         self.syncing_changed.emit(False)
         self.sync_status_label.setText(message)
-        if success and device_state is not None:
+        # _seed_editing_profile_from_active() can change controller_slot while this
+        # read was in flight (its own request_read_from_device() call is skipped
+        # while _syncing) -- stale means this result is for a profile that isn't
+        # the one now selected, so it must not be shown as confirmed data for it.
+        # None (never requested through request_read_from_device(), e.g. a test
+        # calling this directly) means "unknown", not "stale" -- trust the result,
+        # same as before this check existed. Compared against the resolved slot
+        # (request_read_from_device()'s own `or 1`), not the raw dict value, which
+        # is routinely None (default_state_dict()'s own default) long after a real
+        # read already landed, since nothing here ever writes controller_slot back.
+        requested_slot = self._read_requested_slot
+        current_slot = self._state.get("controller_slot") or 1
+        stale = requested_slot is not None and requested_slot != current_slot
+        if success and device_state is not None and not stale:
             self._state_confirmed = True
             # A real read -- whatever was imported, if anything, is about
             # to be overwritten below with the device's actual values.
@@ -1917,9 +1935,11 @@ class MainWindow(QMainWindow):
         self.ownership_bar.set_release_enabled(self._connection_state == "connected")
         self.rail.set_nav_enabled(True)
         self.import_export_btn.setEnabled(True)
-        if not success or device_state is None:
+        if not success or device_state is None or stale:
             if not success:
                 QMessageBox.warning(self, "Read from device failed", message)
+            if stale and self._connection_state == "connected":
+                self.request_read_from_device()
             return
         # Merge key-by-key rather than replacing the layer dict wholesale --
         # read_state() coverage isn't exhaustive, so replace-the-whole-dict
