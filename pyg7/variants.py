@@ -146,7 +146,7 @@ def is_known_dongle_pid(pid: int) -> bool:
 # every device its Nexus app drives) but are explicitly out of scope: G7
 # SE, G7 Pro 8K, T7 Pro Floral, T7 Pro Sugar Whirl, Tarantula Pro for Xbox,
 # T7, Kaleid, Kaleid Flux. None of their PIDs are confirmed yet, so none
-# are listed below.
+# of those are listed below.
 #
 # Absence from this dict is NOT confirmation of G7 Pro compatibility --
 # see identify_unsupported()'s own docstring. Real detection stays fully
@@ -156,7 +156,19 @@ def is_known_dongle_pid(pid: int) -> bool:
 # This dict exists to intercept only PIDs already confirmed to be
 # something else entirely.
 UNSUPPORTED_PIDS: dict[int, str] = {
-    # 0x____: "GameSir <product name>",
+    # Confirmed 2026-11-03 on real hardware: this device's interface 0 is
+    # a standard XInput gamepad (Vendor Specific class, subclass 93,
+    # protocol 1) whose OUT endpoint is the XInput rumble-motor control,
+    # at the exact same address (0x02) this project's own EP_OUT uses for
+    # G7 Pro vendor-protocol writes. The previously-permissive, PID-
+    # agnostic scan matched this device on interface shape alone (it also
+    # presents a plain HID-class interface 1, same as a G7 Pro mid
+    # keyboard/mouse-bind handshake) and wrote a G7 Pro command packet
+    # onto that rumble endpoint -- sustained nonzero motor intensity with
+    # no follow-up all-zero reset, i.e. a vibration lockup that only a
+    # power cycle clears. Not a Nexus-family device at all; a separate
+    # GameSir product entirely.
+    0x1014: "GameSir G8 Plus",
 }
 
 

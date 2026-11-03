@@ -81,17 +81,17 @@ class IsKnownDonglePidTest(unittest.TestCase):
 
 class IdentifyUnsupportedTest(unittest.TestCase):
     """Added 2026-09-01: a reject list for PIDs confirmed to belong to a
-    different GameSir Nexus-family product, not a G7 Pro at all. Starts
-    empty -- these tests patch it directly rather than depending on real
-    entries existing yet.
+    different GameSir Nexus-family product, not a G7 Pro at all. Started
+    empty; most tests here still patch a fake entry in directly rather
+    than depending on exactly which real entries exist.
     """
 
-    def test_empty_by_default(self):
-        # No other GameSir Nexus-family product's PID has been confirmed
-        # yet (see README.md "Hardware support" for the ones this project
-        # knows exist but has no PID for). This pins that starting state so
-        # a future addition here is a deliberate choice, not an accident.
-        self.assertEqual(variants.UNSUPPORTED_PIDS, {})
+    def test_the_g8_plus_pid_is_a_real_confirmed_entry(self):
+        # Confirmed 2026-11-03 on real hardware (see variants.py's own
+        # comment on this entry for the full account): this PID is a
+        # different GameSir product, not a G7 Pro variant, and real
+        # detection must reject it rather than attempt it.
+        self.assertEqual(variants.identify_unsupported(0x1014), "GameSir G8 Plus")
 
     def test_a_confirmed_unsupported_pid_resolves_to_its_name(self):
         with mock.patch.dict(

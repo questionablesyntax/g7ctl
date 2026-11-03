@@ -6,6 +6,18 @@ adheres to [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A confirmed GameSir G8 Plus (PID `0x1014`) is now rejected outright
+  instead of being mistaken for a G7 Pro.** It shares this project's VID
+  and happens to present the same interface shape `find_hid_device()`
+  looks for mid-handshake, so the previously fully-permissive scan would
+  claim it and write a G7 Pro vendor command onto what is, on this
+  device, the XInput rumble-motor endpoint -- a vibration lockup that only
+  a power cycle clears. Anyone with both a G7 Pro and a G8 Plus plugged
+  in at once was at risk of this. It's just a different GameSir product,
+  not a Nexus-controlled G7 Pro variant.
+
 ## [0.4.2] - 2026-11-02
 
 ### Changed
