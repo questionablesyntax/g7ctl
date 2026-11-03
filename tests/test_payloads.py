@@ -563,12 +563,40 @@ class MotionWriteTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             motion.set_value(FakeSession(), "tilt", "invert_roll", True, profile=1)
 
+    @mock.patch.object(curves, "CURVE_POINT_WRITE_INTERVAL", 0)
     def test_output_encoding_matches_sticks(self):
         # Same OUTPUT_MODES enum as sticks.py, reused not duplicated --
         # see motion.py's import.
         sess = FakeSession()
         motion.set_value(sess, "aim", "output", "directional", profile=1)
-        self.assertEqual(sess.only_payload(), bytes([0x03, 0x01, 0x01, 0xB7, 0x01, 0x03]))
+        self.assertEqual(sess.payloads[-1], bytes([0x03, 0x01, 0x01, 0xB7, 0x01, 0x03]))
+
+    @mock.patch.object(curves, "CURVE_POINT_WRITE_INTERVAL", 0)
+    def test_output_write_repairs_the_undocumented_block_bytes_first(self):
+        # ROADMAP item 66 (notes repo): writing Output alone can leave it
+        # stored but not honored by the firmware -- see motion.py's
+        # _REPAIR_GROUPS comment. Three repair writes, paced, land before
+        # Output's own write; this pins their exact shape so a refactor
+        # that drops or reorders them breaks a test, not hardware.
+        sess = FakeSession()
+        motion.set_value(sess, "aim", "output", "right_stick", profile=1)
+        self.assertEqual(sess.payloads, [
+            bytes([0x03, 0x01, 0x01, 0xAF, 0x03, 0xFF, 0xFF, 0x01]),
+            bytes([0x03, 0x01, 0x01, 0xB6, 0x01, 0x32]),
+            bytes([0x03, 0x01, 0x01, 0xBD, 0x01, 0xFF]),
+            bytes([0x03, 0x01, 0x01, 0xB7, 0x01, 0x02]),
+        ])
+        self.assertEqual(sess.heartbeats, 3)
+
+    @mock.patch.object(curves, "CURVE_POINT_WRITE_INTERVAL", 0)
+    def test_output_write_repair_shifts_by_0x22_on_tilt(self):
+        sess = FakeSession()
+        motion.set_value(sess, "tilt", "output", "mouse", profile=1)
+        self.assertEqual(sess.payloads[:3], [
+            bytes([0x03, 0x01, 0x01, 0xAF + motion.TILT_OFFSET, 0x03, 0xFF, 0xFF, 0x01]),
+            bytes([0x03, 0x01, 0x01, 0xB6 + motion.TILT_OFFSET, 0x01, 0x32]),
+            bytes([0x03, 0x01, 0x01, 0xBD + motion.TILT_OFFSET, 0x01, 0xFF]),
+        ])
 
     def test_x_axis_output_mode_encoding(self):
         for value, expected in (("yaw", 0x01), ("yaw_roll", 0x03)):

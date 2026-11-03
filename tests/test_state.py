@@ -24,7 +24,9 @@ profile_layer_byte() for the hardware evidence.
 import json
 import pathlib
 import unittest
+from unittest import mock
 
+from pyg7 import curves
 from pyg7 import state as state_mod
 
 FIXTURES = json.loads((pathlib.Path(__file__).parent / "fixtures" / "live_read.json").read_text())
@@ -331,6 +333,7 @@ class LiveFixtureTest(unittest.TestCase):
         self.assertFalse(any("unbind" in label and "l4" in label for label in labels))
 
 
+@mock.patch.object(curves, "CURVE_POINT_WRITE_INTERVAL", 0)
 class BuildStepsTest(unittest.TestCase):
     def setUp(self):
         self.state = state_mod.default_state_dict("test")
@@ -605,6 +608,7 @@ class VibrationFlagsValidationTest(unittest.TestCase):
         state_mod.validate_state(state)  # must not raise
 
 
+@mock.patch.object(curves, "CURVE_POINT_WRITE_INTERVAL", 0)
 class SparseSubsectionTest(unittest.TestCase):
     """A state dict may legitimately omit an entire sub-section (not just
     hold it as `None`) to mean "leave this alone" -- validate_state() treats

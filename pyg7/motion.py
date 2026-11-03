@@ -38,8 +38,10 @@ curve's stored points if the block is configured, matching Sticks'
 the way `sticks.SETTING_IDS`/`triggers.SETTING_IDS` do, so writing
 individual points isn't supported yet.
 """
+import time
 from typing import Optional
 
+from . import curves
 from .buttons import decode_keycode, resolve_keycode
 from .constants import CMD_WRITE, prefix_sticks
 from .curves import CURVE_PRESET_INDEX, CURVE_PRESET_NAMES, decode_curve_points
@@ -142,6 +144,42 @@ _ANTI_DEADZONE_INITIAL_MARKER = 0x0D
 _ANTI_DEADZONE_INITIAL_SUFFIX_LEN = 12
 _ANTI_DEADZONE_MAX_MARKER = 0x0C
 _ANTI_DEADZONE_MAX_SUFFIX_LEN = 11
+
+
+# Undocumented bytes the firmware requires for a section's Output setting
+# to take effect at all -- found by bisection against a live write+evdev
+# read, 2026-11-02 (notes repo ROADMAP item 66). Writing Output alone (the
+# one documented register here) can leave it stored but not honored: gyro
+# input keeps landing on the OTHER stick's axes, not "no output" --
+# confirmed on hardware, Right Stick selected, full-range movement still
+# arriving on Left Stick's ABS_X/ABS_Y. What these bytes mean individually
+# is unknown; the same values, unnamed, already sit inside Deadband's own
+# hardcoded blank-block repair data (broroeror/gamesir-linux-tools, MIT) --
+# independent confirmation, not just a guess that happened to work once.
+# Relative to a section's own base, same offset convention as every other
+# field here (add TILT_OFFSET for Tilt):
+#   curve + 10, +11, +12   (right after the curve points)  -> FF FF 01
+#   sensitivity_scale + 1  (the byte right after it)        -> 32
+#   the block's own last byte (base + 0x21)                 -> FF
+_REPAIR_GROUPS = (
+    (0xAF, bytes([0xFF, 0xFF, 0x01])),
+    (0xB6, bytes([0x32])),
+    (0xBD, bytes([0xFF])),
+)
+
+
+def _repair_section(session: VendorSession, prefix: bytes, offset: int) -> None:
+    """Write the three undocumented byte groups above. Unconditional --
+    writing already-correct bytes is harmless, and reading first to skip
+    it would cost a round trip for no benefit the owner wanted here.
+    Heartbeat-paced like every other multi-write setting in this library
+    (see curves.write_curve_points's own comment): firing writes
+    back-to-back gets the later ones silently dropped on this hardware."""
+    for sid, data in _REPAIR_GROUPS:
+        session.send_raw(CMD_WRITE, prefix + bytes([sid + offset, len(data)]) + data)
+        time.sleep(curves.CURVE_POINT_WRITE_INTERVAL)
+        session.heartbeat()
+        time.sleep(curves.CURVE_POINT_WRITE_INTERVAL)
 
 
 def _side_offset(side: str, setting: str) -> int:
@@ -276,6 +314,7 @@ def set_value(session: VendorSession, side: str, setting: str, value: SettingVal
         val = OUTPUT_MODES.get(str(value).lower())
         if val is None:
             raise ValueError(f"output must be one of {list(OUTPUT_MODES)}")
+        _repair_section(session, prefix, offset)
         payload = prefix + bytes([sid, 0x01, val])
     elif setting in _DIRECTION_SETTINGS:
         payload = prefix + bytes([sid, 0x01, _resolve_keycode_or_unbound(value)])

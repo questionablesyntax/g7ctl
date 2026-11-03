@@ -26,6 +26,12 @@ adheres to [semantic versioning](https://semver.org/).
   re-enable as soon as the write or review ends. Reported on Reddit by
   GenderGambler.
 
+- **Motion Output set to Right Stick produced no output.** Gyro motion kept
+  landing on the Left stick's axes at full range instead, whatever Output was
+  set to. The register write itself was correct; writing it now also repairs
+  three undocumented bytes the firmware needs alongside it, matching what
+  GameSir Nexus's own write does. Reported on Reddit by GenderGambler.
+
 ## [0.4.1] - 2026-10-29
 
 ### Fixed

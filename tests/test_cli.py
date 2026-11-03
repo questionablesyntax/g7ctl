@@ -24,6 +24,7 @@ from unittest import mock
 import usb.core
 
 from g7ctl import main as cli_main
+from pyg7 import curves
 
 from .fakes import FakeSession
 
@@ -526,8 +527,17 @@ class DpadDockSetCommandTest(unittest.TestCase):
         self.assertEqual(payload[3], 0xA0)   # SETTING_ID
         self.assertEqual(payload[5], 17)     # value byte
 
+    @mock.patch.object(curves, "CURVE_POINT_WRITE_INTERVAL", 0)
     def test_motion_set_tilt_uses_the_0x22_shifted_address(self):
-        payload = self._run(["motion-set", "tilt", "output", "directional", "--profile", "1"])
+        # motion-set output now repairs three extra bytes first -- see
+        # motion.py's _REPAIR_GROUPS (ROADMAP item 66, notes repo) -- so
+        # this can't go through self._run(), which asserts exactly one
+        # write; it reads the last write directly instead.
+        sys.argv = ["g7ctl", "motion-set", "tilt", "output", "directional",
+                    "--profile", "1", "--interval", "0"]
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            cli_main.main()
+        payload = _CapturingSessionCM.captured.payloads[-1]
         self.assertEqual(payload, bytes([0x03, 0x01, 0x01, 0xD9, 0x01, 0x03]))
 
     def test_motion_set_invert_roll_on_tilt_is_rejected(self):
