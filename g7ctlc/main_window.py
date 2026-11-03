@@ -1764,13 +1764,8 @@ class MainWindow(QMainWindow):
                 ok_for_scope = tuple(o for o in read_back.ok if scope_for_path(o.intent.path) == scope)
                 self._finish_write_for_scope(scope, ok_for_scope)
         elif not success:
-            self._refresh_vibration_draft_ui()
-            self._refresh_dock_draft_ui()
-            self._refresh_triggers_draft_ui()
-            self._refresh_sticks_draft_ui()
-            self._refresh_motion_draft_ui()
-            self._refresh_buttons_draft_ui()
-            self._refresh_profile_draft_ui()
+            # _unlock_write_ui() above already refreshed every scope's
+            # Write/Discard pair via its own _refresh_all_draft_uis() call.
             QMessageBox.warning(self, "Write failed", message)
 
     @staticmethod
